@@ -6,17 +6,45 @@ import {
   signOut,
   User,
 } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
-import { auth } from './firebase';
+import { auth, db } from './firebase';
 import './style.css';
+
+type Member = {
+  name?: string;
+  role?: string;
+  photoURL?: string;
+  active?: boolean;
+  canLogin?: boolean;
+};
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [member, setMember] = useState<Member | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
+      setMember(null);
+
+      if (!firebaseUser) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const memberRef = doc(db, 'members', firebaseUser.uid);
+        const memberSnap = await getDoc(memberRef);
+
+        if (memberSnap.exists()) {
+          setMember(memberSnap.data() as Member);
+        }
+      } catch (error) {
+        console.error('Błąd pobierania profilu:', error);
+      }
+
       setLoading(false);
     });
 
@@ -31,7 +59,7 @@ function App() {
     return <Login />;
   }
 
-  return <Start user={user} />;
+  return <Start user={user} member={member} />;
 }
 
 function Login() {
@@ -48,8 +76,8 @@ function Login() {
 
     try {
       await signInWithEmailAndPassword(auth, email, password);
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error(error);
       setError('Nieprawidłowy e-mail lub hasło.');
     } finally {
       setLoggingIn(false);
@@ -98,7 +126,16 @@ function Login() {
   );
 }
 
-function Start({ user }: { user: User }) {
+function Start({
+  user,
+  member,
+}: {
+  user: User;
+  member: Member | null;
+}) {
+  const name = member?.name || 'Użytkowniku';
+  const role = member?.role || '';
+
   return (
     <div className="logged-page">
       <div className="logged-card">
@@ -106,10 +143,12 @@ function Start({ user }: { user: User }) {
 
         <h1>Nasza Rodzina</h1>
 
-        <h2>Dzień dobry! 👋</h2>
+        <h2>Dzień dobry, {name}! 👋</h2>
+
+        {role && <p>{role}</p>}
 
         <p>
-          Jesteś zalogowany jako:
+          Zalogowano jako:
           <br />
           <strong>{user.email}</strong>
         </p>
