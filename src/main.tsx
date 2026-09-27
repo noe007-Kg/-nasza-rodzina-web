@@ -1,9 +1,129 @@
-import { onAuthStateChanged, User } from 'firebase/auth';
+import React, { useEffect, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+  User,
+} from 'firebase/auth';
+
 import { auth } from './firebase';
-import React,{useState} from 'react';import{createRoot}from'react-dom/client';import{Home,CalendarDays,CheckSquare,ShoppingCart,MessageCircle,Heart,GraduationCap,Users,Settings,Plus,Bell,CloudSun}from'lucide-react';import'./style.css';
-const tabs=[['Start',Home],['Kalendarz',CalendarDays],['Zadania',CheckSquare],['Zakupy',ShoppingCart],['Czat',MessageCircle],['Zdrowie',Heart],['Szkoła',GraduationCap],['Rodzina',Users],['Ustawienia',Settings]] as const;
-const people=[['Sebastian','Tata','S'],['Dominika','Mama','D'],['Paweł','Syn','P'],['Nikodem','Syn','N'],['Layla','Córka','L']];
-function Card({title,children}:{title:string,children:React.ReactNode}){return <section className="card"><h3>{title}</h3>{children}</section>}
-function App(){const[tab,setTab]=useState('Start');return <div className="app"><aside><div className="logo">🏠 <b>Nasza<br/>Rodzina</b></div>{tabs.map(([n,I])=><button className={tab===n?'active':''} onClick={()=>setTab(n)}><I size={20}/><span>{n}</span></button>)}</aside><main><header><div className="people">{people.map(([n,r,l])=><div className="person"><i>{l}</i><div><b>{n}</b><small>{r}</small></div></div>)}</div><Bell/></header><div className="mobileTitle"><b>🏠 Nasza Rodzina</b><Bell size={20}/></div>{tab==='Start'?<Start/>:<Module name={tab}/>}</main><nav>{tabs.slice(0,5).map(([n,I])=><button className={tab===n?'sel':''} onClick={()=>setTab(n)}><I/><small>{n}</small></button>)}<button onClick={()=>setTab('Ustawienia')}><Settings/><small>Więcej</small></button></nav></div>}
-function Start(){return <><div className="hero"><div><small>Niedziela, 27 września</small><h1>Dzień dobry, Sebastian!</h1><p>Oto co dzieje się dziś w Waszej rodzinie.</p></div><div className="weather"><CloudSun/> <b>Kołobrzeg<br/><strong>18°C</strong></b></div></div><div className="grid"><Card title="📅 Dzisiaj w rodzinie"><p>08:00 • Paweł — szkoła</p><p>08:00 • Nikodem — szkoła</p><p>13:00 • Sebastian — dyżur</p></Card><Card title="✅ Zadania na dziś"><p>☑ Strój na WF — Paweł</p><p>□ Zeszyt do matematyki</p><p>□ Przygotować drugie śniadanie</p></Card><Card title="🛒 Lista zakupów"><p>□ Mleko</p><p>☑ Chleb</p><p>□ Banany</p></Card><Card title="🎒 Szkoła — Paweł"><div className="vulcan"><b>VULCAN</b><span>● Połączono</span></div><p>🔔 Zmiana planu lekcji</p><p>✉️ Nowa wiadomość od wychowawcy</p></Card><Card title="❤️ Zdrowie"><p>Layla — szczepienie • za 2 dni</p><p>Dominika — wizyta kontrolna • za 7 dni</p></Card><Card title="👨‍👩‍👧‍👦 Rodzina"><p>🎂 Roczek Layli — 10.10</p><p>❤️ Rocznica ślubu — 06.09</p></Card></div><button className="fab"><Plus/> Dodaj</button></>}
-function Module({name}:{name:string}){const map:any={Kalendarz:'Wspólny kalendarz rodziny',Zadania:'Zadania rodzinne',Zakupy:'Wspólne listy zakupów',Czat:'Rodzinny czat',Zdrowie:'Historia zdrowia rodziny',Szkoła:'Szkoła i VULCAN',Rodzina:'Profile naszej rodziny',Ustawienia:'Ustawienia aplikacji'};return <><div className="moduleHead"><h1>{name}</h1><p>{map[name]}</p></div><div className="grid"><Card title="Pierwsza wersja modułu"><p>Ten ekran jest już częścią działającego szkieletu aplikacji.</p><p>W kolejnych etapach podłączymy tutaj dane z Firebase i funkcje zatwierdzone w projekcie.</p></Card>{name==='Szkoła'&&<Card title="VULCAN"><div className="vulcan"><b>VULCAN</b><span>Przygotowane do integracji</span></div><button className="primary">Otwórz VULCAN</button></Card>}{name==='Rodzina'&&<Card title="Członkowie rodziny">{people.map(p=><p>👤 {p[0]} — {p[1]}</p>)}</Card>}</div></>};createRoot(document.getElementById('root')!).render(<App/>);
+import './style.css';
+
+function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser);
+      setLoading(false);
+    });
+
+    return unsubscribe;
+  }, []);
+
+  if (loading) {
+    return <div className="loading">Ładowanie...</div>;
+  }
+
+  if (!user) {
+    return <Login />;
+  }
+
+  return <Start user={user} />;
+}
+
+function Login() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+
+    setError('');
+    setLoggingIn(true);
+
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (err) {
+      console.error(err);
+      setError('Nieprawidłowy e-mail lub hasło.');
+    } finally {
+      setLoggingIn(false);
+    }
+  }
+
+  return (
+    <div className="login-page">
+      <div className="login-card">
+        <div className="login-logo">🏠</div>
+
+        <h1>Nasza Rodzina</h1>
+        <p>Zaloguj się do rodzinnego centrum</p>
+
+        <form onSubmit={handleLogin}>
+          <label>
+            E-mail
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Twój e-mail"
+              required
+            />
+          </label>
+
+          <label>
+            Hasło
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Twoje hasło"
+              required
+            />
+          </label>
+
+          {error && <div className="login-error">{error}</div>}
+
+          <button type="submit" disabled={loggingIn}>
+            {loggingIn ? 'Logowanie...' : 'Zaloguj się'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function Start({ user }: { user: User }) {
+  return (
+    <div className="logged-page">
+      <div className="logged-card">
+        <div className="logged-logo">🏠</div>
+
+        <h1>Nasza Rodzina</h1>
+
+        <h2>Dzień dobry! 👋</h2>
+
+        <p>
+          Jesteś zalogowany jako:
+          <br />
+          <strong>{user.email}</strong>
+        </p>
+
+        <button onClick={() => signOut(auth)}>
+          Wyloguj się
+        </button>
+      </div>
+    </div>
+  );
+}
+
+createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
