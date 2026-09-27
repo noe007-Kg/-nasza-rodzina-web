@@ -1,3 +1,8 @@
+/* =========================================================
+   NASZA RODZINA VOL.1
+   RESPONSIVE UI
+   ========================================================= */
+
 * {
   box-sizing: border-box;
 }
@@ -5,13 +10,24 @@
 html,
 body,
 #root {
-  margin: 0;
-  min-height: 100%;
   width: 100%;
+  min-height: 100%;
+  margin: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
-  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  margin: 0;
+  overflow-x: hidden;
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
   background: #f3f7fc;
   color: #12345e;
 }
@@ -25,15 +41,23 @@ button {
   cursor: pointer;
 }
 
+img {
+  max-width: 100%;
+}
+
 .loading {
   min-height: 100vh;
   display: grid;
   place-items: center;
+  padding: 24px;
   font-size: 20px;
   font-weight: 700;
 }
 
-/* LOGOWANIE */
+
+/* =========================================================
+   LOGOWANIE
+   ========================================================= */
 
 .login-page {
   min-height: 100vh;
@@ -45,8 +69,8 @@ button {
 
 .login-card {
   width: min(430px, 100%);
+  padding: clamp(25px, 5vw, 38px);
   background: white;
-  padding: 38px;
   border-radius: 28px;
   box-shadow: 0 20px 60px rgba(22, 55, 94, 0.14);
 }
@@ -57,7 +81,7 @@ button {
 
 .login-card h1 {
   margin: 10px 0 5px;
-  font-size: 34px;
+  font-size: clamp(28px, 5vw, 34px);
 }
 
 .login-card > p {
@@ -80,11 +104,11 @@ button {
 
 .login-card input {
   width: 100%;
-  border: 1px solid #dbe5ef;
-  background: #f9fbfe;
-  border-radius: 12px;
   padding: 14px;
+  border: 1px solid #dbe5ef;
+  border-radius: 12px;
   outline: none;
+  background: #f9fbfe;
 }
 
 .login-card input:focus {
@@ -92,41 +116,48 @@ button {
 }
 
 .login-card form button {
+  padding: 14px;
   border: 0;
   border-radius: 12px;
   background: #1685ff;
   color: white;
-  padding: 14px;
   font-weight: 800;
 }
 
 .login-error {
-  background: #fff0f0;
-  color: #b12626;
   padding: 11px 13px;
   border-radius: 10px;
+  background: #fff0f0;
+  color: #b12626;
 }
 
-/* GŁÓWNY UKŁAD */
+
+/* =========================================================
+   GŁÓWNY UKŁAD
+   ========================================================= */
 
 .app-shell {
-  min-height: 100vh;
   display: flex;
+  width: 100%;
+  min-height: 100vh;
 }
 
 .sidebar {
-  width: 250px;
-  min-height: 100vh;
   position: fixed;
-  left: 0;
+  z-index: 50;
   top: 0;
   bottom: 0;
-  z-index: 50;
+  left: 0;
+
+  width: clamp(205px, 20vw, 250px);
+  min-height: 100vh;
   padding: 30px 15px 22px;
-  background: linear-gradient(180deg, #164f74 0%, #0b3857 100%);
-  color: white;
+
   display: flex;
   flex-direction: column;
+
+  background: linear-gradient(180deg, #164f74 0%, #0b3857 100%);
+  color: white;
 }
 
 .brand {
@@ -141,7 +172,7 @@ button {
 }
 
 .brand strong {
-  font-size: 26px;
+  font-size: clamp(22px, 2.2vw, 26px);
   line-height: 1.05;
 }
 
@@ -153,16 +184,20 @@ button {
 
 .sidebar-nav button {
   width: 100%;
-  border: 0;
-  background: transparent;
-  color: #cbdbe7;
-  border-radius: 12px;
   padding: 13px 17px;
+
   display: flex;
   align-items: center;
   gap: 14px;
+
+  border: 0;
+  border-radius: 12px;
+
+  background: transparent;
+  color: #cbdbe7;
+
   text-align: left;
-  font-size: 17px;
+  font-size: clamp(15px, 1.7vw, 17px);
 }
 
 .sidebar-nav button:hover {
@@ -176,72 +211,89 @@ button {
 
 .sidebar-nav button span {
   width: 22px;
+  flex: 0 0 22px;
   text-align: center;
 }
 
 .logout-button {
   margin-top: auto;
+  padding: 13px 17px;
   border: 0;
+  border-radius: 12px;
   background: transparent;
   color: #cbdbe7;
-  padding: 13px 17px;
   text-align: left;
-  border-radius: 12px;
 }
 
 .main-area {
-  margin-left: 250px;
-  width: calc(100% - 250px);
+  width: calc(100% - clamp(205px, 20vw, 250px));
+  min-width: 0;
   min-height: 100vh;
+  margin-left: clamp(205px, 20vw, 250px);
 }
 
-/* GÓRNY PASEK RODZINY */
+
+/* =========================================================
+   GÓRNY PASEK RODZINY
+   ========================================================= */
 
 .family-header {
+  width: 100%;
   min-height: 94px;
+  padding: 12px clamp(18px, 3vw, 32px);
+
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: center;
+  gap: clamp(8px, 2vw, 29px);
+
+  overflow: hidden;
+
   background: white;
   border-bottom: 1px solid #e4ebf3;
-  display: flex;
-  align-items: center;
-  gap: 29px;
-  padding: 12px 32px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.family-header::-webkit-scrollbar {
-  display: none;
 }
 
 .family-person {
-  flex: 0 0 auto;
+  min-width: 0;
+
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: clamp(7px, 1vw, 10px);
+}
+
+.family-person > div:last-child {
+  min-width: 0;
 }
 
 .family-person strong,
 .family-person small {
   display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .family-person strong {
-  font-size: 16px;
+  font-size: clamp(13px, 1.5vw, 16px);
 }
 
 .family-person small {
-  color: #8494a8;
   margin-top: 2px;
+  color: #8494a8;
+  font-size: clamp(11px, 1.3vw, 14px);
 }
 
 .avatar {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
+  width: clamp(38px, 4.5vw, 48px);
+  height: clamp(38px, 4.5vw, 48px);
+  flex: 0 0 clamp(38px, 4.5vw, 48px);
+
   display: grid;
   place-items: center;
+
+  border-radius: 50%;
+  font-size: clamp(15px, 1.7vw, 18px);
   font-weight: 900;
-  font-size: 18px;
 }
 
 .avatar-blue {
@@ -269,21 +321,35 @@ button {
   color: #d94f8b;
 }
 
-/* WSPÓLNA ZAWARTOŚĆ */
+
+/* =========================================================
+   WSPÓLNA ZAWARTOŚĆ
+   ========================================================= */
 
 .page-content {
-  width: min(1220px, 100%);
+  width: 100%;
+  max-width: 1320px;
   margin: 0 auto;
-  padding: 38px 34px 115px;
+  padding:
+    clamp(25px, 4vw, 42px)
+    clamp(18px, 3.5vw, 38px)
+    120px;
 }
 
 .page-header,
 .start-hero {
+  width: 100%;
+  margin-bottom: clamp(22px, 3vw, 30px);
+
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 25px;
-  margin-bottom: 30px;
+}
+
+.page-header > div,
+.start-hero > div {
+  min-width: 0;
 }
 
 .page-header small,
@@ -295,15 +361,19 @@ button {
 .start-hero h1 {
   margin: 7px 0;
   color: #102f5b;
-  font-size: clamp(32px, 4vw, 46px);
+
+  font-size: clamp(30px, 4vw, 46px);
   line-height: 1.05;
 }
 
 .page-header p,
 .start-hero p {
+  max-width: 720px;
   margin: 0;
+
   color: #7a8ca1;
-  font-size: 17px;
+  font-size: clamp(15px, 1.8vw, 17px);
+  line-height: 1.45;
 }
 
 .primary-button,
@@ -316,6 +386,7 @@ button {
 }
 
 .primary-button {
+  flex: 0 0 auto;
   background: #1685ff;
   color: white;
   white-space: nowrap;
@@ -333,21 +404,26 @@ button {
   color: #ad2929;
 }
 
-/* START */
+
+/* =========================================================
+   START
+   ========================================================= */
 
 .weather-card {
-  min-width: 230px;
-  background: white;
-  border-radius: 24px;
-  padding: 18px 25px;
+  min-width: clamp(190px, 23vw, 230px);
+  padding: 18px clamp(18px, 2.5vw, 25px);
+
   display: flex;
   align-items: center;
   gap: 14px;
+
+  background: white;
+  border-radius: 24px;
   box-shadow: 0 8px 30px rgba(30, 66, 104, 0.08);
 }
 
 .weather-icon {
-  font-size: 35px;
+  font-size: clamp(29px, 4vw, 35px);
 }
 
 .weather-card strong,
@@ -357,35 +433,39 @@ button {
 
 .weather-card b {
   margin-top: 2px;
-  font-size: 30px;
+  font-size: clamp(25px, 3vw, 30px);
 }
 
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 21px;
+  gap: clamp(15px, 2vw, 21px);
 }
 
 .app-card {
   min-width: 0;
+  padding: clamp(18px, 2.5vw, 24px);
+
   background: white;
   border: 1px solid #e2eaf3;
   border-radius: 23px;
-  padding: 24px;
   box-shadow: 0 7px 25px rgba(31, 63, 101, 0.06);
 }
 
 .app-card h2 {
   margin: 0 0 17px;
   color: #12345e;
-  font-size: 21px;
+  font-size: clamp(18px, 2vw, 21px);
 }
 
 .rows p {
   margin: 0;
   padding: 12px 0;
+
   border-bottom: 1px solid #e7edf4;
+
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .rows p:last-child {
@@ -393,49 +473,74 @@ button {
 }
 
 .vulcan-status {
+  padding: 15px 17px;
+  margin-bottom: 5px;
+
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+
   background: #d9f7e8;
   color: #15845d;
   border-radius: 14px;
-  padding: 15px 17px;
-  margin-bottom: 5px;
 }
 
-/* KALENDARZ */
+
+/* =========================================================
+   KALENDARZ
+   ========================================================= */
 
 .calendar-toolbar {
-  background: white;
-  border: 1px solid #e1e9f2;
-  border-radius: 18px;
-  padding: 14px 16px;
+  width: 100%;
   margin-bottom: 14px;
+  padding: 14px 16px;
+
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 15px;
+  gap: 12px;
+
+  background: white;
+  border: 1px solid #e1e9f2;
+  border-radius: 18px;
 }
 
 .calendar-navigation,
 .view-switch {
+  min-width: 0;
+
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
+.calendar-navigation {
+  flex: 1 1 auto;
+}
+
 .calendar-navigation button,
 .view-switch button {
+  flex: 0 0 auto;
+
+  padding: 9px clamp(9px, 1.5vw, 13px);
+
   border: 0;
   border-radius: 10px;
+
   background: #eef3f8;
   color: #244769;
-  padding: 9px 13px;
 }
 
 .calendar-navigation strong {
-  white-space: nowrap;
+  min-width: 0;
+
+  font-size: clamp(13px, 1.8vw, 16px);
+  text-align: center;
+}
+
+.view-switch {
+  flex: 0 0 auto;
 }
 
 .view-switch .selected {
@@ -443,25 +548,32 @@ button {
   color: white;
 }
 
-.family-filters {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding: 2px 0 17px;
-  scrollbar-width: none;
-}
 
-.family-filters::-webkit-scrollbar {
-  display: none;
+/* FILTRY */
+
+.family-filters {
+  width: 100%;
+  padding: 2px 0 17px;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .family-filters button {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: max-content;
+
+  padding: 9px clamp(9px, 1.4vw, 14px);
+
   border: 1px solid #dce6f0;
+  border-radius: 999px;
+
   background: white;
   color: #365674;
-  padding: 9px 14px;
-  border-radius: 999px;
+
+  font-size: clamp(12px, 1.5vw, 15px);
+  white-space: nowrap;
 }
 
 .family-filters .filter-selected {
@@ -470,29 +582,49 @@ button {
   border-color: #153e62;
 }
 
+
+/* KALENDARZ + PANEL BOCZNY */
+
 .calendar-layout {
+  width: 100%;
+
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 260px;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
   gap: 20px;
   align-items: start;
 }
 
 .calendar-box {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+
   background: white;
   border: 1px solid #e0e8f1;
   border-radius: 21px;
-  overflow-x: auto;
 }
 
+
+/*
+   KLUCZOWA ZMIANA:
+   7 kolumn zawsze dzieli dostępną szerokość.
+   Nie ma już min-width: 875px.
+*/
+
 .week-grid {
+  width: 100%;
+  min-width: 0;
+
   display: grid;
-  grid-template-columns: repeat(7, minmax(125px, 1fr));
-  min-width: 875px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
 }
 
 .calendar-day {
-  min-height: 470px;
-  padding: 12px 10px;
+  min-width: 0;
+  min-height: clamp(360px, 48vw, 470px);
+
+  padding: clamp(6px, 1vw, 10px);
+
   border-right: 1px solid #e6edf4;
 }
 
@@ -501,10 +633,11 @@ button {
 }
 
 .calendar-day-header {
+  margin-bottom: 12px;
+  padding: 4px 0 12px;
+
   text-align: center;
   border-bottom: 1px solid #e7edf4;
-  padding: 4px 0 12px;
-  margin-bottom: 12px;
 }
 
 .calendar-day-header small,
@@ -514,18 +647,23 @@ button {
 
 .calendar-day-header small {
   color: #8392a3;
+  font-size: clamp(10px, 1.3vw, 13px);
 }
 
 .calendar-day-header strong {
-  font-size: 24px;
   margin-top: 3px;
+  font-size: clamp(18px, 2.4vw, 24px);
 }
 
 .calendar-event {
-  padding: 10px;
-  border-radius: 10px;
+  min-width: 0;
   margin-bottom: 8px;
-  border-left: 4px solid;
+  padding: clamp(6px, 1vw, 10px);
+
+  overflow: hidden;
+
+  border-left: clamp(3px, 0.5vw, 4px) solid;
+  border-radius: 10px;
 }
 
 .calendar-event small,
@@ -536,11 +674,13 @@ button {
 .calendar-event small {
   margin-bottom: 4px;
   opacity: 0.72;
+  font-size: clamp(9px, 1.15vw, 12px);
 }
 
 .calendar-event strong {
-  font-size: 13px;
-  line-height: 1.3;
+  font-size: clamp(9px, 1.2vw, 13px);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .event-blue {
@@ -573,11 +713,16 @@ button {
   border-color: #229797;
 }
 
+
+/* PANEL KALENDARZA */
+
 .calendar-side {
+  min-width: 0;
+  padding: 21px;
+
   background: white;
   border: 1px solid #e0e8f1;
   border-radius: 21px;
-  padding: 21px;
 }
 
 .calendar-side h2 {
@@ -585,10 +730,12 @@ button {
 }
 
 .today-event {
-  display: grid;
-  grid-template-columns: 55px 1fr;
-  gap: 8px;
   padding: 11px 0;
+
+  display: grid;
+  grid-template-columns: 55px minmax(0, 1fr);
+  gap: 8px;
+
   border-bottom: 1px solid #e8eef4;
 }
 
@@ -597,9 +744,10 @@ button {
 }
 
 .upcoming {
+  padding: 10px 0;
+
   display: flex;
   gap: 10px;
-  padding: 10px 0;
 }
 
 .upcoming > span {
@@ -616,15 +764,19 @@ button {
   color: #7e8ea0;
 }
 
-/* ZADANIA + ZAKUPY */
+
+/* =========================================================
+   ZADANIA + ZAKUPY
+   ========================================================= */
 
 .module-grid {
+  width: 100%;
   display: grid;
   gap: 20px;
 }
 
 .module-grid-wide {
-  grid-template-columns: minmax(0, 2fr) minmax(250px, 1fr);
+  grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
 }
 
 .task-list {
@@ -633,10 +785,12 @@ button {
 }
 
 .task-row {
+  padding: 15px 2px;
+
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 15px 2px;
+
   border-bottom: 1px solid #e7edf4;
 }
 
@@ -647,6 +801,7 @@ button {
 .task-row input {
   width: 19px;
   height: 19px;
+  flex: 0 0 19px;
   accent-color: #1685ff;
 }
 
@@ -656,9 +811,9 @@ button {
 }
 
 .progress-number {
-  font-size: 58px;
-  font-weight: 900;
   color: #1685ff;
+  font-size: clamp(44px, 6vw, 58px);
+  font-weight: 900;
 }
 
 .muted {
@@ -667,26 +822,34 @@ button {
 
 .progress-bar {
   height: 10px;
+  margin-top: 20px;
+
   overflow: hidden;
+
   border-radius: 999px;
   background: #e8eef5;
-  margin-top: 20px;
 }
 
 .progress-bar span {
   display: block;
   height: 100%;
+
   border-radius: inherit;
   background: #1685ff;
 }
 
-/* CZAT */
+
+/* =========================================================
+   CZAT
+   ========================================================= */
 
 .chat-card {
+  width: 100%;
+  overflow: hidden;
+
   background: white;
   border: 1px solid #e0e8f1;
   border-radius: 23px;
-  overflow: hidden;
 }
 
 .chat-title {
@@ -700,21 +863,22 @@ button {
 }
 
 .chat-title small {
-  color: #8593a4;
   margin-top: 3px;
+  color: #8593a4;
 }
 
 .messages {
   min-height: 390px;
   padding: 23px;
+
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
 .message {
-  align-self: flex-start;
   max-width: min(520px, 78%);
+  align-self: flex-start;
 }
 
 .message small {
@@ -723,9 +887,12 @@ button {
 
 .message p {
   margin: 4px 0 0;
+  padding: 12px 15px;
+
   background: #eef4fa;
   border-radius: 6px 16px 16px 16px;
-  padding: 12px 15px;
+
+  overflow-wrap: anywhere;
 }
 
 .message-me {
@@ -744,60 +911,82 @@ button {
 }
 
 .message-form {
+  padding: 15px;
+
   display: flex;
   gap: 10px;
+
   border-top: 1px solid #e6edf4;
-  padding: 15px;
 }
 
 .message-form input {
-  flex: 1;
   min-width: 0;
-  border: 1px solid #dce5ee;
-  background: #f7fafe;
-  border-radius: 12px;
+  flex: 1;
+
   padding: 13px;
+
+  border: 1px solid #dce5ee;
+  border-radius: 12px;
   outline: none;
+
+  background: #f7fafe;
 }
 
 .message-form button {
+  padding: 0 19px;
+
   border: 0;
   border-radius: 12px;
-  padding: 0 19px;
+
   background: #1685ff;
   color: white;
+
   font-weight: 800;
 }
 
-/* RODZINA */
+
+/* =========================================================
+   RODZINA
+   ========================================================= */
 
 .family-profile-grid {
+  width: 100%;
+
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 16px;
+  gap: clamp(10px, 1.7vw, 16px);
 }
 
 .family-profile {
+  min-width: 0;
+  padding: clamp(17px, 2.5vw, 24px) 12px;
+
   background: white;
   border: 1px solid #e1e9f2;
   border-radius: 22px;
-  padding: 24px 16px;
+
   text-align: center;
 }
 
 .profile-avatar {
-  width: 72px;
-  height: 72px;
+  width: clamp(55px, 7vw, 72px);
+  height: clamp(55px, 7vw, 72px);
+
   margin: 0 auto 13px;
-  border-radius: 50%;
+
   display: grid;
   place-items: center;
-  font-size: 26px;
+
+  border-radius: 50%;
+
+  font-size: clamp(20px, 3vw, 26px);
   font-weight: 900;
 }
 
 .family-profile h2 {
   margin: 0;
+  font-size: clamp(16px, 2vw, 21px);
+  overflow-wrap: anywhere;
 }
 
 .family-profile p {
@@ -805,20 +994,29 @@ button {
   color: #8190a1;
 }
 
-/* PŁYWAJĄCY PRZYCISK */
+
+/* =========================================================
+   PŁYWAJĄCY PRZYCISK
+   ========================================================= */
 
 .floating-add {
   position: fixed;
   z-index: 40;
-  right: 28px;
+
+  right: clamp(16px, 3vw, 28px);
   bottom: 25px;
+
+  padding: 14px 20px;
+
   border: 0;
   border-radius: 15px;
-  padding: 14px 20px;
+
   background: #1685ff;
   color: white;
-  font-weight: 900;
+
   font-size: 16px;
+  font-weight: 900;
+
   box-shadow: 0 12px 28px rgba(22, 133, 255, 0.3);
 }
 
@@ -826,20 +1024,29 @@ button {
   display: none;
 }
 
-/* TABLET */
+
+/* =========================================================
+   TABLET / IPAD
+   ========================================================= */
 
 @media (max-width: 1180px) {
+
   .dashboard-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  /*
+     Na iPadzie panel "Dzisiaj" schodzi pod kalendarz.
+     Dzięki temu cały kalendarz dostaje pełną szerokość.
+  */
+
   .calendar-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .calendar-side {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 12px 20px;
   }
 
@@ -853,104 +1060,76 @@ button {
   }
 
   .family-profile-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 1000px) {
+
+/* =========================================================
+   IPAD PIONOWO / MNIEJSZY TABLET
+   ========================================================= */
+
+@media (max-width: 900px) {
+
   .sidebar {
-    width: 205px;
+    width: 190px;
+    padding-left: 10px;
+    padding-right: 10px;
   }
 
   .main-area {
-    margin-left: 205px;
-    width: calc(100% - 205px);
+    width: calc(100% - 190px);
+    margin-left: 190px;
   }
 
   .brand {
-    padding-left: 11px;
+    padding-left: 10px;
+    padding-right: 8px;
   }
 
   .brand strong {
-    font-size: 23px;
+    font-size: 21px;
   }
 
-  .page-content {
-    padding: 30px 25px 110px;
-  }
-
-  .family-header {
-    padding-left: 25px;
-    gap: 22px;
-  }
-
-  .module-grid-wide {
-    grid-template-columns: minmax(0, 1.7fr) minmax(220px, 1fr);
-  }
-}
-
-/* TELEFON */
-
-@media (max-width: 700px) {
-  .sidebar {
-    display: none;
-  }
-
-  .main-area {
-    margin-left: 0;
-    width: 100%;
-  }
-
-  .family-header {
-    min-height: 72px;
-    padding: 9px 14px;
-    gap: 14px;
-  }
-
-  .family-person > div:last-child {
-    display: none;
-  }
-
-  .avatar {
-    width: 41px;
-    height: 41px;
-  }
-
-  .page-content {
-    padding: 23px 15px 110px;
-  }
-
-  .page-header,
-  .start-hero {
-    align-items: flex-start;
-    flex-direction: column;
-    margin-bottom: 23px;
-  }
-
-  .page-header h1,
-  .start-hero h1 {
-    font-size: 31px;
-  }
-
-  .page-header p,
-  .start-hero p {
+  .sidebar-nav button {
+    padding: 12px 11px;
+    gap: 9px;
     font-size: 15px;
   }
 
-  .weather-card {
-    min-width: 0;
-    width: 100%;
+  .page-content {
+    padding-left: 18px;
+    padding-right: 18px;
   }
 
-  .dashboard-grid,
-  .module-grid-wide,
-  .family-profile-grid {
-    grid-template-columns: 1fr;
+  /*
+     Wszystkich 5 członków rodziny nadal mieści się w jednym rzędzie.
+  */
+
+  .family-header {
+    min-height: 82px;
+    padding-left: 14px;
+    padding-right: 14px;
+    gap: 5px;
   }
 
-  .app-card {
-    border-radius: 19px;
-    padding: 19px;
+  .family-person {
+    justify-content: center;
+  }
+
+  .family-person strong {
+    font-size: 11px;
+  }
+
+  .family-person small {
+    font-size: 10px;
+  }
+
+  .avatar {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+    font-size: 13px;
   }
 
   .calendar-toolbar {
@@ -962,22 +1141,167 @@ button {
     justify-content: space-between;
   }
 
-  .calendar-navigation strong {
-    white-space: normal;
-    text-align: center;
+  .view-switch {
+    width: 100%;
   }
 
   .view-switch button {
-    flex: 1;
+    flex: 1 1 0;
+  }
+
+  .family-filters button {
+    flex: 1 1 calc(33.333% - 8px);
+    min-width: 0;
+    text-align: center;
+  }
+
+  /*
+     W kalendarzu zmniejszamy elementy,
+     ale nadal pokazujemy pełne 7 dni.
+  */
+
+  .calendar-day {
+    min-height: 350px;
+    padding: 5px;
+  }
+
+  .calendar-event {
+    padding: 6px 4px;
+  }
+
+  .calendar-event strong {
+    font-size: 9px;
+  }
+
+  .calendar-event small {
+    font-size: 8px;
+  }
+
+  .calendar-day-header strong {
+    font-size: 18px;
+  }
+
+  .calendar-day-header small {
+    font-size: 9px;
+  }
+
+  .module-grid-wide {
+    grid-template-columns: minmax(0, 1.5fr) minmax(180px, 1fr);
+  }
+}
+
+
+/* =========================================================
+   TELEFON
+   ========================================================= */
+
+@media (max-width: 700px) {
+
+  .sidebar {
+    display: none;
+  }
+
+  .main-area {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .family-header {
+    min-height: 68px;
+    padding: 8px 10px;
+
+    grid-template-columns: repeat(5, 1fr);
+    gap: 5px;
+  }
+
+  .family-person {
+    display: block;
+    text-align: center;
+  }
+
+  .family-person > div:last-child {
+    display: none;
+  }
+
+  .avatar {
+    width: 39px;
+    height: 39px;
+    margin: auto;
+    font-size: 14px;
+  }
+
+  .page-content {
+    padding: 22px 13px 115px;
+  }
+
+  .page-header,
+  .start-hero {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 17px;
+  }
+
+  .page-header h1,
+  .start-hero h1 {
+    font-size: 31px;
+  }
+
+  .primary-button {
+    width: 100%;
+  }
+
+  .weather-card {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .dashboard-grid,
+  .module-grid-wide,
+  .family-profile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .app-card {
+    padding: 19px;
+    border-radius: 19px;
+  }
+
+  .family-filters button {
+    flex: 1 1 calc(50% - 8px);
+  }
+
+  /*
+     Na telefonie 7 pełnych kolumn byłoby zbyt małych.
+     Zamiast ucinać ekran, kalendarz dostaje kontrolowane
+     przewijanie wewnątrz własnej karty.
+  */
+
+  .calendar-box {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .week-grid {
-    grid-template-columns: repeat(7, 125px);
-    min-width: 875px;
+    width: 770px;
+    min-width: 770px;
+    grid-template-columns: repeat(7, 110px);
   }
 
   .calendar-day {
-    min-height: 390px;
+    min-height: 370px;
+    padding: 7px;
+  }
+
+  .calendar-event {
+    padding: 8px;
+  }
+
+  .calendar-event strong {
+    font-size: 11px;
+  }
+
+  .calendar-event small {
+    font-size: 10px;
   }
 
   .calendar-side {
@@ -997,20 +1321,28 @@ button {
     align-items: stretch;
   }
 
+  .message-form button {
+    padding: 0 14px;
+  }
+
   .floating-add {
-    right: 16px;
+    right: 15px;
     bottom: 82px;
   }
 
   .mobile-nav {
     position: fixed;
     z-index: 45;
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
+
     left: 0;
     right: 0;
     bottom: 0;
+
     height: 68px;
+
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+
     background: white;
     border-top: 1px solid #dfe7ef;
   }
@@ -1019,6 +1351,7 @@ button {
     border: 0;
     background: white;
     color: #64798f;
+
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1036,5 +1369,32 @@ button {
 
   .mobile-nav .mobile-active {
     color: #1685ff;
+  }
+}
+
+
+/* =========================================================
+   BARDZO MAŁE TELEFONY
+   ========================================================= */
+
+@media (max-width: 390px) {
+
+  .page-content {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .avatar {
+    width: 35px;
+    height: 35px;
+  }
+
+  .family-filters button {
+    font-size: 11px;
+  }
+
+  .floating-add {
+    padding: 12px 16px;
+    font-size: 14px;
   }
 }
