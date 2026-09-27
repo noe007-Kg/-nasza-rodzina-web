@@ -53,11 +53,16 @@ type PersonKey =
   | 'Nikodem'
   | 'Layla';
 
+type CalendarView = 'day' | 'week' | 'month';
+
 type CalendarEventData = {
   id: string;
   title: string;
   person: PersonKey;
   date: Date;
+  endDate: Date;
+  allDay: boolean;
+  description: string;
   createdBy: string;
 };
 
@@ -65,31 +70,22 @@ type EventForm = {
   title: string;
   person: PersonKey;
   date: string;
-  time: string;
+  allDay: boolean;
+  startTime: string;
+  endTime: string;
+  description: string;
 };
 
 /* =========================================================
-   RODZINA
-   ========================================================= */
-
-const family = [
-  { name: 'Sebastian', role: 'Tata', letter: 'S', avatarClass: 'avatar-blue' },
-  { name: 'Dominika', role: 'Mama', letter: 'D', avatarClass: 'avatar-purple' },
-  { name: 'Paweł', role: 'Syn', letter: 'P', avatarClass: 'avatar-green' },
-  { name: 'Nikodem', role: 'Syn', letter: 'N', avatarClass: 'avatar-orange' },
-  { name: 'Layla', role: 'Córka', letter: 'L', avatarClass: 'avatar-pink' },
-];
-
-/* =========================================================
-   DATY
+   POMOCNICZE
    ========================================================= */
 
 function startOfWeek(date: Date): Date {
   const result = new Date(date);
   const day = result.getDay();
-  const difference = day === 0 ? -6 : 1 - day;
+  const diff = day === 0 ? -6 : 1 - day;
 
-  result.setDate(result.getDate() + difference);
+  result.setDate(result.getDate() + diff);
   result.setHours(0, 0, 0, 0);
 
   return result;
@@ -98,6 +94,24 @@ function startOfWeek(date: Date): Date {
 function addDays(date: Date, days: number): Date {
   const result = new Date(date);
   result.setDate(result.getDate() + days);
+  return result;
+}
+
+function addMonths(date: Date, months: number): Date {
+  const result = new Date(date);
+  const originalDay = result.getDate();
+
+  result.setDate(1);
+  result.setMonth(result.getMonth() + months);
+
+  const lastDay = new Date(
+    result.getFullYear(),
+    result.getMonth() + 1,
+    0
+  ).getDate();
+
+  result.setDate(Math.min(originalDay, lastDay));
+
   return result;
 }
 
@@ -117,12 +131,6 @@ function formatDateInput(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function formatTimeInput(date: Date): string {
-  return `${String(date.getHours()).padStart(2, '0')}:${String(
-    date.getMinutes()
-  ).padStart(2, '0')}`;
-}
-
 function formatTime(date: Date): string {
   return date.toLocaleTimeString('pl-PL', {
     hour: '2-digit',
@@ -130,45 +138,66 @@ function formatTime(date: Date): string {
   });
 }
 
+function formatTimeInput(date: Date): string {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(
+    date.getMinutes()
+  ).padStart(2, '0')}`;
+}
+
 function capitalize(value: string): string {
+  if (!value) return value;
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function weekTitle(start: Date): string {
-  const end = addDays(start, 6);
+function weekTitle(weekStart: Date): string {
+  const end = addDays(weekStart, 6);
 
-  const startDay = start.getDate();
-  const endDay = end.getDate();
-
-  const startMonth = start.toLocaleDateString('pl-PL', {
-    month: 'long',
+  const startMonth = weekStart.toLocaleDateString('pl-PL', {
+    month: 'short',
   });
 
   const endMonth = end.toLocaleDateString('pl-PL', {
-    month: 'long',
+    month: 'short',
   });
 
-  if (start.getMonth() === end.getMonth()) {
-    return `${startDay}–${endDay} ${endMonth}`;
+  if (weekStart.getMonth() === end.getMonth()) {
+    return `${weekStart.getDate()}–${end.getDate()} ${endMonth} ${end.getFullYear()}`;
   }
 
-  return `${startDay} ${startMonth} – ${endDay} ${endMonth}`;
+  return `${weekStart.getDate()} ${startMonth} – ${end.getDate()} ${endMonth} ${end.getFullYear()}`;
 }
 
 function personEventClass(person: PersonKey): string {
   switch (person) {
     case 'Sebastian':
-      return 'event-blue';
+      return 'event-sebastian';
     case 'Dominika':
-      return 'event-purple';
+      return 'event-dominika';
     case 'Paweł':
-      return 'event-green';
+      return 'event-pawel';
     case 'Nikodem':
-      return 'event-orange';
+      return 'event-nikodem';
     case 'Layla':
-      return 'event-pink';
+      return 'event-layla';
     default:
       return 'event-family';
+  }
+}
+
+function personColor(person: PersonKey): string {
+  switch (person) {
+    case 'Sebastian':
+      return '#3182f6';
+    case 'Dominika':
+      return '#8b5cf6';
+    case 'Paweł':
+      return '#22c55e';
+    case 'Nikodem':
+      return '#f59e0b';
+    case 'Layla':
+      return '#ec4899';
+    default:
+      return '#64748b';
   }
 }
 
@@ -187,36 +216,21 @@ function isPersonKey(value: unknown): value is PersonKey {
   );
 }
 
+function parseLocalDate(date: string, time: string): Date {
+  return new Date(`${date}T${time}:00`);
+}
+
 /* =========================================================
    APP
    ========================================================= */
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [member, setMember] = useState<Member | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
-      setMember(null);
-
-      if (!firebaseUser) {
-        setLoading(false);
-        return;
-      }
-
-      try {
-        const memberRef = doc(db, 'members', firebaseUser.uid);
-        const memberSnap = await getDoc(memberRef);
-
-        if (memberSnap.exists()) {
-          setMember(memberSnap.data() as Member);
-        }
-      } catch (error) {
-        console.error('Błąd pobierania profilu:', error);
-      }
-
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
       setLoading(false);
     });
 
@@ -224,14 +238,22 @@ function App() {
   }, []);
 
   if (loading) {
-    return <div className="loading">Ładowanie Naszej Rodziny...</div>;
+    return (
+      <div className="loading-screen">
+        <div className="loading-card">
+          <div className="family-logo">👨‍👩‍👧‍👦</div>
+          <h2>Nasza Rodzina</h2>
+          <p>Ładowanie...</p>
+        </div>
+      </div>
+    );
   }
 
   if (!user) {
     return <Login />;
   }
 
-  return <FamilyApp user={user} member={member} />;
+  return <FamilyApp user={user} />;
 }
 
 /* =========================================================
@@ -251,10 +273,10 @@ function Login() {
     setLoggingIn(true);
 
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (error) {
-      console.error(error);
-      setError('Nieprawidłowy e-mail lub hasło.');
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+    } catch (err) {
+      console.error(err);
+      setError('Nie udało się zalogować. Sprawdź e-mail i hasło.');
     } finally {
       setLoggingIn(false);
     }
@@ -263,12 +285,12 @@ function Login() {
   return (
     <div className="login-page">
       <div className="login-card">
-        <div className="login-logo">🏠</div>
+        <div className="family-logo">👨‍👩‍👧‍👦</div>
 
         <h1>Nasza Rodzina</h1>
-        <p>Zaloguj się do rodzinnego centrum</p>
+        <p>Rodzinne centrum w jednym miejscu ❤️</p>
 
-        <form onSubmit={handleLogin}>
+        <form onSubmit={handleLogin} className="login-form">
           <label>
             E-mail
             <input
@@ -286,7 +308,7 @@ function Login() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Twoje hasło"
+              placeholder="Hasło"
               required
             />
           </label>
@@ -306,50 +328,115 @@ function Login() {
    GŁÓWNA APLIKACJA
    ========================================================= */
 
-function FamilyApp({
-  user,
-  member,
-}: {
-  user: User;
-  member: Member | null;
-}) {
-  const [activePage, setActivePage] = useState<Page>('Start');
+function FamilyApp({ user }: { user: User }) {
+  const [page, setPage] = useState<Page>('Start');
+  const [member, setMember] = useState<Member | null>(null);
 
-  const name = member?.name || 'Użytkowniku';
+  useEffect(() => {
+    async function loadMember() {
+      try {
+        const memberRef = doc(db, 'members', user.uid);
+        const snapshot = await getDoc(memberRef);
 
-  function changePage(page: Page) {
-    setActivePage(page);
+        if (snapshot.exists()) {
+          setMember(snapshot.data() as Member);
+        }
+      } catch (error) {
+        console.error('Błąd profilu:', error);
+      }
+    }
 
-    window.scrollTo({
-      top: 0,
-      behavior: 'smooth',
-    });
+    void loadMember();
+  }, [user.uid]);
+
+  function renderPage() {
+    switch (page) {
+      case 'Start':
+        return <StartPage member={member} />;
+
+      case 'Kalendarz':
+        return <CalendarPage user={user} />;
+
+      case 'Zadania':
+        return <TasksPage />;
+
+      case 'Zakupy':
+        return (
+          <ComingSoon
+            icon="🛒"
+            title="Zakupy"
+            text="Wspólna lista zakupów dla całej rodziny."
+          />
+        );
+
+      case 'Czat':
+        return (
+          <ComingSoon
+            icon="💬"
+            title="Czat"
+            text="Rodzinny czat będzie tutaj."
+          />
+        );
+
+      case 'Zdrowie':
+        return (
+          <ComingSoon
+            icon="❤️"
+            title="Zdrowie"
+            text="Lekarze, wizyty i ważne informacje zdrowotne."
+          />
+        );
+
+      case 'Szkoła':
+        return (
+          <ComingSoon
+            icon="🎒"
+            title="Szkoła"
+            text="Plan lekcji, zajęcia i sprawy szkolne."
+          />
+        );
+
+      case 'Rodzina':
+        return (
+          <ComingSoon
+            icon="👨‍👩‍👧‍👦"
+            title="Rodzina"
+            text="Profile wszystkich członków rodziny."
+          />
+        );
+
+      case 'Ustawienia':
+        return (
+          <ComingSoon
+            icon="⚙️"
+            title="Ustawienia"
+            text="Ustawienia aplikacji i konta."
+          />
+        );
+
+      default:
+        return <StartPage member={member} />;
+    }
   }
 
   return (
     <div className="app-shell">
-      <Sidebar activePage={activePage} changePage={changePage} />
+      <Sidebar
+        page={page}
+        setPage={setPage}
+        member={member}
+      />
 
       <main className="main-area">
-        <FamilyHeader />
-
-        {activePage === 'Start' && <StartPage name={name} />}
-
-        {activePage === 'Kalendarz' && <CalendarPage user={user} />}
-
-        {activePage === 'Zadania' && <TasksPage />}
-
-        {activePage !== 'Start' &&
-          activePage !== 'Kalendarz' &&
-          activePage !== 'Zadania' && <ComingSoonPage page={activePage} />}
-
-        <button className="floating-add">＋ Dodaj</button>
-
-        <MobileNavigation
-          activePage={activePage}
-          changePage={changePage}
+        <FamilyHeader
+          member={member}
+          onLogout={() => signOut(auth)}
         />
+
+        {renderPage()}
       </main>
+
+      <MobileNavigation page={page} setPage={setPage} />
     </div>
   );
 }
@@ -359,109 +446,125 @@ function FamilyApp({
    ========================================================= */
 
 function Sidebar({
-  activePage,
-  changePage,
+  page,
+  setPage,
+  member,
 }: {
-  activePage: Page;
-  changePage: (page: Page) => void;
+  page: Page;
+  setPage: React.Dispatch<React.SetStateAction<Page>>;
+  member: Member | null;
 }) {
   return (
     <aside className="sidebar">
-      <div className="brand">
-        <span className="brand-icon">🏠</span>
+      <div className="sidebar-brand">
+        <div className="sidebar-logo">👨‍👩‍👧‍👦</div>
 
-        <strong>
-          Nasza
-          <br />
-          Rodzina
-        </strong>
+        <div>
+          <strong>Nasza Rodzina</strong>
+          <small>Rodzinne centrum</small>
+        </div>
       </div>
 
       <nav className="sidebar-nav">
         <NavButton
-          active={activePage === 'Start'}
-          onClick={() => changePage('Start')}
-          icon="⌂"
+          icon="🏠"
           label="Start"
+          active={page === 'Start'}
+          onClick={() => setPage('Start')}
         />
 
         <NavButton
-          active={activePage === 'Kalendarz'}
-          onClick={() => changePage('Kalendarz')}
-          icon="▦"
+          icon="📅"
           label="Kalendarz"
+          active={page === 'Kalendarz'}
+          onClick={() => setPage('Kalendarz')}
         />
 
         <NavButton
-          active={activePage === 'Zadania'}
-          onClick={() => changePage('Zadania')}
-          icon="☑"
+          icon="✅"
           label="Zadania"
+          active={page === 'Zadania'}
+          onClick={() => setPage('Zadania')}
         />
 
         <NavButton
-          active={activePage === 'Zakupy'}
-          onClick={() => changePage('Zakupy')}
           icon="🛒"
           label="Zakupy"
+          active={page === 'Zakupy'}
+          onClick={() => setPage('Zakupy')}
         />
 
         <NavButton
-          active={activePage === 'Czat'}
-          onClick={() => changePage('Czat')}
-          icon="○"
+          icon="💬"
           label="Czat"
+          active={page === 'Czat'}
+          onClick={() => setPage('Czat')}
         />
 
         <NavButton
-          active={activePage === 'Zdrowie'}
-          onClick={() => changePage('Zdrowie')}
-          icon="♡"
+          icon="❤️"
           label="Zdrowie"
+          active={page === 'Zdrowie'}
+          onClick={() => setPage('Zdrowie')}
         />
 
         <NavButton
-          active={activePage === 'Szkoła'}
-          onClick={() => changePage('Szkoła')}
-          icon="◇"
+          icon="🎒"
           label="Szkoła"
+          active={page === 'Szkoła'}
+          onClick={() => setPage('Szkoła')}
         />
 
         <NavButton
-          active={activePage === 'Rodzina'}
-          onClick={() => changePage('Rodzina')}
-          icon="♧"
+          icon="👨‍👩‍👧‍👦"
           label="Rodzina"
+          active={page === 'Rodzina'}
+          onClick={() => setPage('Rodzina')}
         />
 
         <NavButton
-          active={activePage === 'Ustawienia'}
-          onClick={() => changePage('Ustawienia')}
-          icon="⚙"
+          icon="⚙️"
           label="Ustawienia"
+          active={page === 'Ustawienia'}
+          onClick={() => setPage('Ustawienia')}
         />
       </nav>
 
-      <button className="logout-button" onClick={() => signOut(auth)}>
-        ↪ Wyloguj
-      </button>
+      <div className="sidebar-profile">
+        <div className="profile-avatar">
+          {member?.photoURL ? (
+            <img src={member.photoURL} alt="" />
+          ) : (
+            '🙂'
+          )}
+        </div>
+
+        <div>
+          <strong>{member?.name || 'Rodzina'}</strong>
+          <small>{member?.role || 'Użytkownik'}</small>
+        </div>
+      </div>
     </aside>
   );
 }
 
 function NavButton({
-  active,
-  onClick,
   icon,
   label,
+  active,
+  onClick,
 }: {
-  active: boolean;
-  onClick: () => void;
   icon: string;
   label: string;
+  active: boolean;
+  onClick: () => void;
 }) {
   return (
-    <button className={active ? 'nav-active' : ''} onClick={onClick}>
+    <button
+      type="button"
+      className={`nav-button ${active ? 'active' : ''}`}
+      onClick={onClick}
+    >
       <span>{icon}</span>
       {label}
     </button>
@@ -469,24 +572,33 @@ function NavButton({
 }
 
 /* =========================================================
-   GÓRNY PASEK RODZINY
+   HEADER
    ========================================================= */
 
-function FamilyHeader() {
+function FamilyHeader({
+  member,
+  onLogout,
+}: {
+  member: Member | null;
+  onLogout: () => void;
+}) {
   return (
-    <header className="family-header">
-      {family.map((person) => (
-        <div className="family-person" key={person.name}>
-          <div className={`avatar ${person.avatarClass}`}>
-            {person.letter}
-          </div>
+    <header className="top-header">
+      <div>
+        <small>Rodzinne centrum</small>
+        <strong>Nasza Rodzina</strong>
+      </div>
 
-          <div>
-            <strong>{person.name}</strong>
-            <small>{person.role}</small>
-          </div>
+      <div className="header-user">
+        <div className="header-user-text">
+          <strong>{member?.name || 'Użytkownik'}</strong>
+          <small>{member?.role || 'Rodzina'}</small>
         </div>
-      ))}
+
+        <button type="button" onClick={onLogout}>
+          Wyloguj
+        </button>
+      </div>
     </header>
   );
 }
@@ -495,82 +607,57 @@ function FamilyHeader() {
    START
    ========================================================= */
 
-function StartPage({ name }: { name: string }) {
+function StartPage({ member }: { member: Member | null }) {
+  const name = member?.name || 'Sebastian';
+
   return (
     <div className="page-content">
-      <section className="start-hero">
+      <section className="welcome-card">
         <div>
           <small>Niedziela, 27 września</small>
-
-          <h1>
-            Dzień dobry,
-            <br />
-            {name}!
-          </h1>
-
-          <p>Oto co dzieje się dziś w Waszej rodzinie.</p>
+          <h1>Cześć, {name}! 👋</h1>
+          <p>Miło Cię widzieć w Waszym rodzinnym centrum.</p>
         </div>
 
-        <div className="weather-card">
-          <span className="weather-icon">☀️</span>
-
-          <div>
-            <strong>Kołobrzeg</strong>
-            <b>18°C</b>
-          </div>
-        </div>
+        <div className="welcome-illustration">🏡</div>
       </section>
 
       <section className="dashboard-grid">
-        <AppCard title="📅 Dzisiaj w rodzinie">
-          <div className="rows">
-            <p>08:00 • Paweł — szkoła</p>
-            <p>08:00 • Nikodem — szkoła</p>
-            <p>13:00 • Sebastian — dyżur</p>
-          </div>
-        </AppCard>
+        <AppCard
+          icon="📅"
+          title="Dzisiaj"
+          text="Sprawdź rodzinny kalendarz i najbliższe wydarzenia."
+        />
 
-        <AppCard title="✅ Zadania na dziś">
-          <div className="rows">
-            <p>☑ Strój na WF — Paweł</p>
-            <p>☐ Zeszyt do matematyki</p>
-            <p>☐ Przygotować drugie śniadanie</p>
-          </div>
-        </AppCard>
+        <AppCard
+          icon="✅"
+          title="Zadania"
+          text="Zobacz, co jest dziś do zrobienia."
+        />
 
-        <AppCard title="🛒 Lista zakupów">
-          <div className="rows">
-            <p>☐ Mleko</p>
-            <p>☑ Chleb</p>
-            <p>☐ Banany</p>
-          </div>
-        </AppCard>
+        <AppCard
+          icon="🛒"
+          title="Zakupy"
+          text="Wspólna lista zakupów zawsze pod ręką."
+        />
 
-        <AppCard title="🎒 Szkoła — Paweł">
-          <div className="vulcan-status">
-            <strong>VULCAN ●</strong>
-            <span>Połączono</span>
-          </div>
+        <AppCard
+          icon="💬"
+          title="Rodzinny czat"
+          text="Wiadomości całej rodziny w jednym miejscu."
+        />
 
-          <div className="rows">
-            <p>🔔 Zmiana planu lekcji</p>
-            <p>✉️ Nowa wiadomość od wychowawcy</p>
-          </div>
-        </AppCard>
+        <AppCard
+          icon="❤️"
+          title="Zdrowie"
+          text="Wizyty, lekarze i ważne informacje."
+        />
 
-        <AppCard title="❤️ Zdrowie">
-          <div className="rows">
-            <p>Layla — szczepienie • za 2 dni</p>
-            <p>Dominika — wizyta kontrolna • za 7 dni</p>
-          </div>
-        </AppCard>
-
-        <AppCard title="👨‍👩‍👧‍👦 Rodzina">
-          <div className="rows">
-            <p>🎂 Roczek Layli — 10.10</p>
-            <p>❤️ Rocznica ślubu — 06.09</p>
-          </div>
-        </AppCard>
+        <AppCard
+          icon="🎒"
+          title="Szkoła"
+          text="Plan lekcji i zajęcia dzieci."
+        />
       </section>
     </div>
   );
@@ -581,9 +668,8 @@ function StartPage({ name }: { name: string }) {
    ========================================================= */
 
 function CalendarPage({ user }: { user: User }) {
-  const [weekStart, setWeekStart] = useState<Date>(() =>
-    startOfWeek(new Date())
-  );
+  const [view, setView] = useState<CalendarView>('week');
+  const [focusDate, setFocusDate] = useState(() => new Date());
 
   const [events, setEvents] = useState<CalendarEventData[]>([]);
   const [selectedPerson, setSelectedPerson] =
@@ -599,31 +685,19 @@ function CalendarPage({ user }: { user: User }) {
   const [updating, setUpdating] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const [form, setForm] = useState<EventForm>({
-    title: '',
-    person: 'family',
-    date: formatDateInput(new Date()),
-    time: '12:00',
-  });
+  const [form, setForm] = useState<EventForm>(() =>
+    createDefaultForm(new Date())
+  );
 
-  const [editForm, setEditForm] = useState<EventForm>({
-    title: '',
-    person: 'family',
-    date: '',
-    time: '',
-  });
-
-  /* =======================================================
-     FIRESTORE — ODCZYT
-     ======================================================= */
+  const [editForm, setEditForm] = useState<EventForm>(() =>
+    createDefaultForm(new Date())
+  );
 
   useEffect(() => {
-    const eventsRef = collection(db, 'calendarEvents');
-
     const unsubscribe = onSnapshot(
-      eventsRef,
+      collection(db, 'calendarEvents'),
       (snapshot) => {
-        const loadedEvents: CalendarEventData[] = [];
+        const loaded: CalendarEventData[] = [];
 
         snapshot.forEach((eventDocument) => {
           const data = eventDocument.data();
@@ -632,141 +706,144 @@ function CalendarPage({ user }: { user: User }) {
             return;
           }
 
-          const person: PersonKey = isPersonKey(data.person)
-            ? data.person
-            : 'family';
+          const start = data.date.toDate();
 
-          const title =
-            typeof data.title === 'string' && data.title.trim().length > 0
-              ? data.title
-              : 'Wydarzenie';
+          const end =
+            data.endDate instanceof Timestamp
+              ? data.endDate.toDate()
+              : new Date(start.getTime() + 60 * 60 * 1000);
 
-          const createdBy =
-            typeof data.createdBy === 'string' ? data.createdBy : '';
-
-          loadedEvents.push({
+          loaded.push({
             id: eventDocument.id,
-            title,
-            person,
-            date: data.date.toDate(),
-            createdBy,
+            title:
+              typeof data.title === 'string' && data.title.trim()
+                ? data.title
+                : 'Wydarzenie',
+            person: isPersonKey(data.person)
+              ? data.person
+              : 'family',
+            date: start,
+            endDate: end,
+            allDay: data.allDay === true,
+            description:
+              typeof data.description === 'string'
+                ? data.description
+                : '',
+            createdBy:
+              typeof data.createdBy === 'string'
+                ? data.createdBy
+                : '',
           });
         });
 
-        loadedEvents.sort(
-          (a, b) => a.date.getTime() - b.date.getTime()
-        );
+        loaded.sort((a, b) => a.date.getTime() - b.date.getTime());
 
-        setEvents(loadedEvents);
+        setEvents(loaded);
 
         setSelectedEvent((current) => {
-          if (!current) {
-            return null;
-          }
+          if (!current) return null;
 
           return (
-            loadedEvents.find((event) => event.id === current.id) || null
+            loaded.find((event) => event.id === current.id) || null
           );
         });
       },
       (error) => {
-        console.error('Błąd pobierania wydarzeń:', error);
+        console.error('Błąd pobierania kalendarza:', error);
       }
     );
 
     return unsubscribe;
   }, []);
 
+  const weekStart = useMemo(() => startOfWeek(focusDate), [focusDate]);
+
   const weekDays = useMemo(
-    () =>
-      Array.from({ length: 7 }, (_, index) =>
-        addDays(weekStart, index)
-      ),
+    () => Array.from({ length: 7 }, (_, index) => addDays(weekStart, index)),
     [weekStart]
   );
 
+  const monthDays = useMemo(() => {
+    const first = new Date(
+      focusDate.getFullYear(),
+      focusDate.getMonth(),
+      1
+    );
+
+    const gridStart = startOfWeek(first);
+
+    return Array.from({ length: 42 }, (_, index) =>
+      addDays(gridStart, index)
+    );
+  }, [focusDate]);
+
   const visibleEvents = useMemo(() => {
-    const weekEnd = addDays(weekStart, 7);
-
-    return events.filter((event) => {
-      const inWeek =
-        event.date >= weekStart && event.date < weekEnd;
-
-      const personMatches =
+    return events.filter(
+      (event) =>
         selectedPerson === 'family' ||
         event.person === selectedPerson ||
-        event.person === 'family';
-
-      return inWeek && personMatches;
-    });
-  }, [events, weekStart, selectedPerson]);
+        event.person === 'family'
+    );
+  }, [events, selectedPerson]);
 
   const todayEvents = useMemo(() => {
     const today = new Date();
 
-    return events.filter((event) => sameDay(event.date, today));
-  }, [events]);
+    return visibleEvents.filter((event) => sameDay(event.date, today));
+  }, [visibleEvents]);
 
   const upcomingEvents = useMemo(() => {
     const now = new Date();
 
-    return events
-      .filter((event) => event.date > now)
-      .slice(0, 3);
-  }, [events]);
+    return visibleEvents
+      .filter((event) => event.date.getTime() > now.getTime())
+      .slice(0, 4);
+  }, [visibleEvents]);
 
-  /* =======================================================
-     DODAWANIE
-     ======================================================= */
-
-  async function saveEvent(e: React.FormEvent) {
-    e.preventDefault();
-
-    const cleanTitle = form.title.trim();
-
-    if (!cleanTitle || !form.date || !form.time) {
-      return;
+  function titleForView(): string {
+    if (view === 'day') {
+      return capitalize(
+        focusDate.toLocaleDateString('pl-PL', {
+          weekday: 'long',
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        })
+      );
     }
 
-    const eventDate = new Date(`${form.date}T${form.time}:00`);
-
-    if (Number.isNaN(eventDate.getTime())) {
-      alert('Nieprawidłowa data lub godzina.');
-      return;
+    if (view === 'week') {
+      return weekTitle(weekStart);
     }
 
-    setSaving(true);
-
-    try {
-      await addDoc(collection(db, 'calendarEvents'), {
-        title: cleanTitle,
-        person: form.person,
-        date: Timestamp.fromDate(eventDate),
-        createdBy: user.uid,
-        createdAt: Timestamp.now(),
-      });
-
-      setWeekStart(startOfWeek(eventDate));
-
-      setForm({
-        title: '',
-        person: 'family',
-        date: formatDateInput(eventDate),
-        time: '12:00',
-      });
-
-      setShowForm(false);
-    } catch (error) {
-      console.error('Błąd zapisywania wydarzenia:', error);
-      alert('Nie udało się zapisać wydarzenia.');
-    } finally {
-      setSaving(false);
-    }
+    return capitalize(
+      focusDate.toLocaleDateString('pl-PL', {
+        month: 'long',
+        year: 'numeric',
+      })
+    );
   }
 
-  /* =======================================================
-     OTWIERANIE WYDARZENIA
-     ======================================================= */
+  function navigate(direction: number) {
+    if (view === 'day') {
+      setFocusDate((current) => addDays(current, direction));
+      return;
+    }
+
+    if (view === 'week') {
+      setFocusDate((current) => addDays(current, direction * 7));
+      return;
+    }
+
+    setFocusDate((current) => addMonths(current, direction));
+  }
+
+  function openNewEvent(date = focusDate, time = '12:00') {
+    const nextForm = createDefaultForm(date, time);
+
+    setForm(nextForm);
+    setShowForm(true);
+  }
 
   function openEvent(event: CalendarEventData) {
     setSelectedEvent(event);
@@ -776,7 +853,10 @@ function CalendarPage({ user }: { user: User }) {
       title: event.title,
       person: event.person,
       date: formatDateInput(event.date),
-      time: formatTimeInput(event.date),
+      allDay: event.allDay,
+      startTime: formatTimeInput(event.date),
+      endTime: formatTimeInput(event.endDate),
+      description: event.description,
     });
   }
 
@@ -785,87 +865,91 @@ function CalendarPage({ user }: { user: User }) {
     setEditingEvent(false);
   }
 
-  /* =======================================================
-     EDYCJA
-     ======================================================= */
+  async function saveEvent(e: React.FormEvent) {
+    e.preventDefault();
+
+    const dates = buildEventDates(form);
+
+    if (!form.title.trim() || !dates) {
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await addDoc(collection(db, 'calendarEvents'), {
+        title: form.title.trim(),
+        person: form.person,
+        date: Timestamp.fromDate(dates.start),
+        endDate: Timestamp.fromDate(dates.end),
+        allDay: form.allDay,
+        description: form.description.trim(),
+        createdBy: user.uid,
+        createdAt: Timestamp.now(),
+      });
+
+      setFocusDate(dates.start);
+      setShowForm(false);
+      setForm(createDefaultForm(dates.start));
+    } catch (error) {
+      console.error('Błąd zapisu:', error);
+      alert('Nie udało się zapisać wydarzenia.');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function updateEvent(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!selectedEvent) {
-      return;
-    }
+    if (!selectedEvent) return;
 
-    const cleanTitle = editForm.title.trim();
+    const dates = buildEventDates(editForm);
 
-    if (!cleanTitle || !editForm.date || !editForm.time) {
-      return;
-    }
-
-    const eventDate = new Date(
-      `${editForm.date}T${editForm.time}:00`
-    );
-
-    if (Number.isNaN(eventDate.getTime())) {
-      alert('Nieprawidłowa data lub godzina.');
+    if (!editForm.title.trim() || !dates) {
       return;
     }
 
     setUpdating(true);
 
     try {
-      const eventRef = doc(
-        db,
-        'calendarEvents',
-        selectedEvent.id
-      );
-
-      await updateDoc(eventRef, {
-        title: cleanTitle,
+      await updateDoc(doc(db, 'calendarEvents', selectedEvent.id), {
+        title: editForm.title.trim(),
         person: editForm.person,
-        date: Timestamp.fromDate(eventDate),
+        date: Timestamp.fromDate(dates.start),
+        endDate: Timestamp.fromDate(dates.end),
+        allDay: editForm.allDay,
+        description: editForm.description.trim(),
         updatedBy: user.uid,
         updatedAt: Timestamp.now(),
       });
 
-      setWeekStart(startOfWeek(eventDate));
+      setFocusDate(dates.start);
       setEditingEvent(false);
     } catch (error) {
-      console.error('Błąd edycji wydarzenia:', error);
+      console.error('Błąd aktualizacji:', error);
       alert('Nie udało się zapisać zmian.');
     } finally {
       setUpdating(false);
     }
   }
 
-  /* =======================================================
-     USUWANIE
-     ======================================================= */
-
   async function removeEvent() {
-    if (!selectedEvent) {
-      return;
-    }
+    if (!selectedEvent) return;
 
     const confirmed = window.confirm(
-      `Czy na pewno chcesz usunąć wydarzenie „${selectedEvent.title}”?`
+      `Czy na pewno chcesz usunąć „${selectedEvent.title}”?`
     );
 
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
 
     setDeleting(true);
 
     try {
-      await deleteDoc(
-        doc(db, 'calendarEvents', selectedEvent.id)
-      );
-
-      setSelectedEvent(null);
-      setEditingEvent(false);
+      await deleteDoc(doc(db, 'calendarEvents', selectedEvent.id));
+      closeEvent();
     } catch (error) {
-      console.error('Błąd usuwania wydarzenia:', error);
+      console.error('Błąd usuwania:', error);
       alert('Nie udało się usunąć wydarzenia.');
     } finally {
       setDeleting(false);
@@ -874,6 +958,8 @@ function CalendarPage({ user }: { user: User }) {
 
   return (
     <div className="page-content">
+      <style>{calendarStageStyles}</style>
+
       <section className="page-header">
         <div>
           <small>Nasza Rodzina</small>
@@ -882,8 +968,15 @@ function CalendarPage({ user }: { user: User }) {
         </div>
 
         <button
+          type="button"
           className="primary-button"
-          onClick={() => setShowForm((current) => !current)}
+          onClick={() => {
+            if (showForm) {
+              setShowForm(false);
+            } else {
+              openNewEvent();
+            }
+          }}
         >
           {showForm ? '✕ Zamknij' : '＋ Dodaj wydarzenie'}
         </button>
@@ -892,60 +985,74 @@ function CalendarPage({ user }: { user: User }) {
       {showForm && (
         <section
           className="app-card"
-          style={{ marginBottom: '20px' }}
+          style={{ marginBottom: 20 }}
         >
-          <h2>➕ Nowe wydarzenie</h2>
+          <h2 style={{ marginTop: 0 }}>➕ Nowe wydarzenie</h2>
 
           <EventFormFields
             form={form}
             setForm={setForm}
             onSubmit={saveEvent}
-            buttonText={saving ? 'Zapisywanie...' : '✓ Zapisz'}
+            buttonText={saving ? 'Zapisywanie...' : '✓ Zapisz wydarzenie'}
             disabled={saving}
           />
         </section>
       )}
 
-      <section className="calendar-toolbar">
-        <div className="calendar-navigation">
-          <button
-            type="button"
-            onClick={() =>
-              setWeekStart((current) => addDays(current, -7))
-            }
-          >
+      <section className="calendar2-toolbar">
+        <div className="calendar2-navigation">
+          <button type="button" onClick={() => navigate(-1)}>
             ‹
           </button>
 
-          <strong>{weekTitle(weekStart)}</strong>
+          <strong>{titleForView()}</strong>
 
-          <button
-            type="button"
-            onClick={() =>
-              setWeekStart((current) => addDays(current, 7))
-            }
-          >
+          <button type="button" onClick={() => navigate(1)}>
             ›
           </button>
         </div>
 
-        <div className="view-switch">
-          <button type="button">Dzień</button>
+        <button
+          type="button"
+          className="calendar2-today"
+          onClick={() => setFocusDate(new Date())}
+        >
+          Dzisiaj
+        </button>
 
-          <button type="button" className="selected">
+        <div className="calendar2-view-switch">
+          <button
+            type="button"
+            className={view === 'day' ? 'active' : ''}
+            onClick={() => setView('day')}
+          >
+            Dzień
+          </button>
+
+          <button
+            type="button"
+            className={view === 'week' ? 'active' : ''}
+            onClick={() => setView('week')}
+          >
             Tydzień
           </button>
 
-          <button type="button">Miesiąc</button>
+          <button
+            type="button"
+            className={view === 'month' ? 'active' : ''}
+            onClick={() => setView('month')}
+          >
+            Miesiąc
+          </button>
         </div>
       </section>
 
-      <section className="family-filters">
+      <section className="calendar2-filters">
         <FilterButton
           active={selectedPerson === 'family'}
           onClick={() => setSelectedPerson('family')}
         >
-          ● Cała rodzina
+          👨‍👩‍👧‍👦 Cała rodzina
         </FilterButton>
 
         <FilterButton
@@ -984,220 +1091,171 @@ function CalendarPage({ user }: { user: User }) {
         </FilterButton>
       </section>
 
-      <section className="calendar-layout">
-        <div className="calendar-box">
-          <div className="week-grid">
-            {weekDays.map((day) => {
-              const dayEvents = visibleEvents.filter((event) =>
-                sameDay(event.date, day)
-              );
+      {view === 'day' && (
+        <DayView
+          date={focusDate}
+          events={visibleEvents}
+          onEvent={openEvent}
+          onAdd={openNewEvent}
+        />
+      )}
 
-              return (
-                <div
-                  className="calendar-day"
-                  key={day.toISOString()}
-                >
-                  <div className="calendar-day-header">
-                    <small>
-                      {capitalize(
-                        day.toLocaleDateString('pl-PL', {
-                          weekday: 'short',
-                        })
-                      )}
-                    </small>
+      {view === 'week' && (
+        <div className="calendar2-week-layout">
+          <section className="calendar2-week-card">
+            <div className="calendar2-week-grid">
+              {weekDays.map((day) => {
+                const dayEvents = visibleEvents.filter((event) =>
+                  sameDay(event.date, day)
+                );
 
-                    <strong>{day.getDate()}</strong>
-                  </div>
+                const isToday = sameDay(day, new Date());
 
-                  {dayEvents.map((event) => (
+                return (
+                  <div
+                    key={formatDateInput(day)}
+                    className={`calendar2-week-day ${
+                      isToday ? 'today' : ''
+                    }`}
+                  >
                     <button
                       type="button"
-                      className={`calendar-event ${personEventClass(
-                        event.person
-                      )}`}
-                      key={event.id}
-                      onClick={() => openEvent(event)}
-                      style={{
-                        width: '100%',
-                        textAlign: 'left',
-                        borderTop: 'none',
-                        borderRight: 'none',
-                        borderBottom: 'none',
-                        cursor: 'pointer',
+                      className="calendar2-day-heading"
+                      onClick={() => {
+                        setFocusDate(day);
+                        setView('day');
                       }}
                     >
-                      <small>{formatTime(event.date)}</small>
-                      <strong>{event.title}</strong>
+                      <span>
+                        {capitalize(
+                          day.toLocaleDateString('pl-PL', {
+                            weekday: 'short',
+                          })
+                        )}
+                      </span>
+
+                      <strong>{day.getDate()}</strong>
                     </button>
-                  ))}
-                </div>
-              );
-            })}
-          </div>
+
+                    <button
+                      type="button"
+                      className="calendar2-empty-add"
+                      onClick={() => openNewEvent(day)}
+                    >
+                      ＋
+                    </button>
+
+                    <div className="calendar2-day-events">
+                      {dayEvents.length === 0 && (
+                        <small className="calendar2-no-events">
+                          Brak wydarzeń
+                        </small>
+                      )}
+
+                      {dayEvents.map((event) => (
+                        <CalendarEventButton
+                          key={event.id}
+                          event={event}
+                          onClick={() => openEvent(event)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <CalendarSidePanel
+            todayEvents={todayEvents}
+            upcomingEvents={upcomingEvents}
+            onEvent={openEvent}
+          />
         </div>
+      )}
 
-        <aside className="calendar-side">
-          <h2>Dzisiaj</h2>
-
-          {todayEvents.length === 0 && (
-            <p className="muted">Brak wydarzeń na dziś.</p>
-          )}
-
-          {todayEvents.map((event) => (
-            <button
-              type="button"
-              className="today-event"
-              key={event.id}
-              onClick={() => openEvent(event)}
-              style={{
-                width: '100%',
-                background: 'transparent',
-                border: 0,
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
-            >
-              <b>{formatTime(event.date)}</b>
-              <span>{event.title}</span>
-            </button>
-          ))}
-
-          <h2 className="side-heading">Nadchodzące</h2>
-
-          {upcomingEvents.length === 0 && (
-            <p className="muted">
-              Brak nadchodzących wydarzeń.
-            </p>
-          )}
-
-          {upcomingEvents.map((event) => (
-            <button
-              type="button"
-              className="upcoming"
-              key={event.id}
-              onClick={() => openEvent(event)}
-              style={{
-                width: '100%',
-                background: 'transparent',
-                border: 0,
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
-            >
-              <span>📅</span>
-
-              <div>
-                <strong>{event.title}</strong>
-
-                <small>
-                  {event.date.toLocaleDateString('pl-PL')}
-                  {' • '}
-                  {formatTime(event.date)}
-                </small>
-              </div>
-            </button>
-          ))}
-        </aside>
-      </section>
+      {view === 'month' && (
+        <MonthView
+          focusDate={focusDate}
+          days={monthDays}
+          events={visibleEvents}
+          onEvent={openEvent}
+          onAdd={openNewEvent}
+          onOpenDay={(day) => {
+            setFocusDate(day);
+            setView('day');
+          }}
+        />
+      )}
 
       {selectedEvent && (
         <div
-          onClick={closeEvent}
-          style={modalOverlayStyle}
+          className="calendar2-modal-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              closeEvent();
+            }
+          }}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={modalStyle}
-          >
+          <div className="calendar2-modal">
+            <div className="calendar2-modal-header">
+              <div>
+                <small>Wydarzenie</small>
+                <h2>{selectedEvent.title}</h2>
+              </div>
+
+              <button
+                type="button"
+                className="calendar2-close"
+                onClick={closeEvent}
+              >
+                ✕
+              </button>
+            </div>
+
             {!editingEvent ? (
               <>
-                <div style={modalHeaderStyle}>
-                  <div>
-                    <small
-                      style={{
-                        color: '#7b91aa',
-                        fontWeight: 700,
-                      }}
-                    >
-                      WYDARZENIE
-                    </small>
+                <div className="calendar2-event-details">
+                  <DetailRow
+                    label="Osoba"
+                    value={personLabel(selectedEvent.person)}
+                  />
 
-                    <h2
-                      style={{
-                        margin: '5px 0 0',
-                        color: '#12345e',
-                        fontSize: '28px',
-                      }}
-                    >
-                      {selectedEvent.title}
-                    </h2>
-                  </div>
+                  <DetailRow
+                    label="Data"
+                    value={capitalize(
+                      selectedEvent.date.toLocaleDateString('pl-PL', {
+                        weekday: 'long',
+                        day: 'numeric',
+                        month: 'long',
+                        year: 'numeric',
+                      })
+                    )}
+                  />
 
-                  <button
-                    type="button"
-                    onClick={closeEvent}
-                    style={closeButtonStyle}
-                  >
-                    ✕
-                  </button>
+                  <DetailRow
+                    label="Godzina"
+                    value={
+                      selectedEvent.allDay
+                        ? 'Cały dzień'
+                        : `${formatTime(selectedEvent.date)} – ${formatTime(
+                            selectedEvent.endDate
+                          )}`
+                    }
+                  />
+
+                  {selectedEvent.description && (
+                    <DetailRow
+                      label="Opis"
+                      value={selectedEvent.description}
+                    />
+                  )}
                 </div>
 
-                <div style={eventDetailsStyle}>
-                  <div style={detailRowStyle}>
-                    <span>👤</span>
-
-                    <div>
-                      <small style={detailLabelStyle}>
-                        Dla kogo?
-                      </small>
-
-                      <strong>
-                        {personLabel(selectedEvent.person)}
-                      </strong>
-                    </div>
-                  </div>
-
-                  <div style={detailRowStyle}>
-                    <span>📅</span>
-
-                    <div>
-                      <small style={detailLabelStyle}>
-                        Data
-                      </small>
-
-                      <strong>
-                        {selectedEvent.date.toLocaleDateString(
-                          'pl-PL',
-                          {
-                            weekday: 'long',
-                            day: 'numeric',
-                            month: 'long',
-                            year: 'numeric',
-                          }
-                        )}
-                      </strong>
-                    </div>
-                  </div>
-
-                  <div style={detailRowStyle}>
-                    <span>🕐</span>
-
-                    <div>
-                      <small style={detailLabelStyle}>
-                        Godzina
-                      </small>
-
-                      <strong>
-                        {formatTime(selectedEvent.date)}
-                      </strong>
-                    </div>
-                  </div>
-                </div>
-
-                <div style={modalActionsStyle}>
+                <div className="calendar2-modal-actions">
                   <button
                     type="button"
-                    className="primary-button"
+                    className="calendar2-secondary"
                     onClick={() => setEditingEvent(true)}
                   >
                     ✏️ Edytuj
@@ -1205,69 +1263,26 @@ function CalendarPage({ user }: { user: User }) {
 
                   <button
                     type="button"
+                    className="calendar2-danger"
                     onClick={removeEvent}
                     disabled={deleting}
-                    style={deleteButtonStyle}
                   >
                     {deleting ? 'Usuwanie...' : '🗑️ Usuń'}
                   </button>
                 </div>
               </>
             ) : (
-              <>
-                <div style={modalHeaderStyle}>
-                  <div>
-                    <small
-                      style={{
-                        color: '#7b91aa',
-                        fontWeight: 700,
-                      }}
-                    >
-                      EDYCJA
-                    </small>
-
-                    <h2
-                      style={{
-                        margin: '5px 0 0',
-                        color: '#12345e',
-                        fontSize: '28px',
-                      }}
-                    >
-                      Edytuj wydarzenie
-                    </h2>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setEditingEvent(false)}
-                    style={closeButtonStyle}
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                <EventFormFields
-                  form={editForm}
-                  setForm={setEditForm}
-                  onSubmit={updateEvent}
-                  buttonText={
-                    updating ? 'Zapisywanie...' : '✓ Zapisz zmiany'
-                  }
-                  disabled={updating}
-                />
-
-                <button
-                  type="button"
-                  onClick={() => setEditingEvent(false)}
-                  style={{
-                    ...secondaryButtonStyle,
-                    marginTop: '12px',
-                    width: '100%',
-                  }}
-                >
-                  Anuluj
-                </button>
-              </>
+              <EventFormFields
+                form={editForm}
+                setForm={setEditForm}
+                onSubmit={updateEvent}
+                buttonText={
+                  updating ? 'Zapisywanie...' : '✓ Zapisz zmiany'
+                }
+                disabled={updating}
+                cancelText="Anuluj"
+                onCancel={() => setEditingEvent(false)}
+              />
             )}
           </div>
         </div>
@@ -1277,8 +1292,68 @@ function CalendarPage({ user }: { user: User }) {
 }
 
 /* =========================================================
-   FORMULARZ WYDARZENIA
+   FORMULARZ KALENDARZA
    ========================================================= */
+
+function createDefaultForm(date: Date, time = '12:00'): EventForm {
+  const start = new Date(date);
+
+  const [hours, minutes] = time.split(':').map(Number);
+
+  start.setHours(
+    Number.isFinite(hours) ? hours : 12,
+    Number.isFinite(minutes) ? minutes : 0,
+    0,
+    0
+  );
+
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+
+  return {
+    title: '',
+    person: 'family',
+    date: formatDateInput(date),
+    allDay: false,
+    startTime: formatTimeInput(start),
+    endTime: formatTimeInput(end),
+    description: '',
+  };
+}
+
+function buildEventDates(
+  form: EventForm
+): { start: Date; end: Date } | null {
+  if (!form.date) return null;
+
+  if (form.allDay) {
+    const start = parseLocalDate(form.date, '00:00');
+    const end = parseLocalDate(form.date, '23:59');
+
+    return { start, end };
+  }
+
+  if (!form.startTime || !form.endTime) {
+    return null;
+  }
+
+  const start = parseLocalDate(form.date, form.startTime);
+  const end = parseLocalDate(form.date, form.endTime);
+
+  if (
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime())
+  ) {
+    alert('Nieprawidłowa data lub godzina.');
+    return null;
+  }
+
+  if (end.getTime() <= start.getTime()) {
+    alert('Godzina zakończenia musi być późniejsza od rozpoczęcia.');
+    return null;
+  }
+
+  return { start, end };
+}
 
 function EventFormFields({
   form,
@@ -1286,26 +1361,21 @@ function EventFormFields({
   onSubmit,
   buttonText,
   disabled,
+  cancelText,
+  onCancel,
 }: {
   form: EventForm;
   setForm: React.Dispatch<React.SetStateAction<EventForm>>;
   onSubmit: (e: React.FormEvent) => void;
   buttonText: string;
   disabled: boolean;
+  cancelText?: string;
+  onCancel?: () => void;
 }) {
   return (
-    <form
-      onSubmit={onSubmit}
-      style={{
-        display: 'grid',
-        gridTemplateColumns:
-          'repeat(auto-fit, minmax(160px, 1fr))',
-        gap: '14px',
-        alignItems: 'end',
-      }}
-    >
-      <label style={formLabelStyle}>
-        <strong>Nazwa</strong>
+    <form onSubmit={onSubmit} className="calendar2-form">
+      <label className="calendar2-field calendar2-field-wide">
+        <span>Nazwa wydarzenia</span>
 
         <input
           type="text"
@@ -1316,24 +1386,26 @@ function EventFormFields({
               title: e.target.value,
             }))
           }
-          placeholder="Np. Dentysta"
+          placeholder="Np. dentysta, urodziny, trening..."
           required
-          style={inputStyle}
         />
       </label>
 
-      <label style={formLabelStyle}>
-        <strong>Dla kogo?</strong>
+      <label className="calendar2-field">
+        <span>Dla kogo?</span>
 
         <select
           value={form.person}
-          onChange={(e) =>
+          onChange={(e) => {
+            const value = e.target.value;
+
+            if (!isPersonKey(value)) return;
+
             setForm((current) => ({
               ...current,
-              person: e.target.value as PersonKey,
-            }))
-          }
-          style={inputStyle}
+              person: value,
+            }));
+          }}
         >
           <option value="family">Cała rodzina</option>
           <option value="Sebastian">Sebastian</option>
@@ -1344,8 +1416,8 @@ function EventFormFields({
         </select>
       </label>
 
-      <label style={formLabelStyle}>
-        <strong>Data</strong>
+      <label className="calendar2-field">
+        <span>Data</span>
 
         <input
           type="date"
@@ -1357,41 +1429,411 @@ function EventFormFields({
             }))
           }
           required
-          style={inputStyle}
         />
       </label>
 
-      <label style={formLabelStyle}>
-        <strong>Godzina</strong>
-
+      <label className="calendar2-all-day">
         <input
-          type="time"
-          value={form.time}
+          type="checkbox"
+          checked={form.allDay}
           onChange={(e) =>
             setForm((current) => ({
               ...current,
-              time: e.target.value,
+              allDay: e.target.checked,
             }))
           }
-          required
-          style={inputStyle}
+        />
+
+        <span>Cały dzień</span>
+      </label>
+
+      {!form.allDay && (
+        <>
+          <label className="calendar2-field">
+            <span>Od</span>
+
+            <input
+              type="time"
+              value={form.startTime}
+              onChange={(e) =>
+                setForm((current) => ({
+                  ...current,
+                  startTime: e.target.value,
+                }))
+              }
+              required
+            />
+          </label>
+
+          <label className="calendar2-field">
+            <span>Do</span>
+
+            <input
+              type="time"
+              value={form.endTime}
+              onChange={(e) =>
+                setForm((current) => ({
+                  ...current,
+                  endTime: e.target.value,
+                }))
+              }
+              required
+            />
+          </label>
+        </>
+      )}
+
+      <label className="calendar2-field calendar2-field-wide">
+        <span>Opis / notatka</span>
+
+        <textarea
+          value={form.description}
+          onChange={(e) =>
+            setForm((current) => ({
+              ...current,
+              description: e.target.value,
+            }))
+          }
+          placeholder="Opcjonalna notatka..."
+          rows={3}
         />
       </label>
 
-      <button
-        type="submit"
-        className="primary-button"
-        disabled={disabled}
-        style={{ height: '48px' }}
-      >
-        {buttonText}
-      </button>
+      <div className="calendar2-form-actions calendar2-field-wide">
+        {onCancel && (
+          <button
+            type="button"
+            className="calendar2-secondary"
+            onClick={onCancel}
+            disabled={disabled}
+          >
+            {cancelText || 'Anuluj'}
+          </button>
+        )}
+
+        <button
+          type="submit"
+          className="primary-button"
+          disabled={disabled}
+        >
+          {buttonText}
+        </button>
+      </div>
     </form>
   );
 }
 
 /* =========================================================
-   FILTRY
+   WIDOK DNIA
+   ========================================================= */
+
+function DayView({
+  date,
+  events,
+  onEvent,
+  onAdd,
+}: {
+  date: Date;
+  events: CalendarEventData[];
+  onEvent: (event: CalendarEventData) => void;
+  onAdd: (date: Date, time?: string) => void;
+}) {
+  const dayEvents = events.filter((event) => sameDay(event.date, date));
+
+  const allDayEvents = dayEvents.filter((event) => event.allDay);
+  const timedEvents = dayEvents.filter((event) => !event.allDay);
+
+  const hours = Array.from({ length: 24 }, (_, index) => index);
+
+  return (
+    <section className="calendar2-day-view">
+      <div className="calendar2-day-title">
+        <div
+          className={`calendar2-big-date ${
+            sameDay(date, new Date()) ? 'today' : ''
+          }`}
+        >
+          <strong>{date.getDate()}</strong>
+
+          <span>
+            {capitalize(
+              date.toLocaleDateString('pl-PL', {
+                weekday: 'long',
+                month: 'long',
+              })
+            )}
+          </span>
+        </div>
+
+        <button
+          type="button"
+          className="calendar2-add-day"
+          onClick={() => onAdd(date)}
+        >
+          ＋ Dodaj
+        </button>
+      </div>
+
+      <div className="calendar2-all-day-row">
+        <div className="calendar2-time-label">Cały dzień</div>
+
+        <div className="calendar2-all-day-content">
+          {allDayEvents.length === 0 ? (
+            <button
+              type="button"
+              className="calendar2-empty-slot"
+              onClick={() => {
+                const formDate = new Date(date);
+                onAdd(formDate);
+              }}
+            >
+              ＋ Dodaj wydarzenie całodniowe
+            </button>
+          ) : (
+            allDayEvents.map((event) => (
+              <CalendarEventButton
+                key={event.id}
+                event={event}
+                onClick={() => onEvent(event)}
+              />
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="calendar2-timeline">
+        {hours.map((hour) => {
+          const hourEvents = timedEvents.filter(
+            (event) => event.date.getHours() === hour
+          );
+
+          const time = `${String(hour).padStart(2, '0')}:00`;
+
+          return (
+            <div className="calendar2-hour-row" key={hour}>
+              <div className="calendar2-time-label">{time}</div>
+
+              <div
+                className="calendar2-hour-content"
+                onClick={() => onAdd(date, time)}
+              >
+                {hourEvents.map((event) => (
+                  <CalendarEventButton
+                    key={event.id}
+                    event={event}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEvent(event);
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   WIDOK MIESIĄCA
+   ========================================================= */
+
+function MonthView({
+  focusDate,
+  days,
+  events,
+  onEvent,
+  onAdd,
+  onOpenDay,
+}: {
+  focusDate: Date;
+  days: Date[];
+  events: CalendarEventData[];
+  onEvent: (event: CalendarEventData) => void;
+  onAdd: (date: Date, time?: string) => void;
+  onOpenDay: (date: Date) => void;
+}) {
+  const weekNames = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Niedz'];
+
+  return (
+    <section className="calendar2-month-card">
+      <div className="calendar2-month-scroll">
+        <div className="calendar2-month-grid calendar2-month-head">
+          {weekNames.map((name) => (
+            <div key={name}>{name}</div>
+          ))}
+        </div>
+
+        <div className="calendar2-month-grid">
+          {days.map((day) => {
+            const dayEvents = events.filter((event) =>
+              sameDay(event.date, day)
+            );
+
+            const currentMonth =
+              day.getMonth() === focusDate.getMonth();
+
+            const today = sameDay(day, new Date());
+
+            return (
+              <div
+                key={formatDateInput(day)}
+                className={`calendar2-month-day ${
+                  !currentMonth ? 'outside' : ''
+                } ${today ? 'today' : ''}`}
+              >
+                <div className="calendar2-month-day-top">
+                  <button
+                    type="button"
+                    className="calendar2-month-number"
+                    onClick={() => onOpenDay(day)}
+                  >
+                    {day.getDate()}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="calendar2-month-plus"
+                    onClick={() => onAdd(day)}
+                    title="Dodaj wydarzenie"
+                  >
+                    ＋
+                  </button>
+                </div>
+
+                <div
+                  className="calendar2-month-events"
+                  onClick={() => onAdd(day)}
+                >
+                  {dayEvents.slice(0, 3).map((event) => (
+                    <CalendarEventButton
+                      key={event.id}
+                      event={event}
+                      compact
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEvent(event);
+                      }}
+                    />
+                  ))}
+
+                  {dayEvents.length > 3 && (
+                    <button
+                      type="button"
+                      className="calendar2-more"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenDay(day);
+                      }}
+                    >
+                      +{dayEvents.length - 3} więcej
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================
+   EVENT
+   ========================================================= */
+
+function CalendarEventButton({
+  event,
+  onClick,
+  compact = false,
+}: {
+  event: CalendarEventData;
+  onClick:
+    | (() => void)
+    | ((e: React.MouseEvent<HTMLButtonElement>) => void);
+  compact?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className={`calendar2-event ${personEventClass(event.person)} ${
+        compact ? 'compact' : ''
+      }`}
+      style={{
+        borderLeftColor: personColor(event.person),
+      }}
+      onClick={onClick}
+    >
+      <strong>{event.title}</strong>
+
+      {!compact && (
+        <span>
+          {event.allDay
+            ? 'Cały dzień'
+            : `${formatTime(event.date)}–${formatTime(event.endDate)}`}
+          {' · '}
+          {personLabel(event.person)}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/* =========================================================
+   PANEL BOCZNY
+   ========================================================= */
+
+function CalendarSidePanel({
+  todayEvents,
+  upcomingEvents,
+  onEvent,
+}: {
+  todayEvents: CalendarEventData[];
+  upcomingEvents: CalendarEventData[];
+  onEvent: (event: CalendarEventData) => void;
+}) {
+  return (
+    <aside className="calendar2-side">
+      <div className="app-card">
+        <h3>☀️ Dzisiaj</h3>
+
+        {todayEvents.length === 0 ? (
+          <p className="calendar2-muted">Brak wydarzeń na dziś.</p>
+        ) : (
+          todayEvents.map((event) => (
+            <CalendarEventButton
+              key={event.id}
+              event={event}
+              onClick={() => onEvent(event)}
+            />
+          ))
+        )}
+      </div>
+
+      <div className="app-card">
+        <h3>🗓️ Nadchodzące</h3>
+
+        {upcomingEvents.length === 0 ? (
+          <p className="calendar2-muted">Brak nadchodzących wydarzeń.</p>
+        ) : (
+          upcomingEvents.map((event) => (
+            <CalendarEventButton
+              key={event.id}
+              event={event}
+              onClick={() => onEvent(event)}
+            />
+          ))
+        )}
+      </div>
+    </aside>
+  );
+}
+
+/* =========================================================
+   FILTR
    ========================================================= */
 
 function FilterButton({
@@ -1406,11 +1848,30 @@ function FilterButton({
   return (
     <button
       type="button"
-      className={active ? 'filter-selected' : ''}
+      className={`calendar2-filter ${active ? 'active' : ''}`}
       onClick={onClick}
     >
       {children}
     </button>
+  );
+}
+
+/* =========================================================
+   DETAIL
+   ========================================================= */
+
+function DetailRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="calendar2-detail-row">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
 
@@ -1424,91 +1885,74 @@ function TasksPage() {
       <section className="page-header">
         <div>
           <small>Nasza Rodzina</small>
-          <h1>Zadania</h1>
+          <h1>✅ Zadania</h1>
           <p>Rodzinne obowiązki i rzeczy do zrobienia.</p>
         </div>
       </section>
 
-      <section className="module-grid module-grid-wide">
-        <AppCard title="✅ Zadania">
-          <div className="task-list">
-            <label className="task-row">
-              <input type="checkbox" defaultChecked />
+      <section className="dashboard-grid">
+        <AppCard
+          icon="🧹"
+          title="Dom"
+          text="Tutaj pojawią się zadania domowe."
+        />
 
-              <span className="completed">
-                Strój na WF — Paweł
-              </span>
-            </label>
+        <AppCard
+          icon="📌"
+          title="Do zrobienia"
+          text="Wspólna lista rodzinnych spraw."
+        />
 
-            <label className="task-row">
-              <input type="checkbox" />
-
-              <span>Zeszyt do matematyki</span>
-            </label>
-
-            <label className="task-row">
-              <input type="checkbox" />
-
-              <span>Przygotować drugie śniadanie</span>
-            </label>
-          </div>
-        </AppCard>
-
-        <AppCard title="📊 Dzisiaj">
-          <div className="progress-number">1/3</div>
-
-          <p className="muted">wykonanych zadań</p>
-
-          <div className="progress-bar">
-            <span style={{ width: '33%' }} />
-          </div>
-        </AppCard>
+        <AppCard
+          icon="🏆"
+          title="Wykonane"
+          text="Tutaj zobaczymy wykonane zadania."
+        />
       </section>
     </div>
   );
 }
 
 /* =========================================================
-   POZOSTAŁE MODUŁY
+   POZOSTAŁE STRONY
    ========================================================= */
 
-function ComingSoonPage({ page }: { page: Page }) {
-  return (
-    <div className="page-content">
-      <section className="page-header">
-        <div>
-          <small>Nasza Rodzina</small>
-          <h1>{page}</h1>
-          <p>Ten moduł przygotujemy w kolejnym kroku.</p>
-        </div>
-      </section>
-
-      <AppCard title={`🚧 ${page}`}>
-        <div className="rows">
-          <p>Moduł jest już podłączony do nawigacji.</p>
-          <p>Za chwilę dodamy tutaj jego właściwą zawartość.</p>
-        </div>
-      </AppCard>
-    </div>
-  );
-}
-
-/* =========================================================
-   KARTA
-   ========================================================= */
-
-function AppCard({
+function ComingSoon({
+  icon,
   title,
-  children,
+  text,
 }: {
+  icon: string;
   title: string;
-  children: React.ReactNode;
+  text: string;
 }) {
   return (
-    <section className="app-card">
-      <h2>{title}</h2>
-      {children}
-    </section>
+    <div className="page-content">
+      <section className="coming-soon">
+        <div className="coming-icon">{icon}</div>
+        <h1>{title}</h1>
+        <p>{text}</p>
+        <span>Ten moduł przygotujemy w kolejnym etapie.</span>
+      </section>
+    </div>
+  );
+}
+
+function AppCard({
+  icon,
+  title,
+  text,
+}: {
+  icon: string;
+  title: string;
+  text: string;
+}) {
+  return (
+    <article className="app-card">
+      <div className="card-icon">{icon}</div>
+      <h3>{title}</h3>
+      <p>{text}</p>
+    </article>
   );
 }
 
@@ -1517,169 +1961,714 @@ function AppCard({
    ========================================================= */
 
 function MobileNavigation({
-  activePage,
-  changePage,
+  page,
+  setPage,
 }: {
-  activePage: Page;
-  changePage: (page: Page) => void;
+  page: Page;
+  setPage: React.Dispatch<React.SetStateAction<Page>>;
 }) {
+  const items: Array<{
+    page: Page;
+    icon: string;
+    label: string;
+  }> = [
+    { page: 'Start', icon: '🏠', label: 'Start' },
+    { page: 'Kalendarz', icon: '📅', label: 'Kalendarz' },
+    { page: 'Zadania', icon: '✅', label: 'Zadania' },
+    { page: 'Zakupy', icon: '🛒', label: 'Zakupy' },
+    { page: 'Ustawienia', icon: '⚙️', label: 'Więcej' },
+  ];
+
   return (
-    <nav className="mobile-nav">
-      <button
-        className={activePage === 'Start' ? 'mobile-active' : ''}
-        onClick={() => changePage('Start')}
-      >
-        <span>⌂</span>
-        <small>Start</small>
-      </button>
-
-      <button
-        className={
-          activePage === 'Kalendarz' ? 'mobile-active' : ''
-        }
-        onClick={() => changePage('Kalendarz')}
-      >
-        <span>▦</span>
-        <small>Kalendarz</small>
-      </button>
-
-      <button
-        className={activePage === 'Zakupy' ? 'mobile-active' : ''}
-        onClick={() => changePage('Zakupy')}
-      >
-        <span>🛒</span>
-        <small>Zakupy</small>
-      </button>
-
-      <button
-        className={
-          activePage === 'Rodzina' ? 'mobile-active' : ''
-        }
-        onClick={() => changePage('Rodzina')}
-      >
-        <span>♧</span>
-        <small>Rodzina</small>
-      </button>
-
-      <button onClick={() => changePage('Ustawienia')}>
-        <span>•••</span>
-        <small>Więcej</small>
-      </button>
+    <nav className="mobile-navigation">
+      {items.map((item) => (
+        <button
+          type="button"
+          key={item.page}
+          className={page === item.page ? 'active' : ''}
+          onClick={() => setPage(item.page)}
+        >
+          <span>{item.icon}</span>
+          <small>{item.label}</small>
+        </button>
+      ))}
     </nav>
   );
 }
 
 /* =========================================================
-   STYLE
+   STYLE NOWEGO KALENDARZA
+   Są tutaj, więc NIE musisz zmieniać style.css.
    ========================================================= */
 
-const formLabelStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '6px',
-};
+const calendarStageStyles = `
+  .calendar2-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    background: #ffffff;
+    border-radius: 18px;
+    padding: 14px;
+    margin-bottom: 14px;
+    box-shadow: 0 8px 28px rgba(15, 42, 70, 0.06);
+  }
 
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  minWidth: 0,
-  height: '48px',
-  padding: '10px 12px',
-  border: '1px solid #dce6f0',
-  borderRadius: '10px',
-  background: '#f8fbff',
-  color: '#12345e',
-  fontSize: '16px',
-};
+  .calendar2-navigation {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1 1 300px;
+  }
 
-const modalOverlayStyle: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  background: 'rgba(9, 34, 62, 0.48)',
-  zIndex: 5000,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: '20px',
-};
+  .calendar2-navigation strong {
+    min-width: 210px;
+    text-align: center;
+    color: #173b63;
+    font-size: 16px;
+  }
 
-const modalStyle: React.CSSProperties = {
-  width: 'min(680px, 100%)',
-  maxHeight: '90vh',
-  overflowY: 'auto',
-  background: '#ffffff',
-  borderRadius: '24px',
-  padding: '26px',
-  boxShadow: '0 24px 70px rgba(10, 45, 80, 0.25)',
-};
+  .calendar2-navigation button,
+  .calendar2-today {
+    border: 1px solid #dce6ef;
+    background: #fff;
+    color: #173b63;
+    border-radius: 11px;
+    min-height: 42px;
+    padding: 0 15px;
+    font-weight: 800;
+    cursor: pointer;
+  }
 
-const modalHeaderStyle: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'flex-start',
-  gap: '20px',
-};
+  .calendar2-navigation button {
+    font-size: 25px;
+    min-width: 44px;
+  }
 
-const closeButtonStyle: React.CSSProperties = {
-  width: '42px',
-  height: '42px',
-  border: 0,
-  borderRadius: '12px',
-  background: '#eef5fb',
-  color: '#12345e',
-  fontSize: '18px',
-  cursor: 'pointer',
-};
+  .calendar2-view-switch {
+    display: flex;
+    padding: 4px;
+    background: #eef4f8;
+    border-radius: 12px;
+  }
 
-const eventDetailsStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: '12px',
-  marginTop: '24px',
-};
+  .calendar2-view-switch button {
+    border: 0;
+    background: transparent;
+    color: #557086;
+    padding: 9px 14px;
+    border-radius: 9px;
+    font-weight: 700;
+    cursor: pointer;
+  }
 
-const detailRowStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '14px',
-  padding: '15px',
-  background: '#f7faff',
-  borderRadius: '14px',
-  color: '#12345e',
-};
+  .calendar2-view-switch button.active {
+    background: #fff;
+    color: #153a63;
+    box-shadow: 0 2px 8px rgba(20, 52, 83, 0.09);
+  }
 
-const detailLabelStyle: React.CSSProperties = {
-  display: 'block',
-  marginBottom: '3px',
-  color: '#7b91aa',
-};
+  .calendar2-filters {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 3px 1px 14px;
+    scrollbar-width: thin;
+  }
 
-const modalActionsStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '1fr 1fr',
-  gap: '12px',
-  marginTop: '24px',
-};
+  .calendar2-filter {
+    white-space: nowrap;
+    border: 1px solid #dfe8ef;
+    background: #fff;
+    color: #486176;
+    padding: 9px 13px;
+    border-radius: 999px;
+    font-weight: 700;
+    cursor: pointer;
+  }
 
-const deleteButtonStyle: React.CSSProperties = {
-  minHeight: '48px',
-  border: '1px solid #ffd2d2',
-  borderRadius: '12px',
-  background: '#fff1f1',
-  color: '#c53a3a',
-  fontWeight: 700,
-  fontSize: '16px',
-  cursor: 'pointer',
-};
+  .calendar2-filter.active {
+    color: #153a63;
+    border-color: #9fc5e8;
+    background: #edf7ff;
+  }
 
-const secondaryButtonStyle: React.CSSProperties = {
-  minHeight: '48px',
-  border: '1px solid #dce6f0',
-  borderRadius: '12px',
-  background: '#f5f8fc',
-  color: '#12345e',
-  fontWeight: 700,
-  fontSize: '16px',
-  cursor: 'pointer',
-};
+  .calendar2-week-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 18px;
+    align-items: start;
+  }
+
+  .calendar2-week-card,
+  .calendar2-month-card,
+  .calendar2-day-view {
+    background: #fff;
+    border-radius: 20px;
+    box-shadow: 0 8px 28px rgba(15, 42, 70, 0.06);
+    overflow: hidden;
+  }
+
+  .calendar2-week-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    min-height: 480px;
+  }
+
+  .calendar2-week-day {
+    position: relative;
+    min-width: 0;
+    border-right: 1px solid #e8eef3;
+    padding: 10px 8px 14px;
+  }
+
+  .calendar2-week-day:last-child {
+    border-right: 0;
+  }
+
+  .calendar2-week-day.today {
+    background: #f3f9ff;
+  }
+
+  .calendar2-day-heading {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: #607589;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    padding: 5px;
+  }
+
+  .calendar2-day-heading strong {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: #173b63;
+    font-size: 17px;
+  }
+
+  .calendar2-week-day.today .calendar2-day-heading strong {
+    background: #2583dc;
+    color: #fff;
+  }
+
+  .calendar2-empty-add {
+    display: block;
+    margin: 4px auto 8px;
+    width: 30px;
+    height: 30px;
+    border: 1px dashed #c6d6e3;
+    background: transparent;
+    color: #7890a3;
+    border-radius: 9px;
+    cursor: pointer;
+  }
+
+  .calendar2-day-events {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .calendar2-no-events,
+  .calendar2-muted {
+    color: #8ca0af;
+  }
+
+  .calendar2-event {
+    width: 100%;
+    text-align: left;
+    border: 0;
+    border-left: 4px solid;
+    background: #f5f8fb;
+    border-radius: 8px;
+    padding: 8px;
+    cursor: pointer;
+    overflow: hidden;
+  }
+
+  .calendar2-event strong {
+    display: block;
+    color: #173b63;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .calendar2-event span {
+    display: block;
+    margin-top: 3px;
+    color: #64798a;
+    font-size: 11px;
+  }
+
+  .calendar2-event.compact {
+    padding: 5px 6px;
+  }
+
+  .calendar2-event.compact strong {
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .calendar2-side {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+
+  .calendar2-side .app-card {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .calendar2-side h3 {
+    margin-top: 0;
+  }
+
+  .calendar2-day-title {
+    padding: 20px;
+    border-bottom: 1px solid #e7eef4;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .calendar2-big-date {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #173b63;
+  }
+
+  .calendar2-big-date strong {
+    font-size: 32px;
+    width: 52px;
+    height: 52px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+  }
+
+  .calendar2-big-date.today strong {
+    background: #2583dc;
+    color: #fff;
+  }
+
+  .calendar2-big-date span {
+    font-weight: 800;
+  }
+
+  .calendar2-add-day {
+    border: 0;
+    background: #edf7ff;
+    color: #1974c6;
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .calendar2-all-day-row,
+  .calendar2-hour-row {
+    display: grid;
+    grid-template-columns: 85px minmax(0, 1fr);
+  }
+
+  .calendar2-all-day-row {
+    border-bottom: 2px solid #dfe8ef;
+  }
+
+  .calendar2-hour-row {
+    min-height: 64px;
+    border-bottom: 1px solid #edf1f4;
+  }
+
+  .calendar2-time-label {
+    padding: 12px 10px;
+    text-align: right;
+    color: #7c8e9d;
+    font-size: 12px;
+    border-right: 1px solid #e7edf2;
+  }
+
+  .calendar2-all-day-content,
+  .calendar2-hour-content {
+    padding: 7px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .calendar2-hour-content {
+    cursor: pointer;
+  }
+
+  .calendar2-hour-content:hover {
+    background: #f8fbfd;
+  }
+
+  .calendar2-empty-slot {
+    border: 1px dashed #ccd9e3;
+    background: #fbfdfe;
+    color: #71879a;
+    border-radius: 8px;
+    padding: 8px;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .calendar2-month-card {
+    width: 100%;
+  }
+
+  .calendar2-month-scroll {
+    overflow-x: auto;
+  }
+
+  .calendar2-month-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    min-width: 720px;
+  }
+
+  .calendar2-month-head {
+    background: #f5f8fb;
+    border-bottom: 1px solid #e2eaf0;
+  }
+
+  .calendar2-month-head > div {
+    padding: 12px;
+    text-align: center;
+    color: #61788b;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .calendar2-month-day {
+    min-height: 125px;
+    padding: 7px;
+    border-right: 1px solid #e8eef3;
+    border-bottom: 1px solid #e8eef3;
+    background: #fff;
+  }
+
+  .calendar2-month-day.outside {
+    background: #fafcfd;
+    opacity: 0.55;
+  }
+
+  .calendar2-month-day.today {
+    background: #f1f8ff;
+  }
+
+  .calendar2-month-day-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 5px;
+  }
+
+  .calendar2-month-number,
+  .calendar2-month-plus {
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    color: #173b63;
+    font-weight: 800;
+  }
+
+  .calendar2-month-number {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+  }
+
+  .calendar2-month-day.today .calendar2-month-number {
+    background: #2583dc;
+    color: #fff;
+  }
+
+  .calendar2-month-plus {
+    color: #8ba0b0;
+    font-size: 17px;
+  }
+
+  .calendar2-month-events {
+    min-height: 75px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    cursor: pointer;
+  }
+
+  .calendar2-more {
+    border: 0;
+    background: transparent;
+    color: #47749a;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .calendar2-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 15px;
+  }
+
+  .calendar2-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .calendar2-field span {
+    color: #526a7e;
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .calendar2-field input,
+  .calendar2-field select,
+  .calendar2-field textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #dce5ec;
+    border-radius: 11px;
+    padding: 11px 12px;
+    background: #fff;
+    color: #173b63;
+    font: inherit;
+  }
+
+  .calendar2-field textarea {
+    resize: vertical;
+  }
+
+  .calendar2-field-wide {
+    grid-column: 1 / -1;
+  }
+
+  .calendar2-all-day {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    color: #173b63;
+    font-weight: 800;
+    min-height: 44px;
+  }
+
+  .calendar2-all-day input {
+    width: 18px;
+    height: 18px;
+  }
+
+  .calendar2-form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  .calendar2-secondary,
+  .calendar2-danger {
+    border: 0;
+    border-radius: 11px;
+    padding: 10px 15px;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .calendar2-secondary {
+    background: #edf3f7;
+    color: #36566f;
+  }
+
+  .calendar2-danger {
+    background: #fff0f0;
+    color: #c33b3b;
+  }
+
+  .calendar2-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(11, 28, 44, 0.52);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+  }
+
+  .calendar2-modal {
+    width: min(560px, 100%);
+    max-height: 90vh;
+    overflow-y: auto;
+    background: #fff;
+    border-radius: 20px;
+    padding: 20px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
+  }
+
+  .calendar2-modal-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 15px;
+    align-items: flex-start;
+  }
+
+  .calendar2-modal-header h2 {
+    margin: 4px 0 0;
+    color: #173b63;
+  }
+
+  .calendar2-modal-header small {
+    color: #8193a2;
+  }
+
+  .calendar2-close {
+    border: 0;
+    background: #f0f4f7;
+    color: #52687a;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+
+  .calendar2-event-details {
+    margin-top: 20px;
+    border-top: 1px solid #e8eef3;
+  }
+
+  .calendar2-detail-row {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 12px;
+    padding: 13px 0;
+    border-bottom: 1px solid #edf1f4;
+  }
+
+  .calendar2-detail-row span {
+    color: #8092a1;
+  }
+
+  .calendar2-detail-row strong {
+    color: #173b63;
+    white-space: pre-wrap;
+  }
+
+  .calendar2-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 18px;
+  }
+
+  @media (max-width: 1100px) {
+    .calendar2-week-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .calendar2-side {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .calendar2-week-card {
+      overflow-x: auto;
+    }
+
+    .calendar2-week-grid {
+      min-width: 760px;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .calendar2-toolbar {
+      align-items: stretch;
+    }
+
+    .calendar2-navigation {
+      flex-basis: 100%;
+      justify-content: space-between;
+    }
+
+    .calendar2-navigation strong {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .calendar2-today {
+      flex: 1;
+    }
+
+    .calendar2-view-switch {
+      flex: 2;
+    }
+
+    .calendar2-view-switch button {
+      flex: 1;
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+
+    .calendar2-side {
+      grid-template-columns: 1fr;
+    }
+
+    .calendar2-form {
+      grid-template-columns: 1fr;
+    }
+
+    .calendar2-field-wide {
+      grid-column: auto;
+    }
+
+    .calendar2-all-day-row,
+    .calendar2-hour-row {
+      grid-template-columns: 62px minmax(0, 1fr);
+    }
+
+    .calendar2-time-label {
+      padding-left: 4px;
+      padding-right: 7px;
+      font-size: 11px;
+    }
+
+    .calendar2-day-title {
+      padding: 14px;
+    }
+
+    .calendar2-big-date strong {
+      width: 44px;
+      height: 44px;
+      font-size: 26px;
+    }
+
+    .calendar2-big-date span {
+      font-size: 13px;
+    }
+
+    .calendar2-modal {
+      padding: 16px;
+    }
+
+    .calendar2-detail-row {
+      grid-template-columns: 80px 1fr;
+    }
+  }
+`;
 
 /* =========================================================
    START REACT
