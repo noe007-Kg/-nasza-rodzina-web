@@ -126,6 +126,14 @@ function Login() {
   );
 }
 
+const family = [
+  { name: 'Sebastian', role: 'Tata', letter: 'S' },
+  { name: 'Dominika', role: 'Mama', letter: 'D' },
+  { name: 'Paweł', role: 'Syn', letter: 'P' },
+  { name: 'Nikodem', role: 'Syn', letter: 'N' },
+  { name: 'Layla', role: 'Córka', letter: 'L' },
+];
+
 function Start({
   user,
   member,
@@ -134,30 +142,150 @@ function Start({
   member: Member | null;
 }) {
   const name = member?.name || 'Użytkowniku';
-  const role = member?.role || '';
 
   return (
-    <div className="logged-page">
-      <div className="logged-card">
-        <div className="logged-logo">🏠</div>
+    <div className="app-shell">
 
-        <h1>Nasza Rodzina</h1>
+      <aside className="sidebar">
+        <div className="brand">
+          <span>🏠</span>
+          <div>
+            Nasza
+            <br />
+            Rodzina
+          </div>
+        </div>
 
-        <h2>Dzień dobry, {name}! 👋</h2>
+        <nav>
+          <button className="nav-active">⌂ <span>Start</span></button>
+          <button>▦ <span>Kalendarz</span></button>
+          <button>☑ <span>Zadania</span></button>
+          <button>🛒 <span>Zakupy</span></button>
+          <button>◯ <span>Czat</span></button>
+          <button>♡ <span>Zdrowie</span></button>
+          <button>♢ <span>Szkoła</span></button>
+          <button>♧ <span>Rodzina</span></button>
+          <button>⚙ <span>Ustawienia</span></button>
+        </nav>
 
-        {role && <p>{role}</p>}
-
-        <p>
-          Zalogowano jako:
-          <br />
-          <strong>{user.email}</strong>
-        </p>
-
-        <button onClick={() => signOut(auth)}>
-          Wyloguj się
+        <button
+          className="logout-button"
+          onClick={() => signOut(auth)}
+        >
+          ↪ Wyloguj
         </button>
-      </div>
+      </aside>
+
+      <main className="main-area">
+
+        <header className="family-header">
+          {family.map((person) => (
+            <div className="family-person" key={person.name}>
+              <div className="avatar">{person.letter}</div>
+
+              <div>
+                <strong>{person.name}</strong>
+                <small>{person.role}</small>
+              </div>
+            </div>
+          ))}
+        </header>
+
+        <div className="dashboard">
+
+          <section className="welcome">
+            <div>
+              <small>Niedziela, 27 września</small>
+
+              <h1>Dzień dobry, {name}!</h1>
+
+              <p>
+                Oto co dzieje się dziś w Waszej rodzinie.
+              </p>
+            </div>
+
+            <div className="weather">
+              <span>☀️</span>
+              <div>
+                <strong>Kołobrzeg</strong>
+                <b>18°C</b>
+              </div>
+            </div>
+          </section>
+
+          <section className="cards-grid">
+
+            <DashboardCard title="📅 Dzisiaj w rodzinie">
+              <p>08:00 • Paweł — szkoła</p>
+              <p>08:00 • Nikodem — szkoła</p>
+              <p>13:00 • Sebastian — dyżur</p>
+            </DashboardCard>
+
+            <DashboardCard title="✅ Zadania na dziś">
+              <p>☑ Strój na WF — Paweł</p>
+              <p>☐ Zeszyt do matematyki</p>
+              <p>☐ Przygotować drugie śniadanie</p>
+            </DashboardCard>
+
+            <DashboardCard title="🛒 Lista zakupów">
+              <p>☐ Mleko</p>
+              <p>☑ Chleb</p>
+              <p>☐ Banany</p>
+            </DashboardCard>
+
+            <DashboardCard title="🎒 Szkoła — Paweł">
+              <div className="vulcan">
+                <strong>VULCAN ●</strong>
+                <span>Połączono</span>
+              </div>
+
+              <p>🔔 Zmiana planu lekcji</p>
+              <p>✉️ Nowa wiadomość od wychowawcy</p>
+            </DashboardCard>
+
+            <DashboardCard title="❤️ Zdrowie">
+              <p>Layla — szczepienie • za 2 dni</p>
+              <p>Dominika — wizyta kontrolna • za 7 dni</p>
+            </DashboardCard>
+
+            <DashboardCard title="👨‍👩‍👧‍👦 Rodzina">
+              <p>🎂 Roczek Layli — 10.10</p>
+              <p>❤️ Rocznica ślubu — 06.09</p>
+            </DashboardCard>
+
+          </section>
+
+        </div>
+
+        <button className="add-button">
+          <span>＋</span> Dodaj
+        </button>
+
+        <div className="mobile-nav">
+          <button>⌂<small>Start</small></button>
+          <button>▦<small>Kalendarz</small></button>
+          <button>🛒<small>Zakupy</small></button>
+          <button>♧<small>Rodzina</small></button>
+          <button>•••<small>Więcej</small></button>
+        </div>
+
+      </main>
     </div>
+  );
+}
+
+function DashboardCard({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="dashboard-card">
+      <h2>{title}</h2>
+      <div className="card-content">{children}</div>
+    </section>
   );
 }
 
