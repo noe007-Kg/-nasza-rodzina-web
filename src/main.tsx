@@ -14,7 +14,6 @@ import {
   doc,
   getDoc,
   onSnapshot,
-  query,
   Timestamp,
 } from 'firebase/firestore';
 
@@ -57,7 +56,7 @@ type CalendarEventData = {
   title: string;
   person: PersonKey;
   date: Date;
-  createdBy?: string;
+  createdBy: string;
 };
 
 type NewEventForm = {
@@ -108,7 +107,7 @@ const family = [
    FUNKCJE DAT
    ========================================================= */
 
-function startOfWeek(date: Date) {
+function startOfWeek(date: Date): Date {
   const result = new Date(date);
   const day = result.getDay();
 
@@ -120,13 +119,13 @@ function startOfWeek(date: Date) {
   return result;
 }
 
-function addDays(date: Date, days: number) {
+function addDays(date: Date, days: number): Date {
   const result = new Date(date);
   result.setDate(result.getDate() + days);
   return result;
 }
 
-function sameDay(a: Date, b: Date) {
+function sameDay(a: Date, b: Date): boolean {
   return (
     a.getFullYear() === b.getFullYear() &&
     a.getMonth() === b.getMonth() &&
@@ -134,7 +133,7 @@ function sameDay(a: Date, b: Date) {
   );
 }
 
-function formatDateInput(date: Date) {
+function formatDateInput(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
@@ -142,18 +141,18 @@ function formatDateInput(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function formatTime(date: Date) {
+function formatTime(date: Date): string {
   return date.toLocaleTimeString('pl-PL', {
     hour: '2-digit',
     minute: '2-digit',
   });
 }
 
-function capitalize(value: string) {
+function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function weekTitle(start: Date) {
+function weekTitle(start: Date): string {
   const end = addDays(start, 6);
 
   const startDay = start.getDate();
@@ -174,7 +173,7 @@ function weekTitle(start: Date) {
   return `${startDay} ${startMonth} – ${endDay} ${endMonth}`;
 }
 
-function personEventClass(person: PersonKey) {
+function personEventClass(person: PersonKey): string {
   switch (person) {
     case 'Sebastian':
       return 'event-blue';
@@ -194,6 +193,17 @@ function personEventClass(person: PersonKey) {
     default:
       return 'event-family';
   }
+}
+
+function isPersonKey(value: unknown): value is PersonKey {
+  return (
+    value === 'family' ||
+    value === 'Sebastian' ||
+    value === 'Dominika' ||
+    value === 'Paweł' ||
+    value === 'Nikodem' ||
+    value === 'Layla'
+  );
 }
 
 /* =========================================================
@@ -230,10 +240,7 @@ function App() {
             setMember(memberSnap.data() as Member);
           }
         } catch (error) {
-          console.error(
-            'Błąd pobierania profilu:',
-            error
-          );
+          console.error('Błąd pobierania profilu:', error);
         }
 
         setLoading(false);
@@ -255,12 +262,7 @@ function App() {
     return <Login />;
   }
 
-  return (
-    <FamilyApp
-      user={user}
-      member={member}
-    />
-  );
+  return <FamilyApp user={user} member={member} />;
 }
 
 /* =========================================================
@@ -270,31 +272,20 @@ function App() {
 function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-
   const [error, setError] = useState('');
-  const [loggingIn, setLoggingIn] =
-    useState(false);
+  const [loggingIn, setLoggingIn] = useState(false);
 
-  async function handleLogin(
-    e: React.FormEvent
-  ) {
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
 
     setError('');
     setLoggingIn(true);
 
     try {
-      await signInWithEmailAndPassword(
-        auth,
-        email,
-        password
-      );
+      await signInWithEmailAndPassword(auth, email, password);
     } catch (error) {
       console.error(error);
-
-      setError(
-        'Nieprawidłowy e-mail lub hasło.'
-      );
+      setError('Nieprawidłowy e-mail lub hasło.');
     } finally {
       setLoggingIn(false);
     }
@@ -303,15 +294,11 @@ function Login() {
   return (
     <div className="login-page">
       <div className="login-card">
-        <div className="login-logo">
-          🏠
-        </div>
+        <div className="login-logo">🏠</div>
 
         <h1>Nasza Rodzina</h1>
 
-        <p>
-          Zaloguj się do rodzinnego centrum
-        </p>
+        <p>Zaloguj się do rodzinnego centrum</p>
 
         <form onSubmit={handleLogin}>
           <label>
@@ -320,9 +307,7 @@ function Login() {
             <input
               type="email"
               value={email}
-              onChange={(e) =>
-                setEmail(e.target.value)
-              }
+              onChange={(e) => setEmail(e.target.value)}
               placeholder="Twój e-mail"
               required
             />
@@ -334,9 +319,7 @@ function Login() {
             <input
               type="password"
               value={password}
-              onChange={(e) =>
-                setPassword(e.target.value)
-              }
+              onChange={(e) => setPassword(e.target.value)}
               placeholder="Twoje hasło"
               required
             />
@@ -348,13 +331,8 @@ function Login() {
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={loggingIn}
-          >
-            {loggingIn
-              ? 'Logowanie...'
-              : 'Zaloguj się'}
+          <button type="submit" disabled={loggingIn}>
+            {loggingIn ? 'Logowanie...' : 'Zaloguj się'}
           </button>
         </form>
       </div>
@@ -373,11 +351,9 @@ function FamilyApp({
   user: User;
   member: Member | null;
 }) {
-  const [activePage, setActivePage] =
-    useState<Page>('Start');
+  const [activePage, setActivePage] = useState<Page>('Start');
 
-  const name =
-    member?.name || 'Użytkowniku';
+  const name = member?.name || 'Użytkowniku';
 
   function changePage(page: Page) {
     setActivePage(page);
@@ -390,14 +366,12 @@ function FamilyApp({
 
   return (
     <div className="app-shell">
-
       <Sidebar
         activePage={activePage}
         changePage={changePage}
       />
 
       <main className="main-area">
-
         <FamilyHeader />
 
         {activePage === 'Start' && (
@@ -415,9 +389,7 @@ function FamilyApp({
         {activePage !== 'Start' &&
           activePage !== 'Kalendarz' &&
           activePage !== 'Zadania' && (
-            <ComingSoonPage
-              page={activePage}
-            />
+            <ComingSoonPage page={activePage} />
           )}
 
         <button className="floating-add">
@@ -428,7 +400,6 @@ function FamilyApp({
           activePage={activePage}
           changePage={changePage}
         />
-
       </main>
     </div>
   );
@@ -447,11 +418,8 @@ function Sidebar({
 }) {
   return (
     <aside className="sidebar">
-
       <div className="brand">
-        <span className="brand-icon">
-          🏠
-        </span>
+        <span className="brand-icon">🏠</span>
 
         <strong>
           Nasza
@@ -461,102 +429,68 @@ function Sidebar({
       </div>
 
       <nav className="sidebar-nav">
-
         <NavButton
           active={activePage === 'Start'}
-          onClick={() =>
-            changePage('Start')
-          }
+          onClick={() => changePage('Start')}
           icon="⌂"
           label="Start"
         />
 
         <NavButton
-          active={
-            activePage === 'Kalendarz'
-          }
-          onClick={() =>
-            changePage('Kalendarz')
-          }
+          active={activePage === 'Kalendarz'}
+          onClick={() => changePage('Kalendarz')}
           icon="▦"
           label="Kalendarz"
         />
 
         <NavButton
-          active={
-            activePage === 'Zadania'
-          }
-          onClick={() =>
-            changePage('Zadania')
-          }
+          active={activePage === 'Zadania'}
+          onClick={() => changePage('Zadania')}
           icon="☑"
           label="Zadania"
         />
 
         <NavButton
-          active={
-            activePage === 'Zakupy'
-          }
-          onClick={() =>
-            changePage('Zakupy')
-          }
+          active={activePage === 'Zakupy'}
+          onClick={() => changePage('Zakupy')}
           icon="🛒"
           label="Zakupy"
         />
 
         <NavButton
           active={activePage === 'Czat'}
-          onClick={() =>
-            changePage('Czat')
-          }
+          onClick={() => changePage('Czat')}
           icon="○"
           label="Czat"
         />
 
         <NavButton
-          active={
-            activePage === 'Zdrowie'
-          }
-          onClick={() =>
-            changePage('Zdrowie')
-          }
+          active={activePage === 'Zdrowie'}
+          onClick={() => changePage('Zdrowie')}
           icon="♡"
           label="Zdrowie"
         />
 
         <NavButton
-          active={
-            activePage === 'Szkoła'
-          }
-          onClick={() =>
-            changePage('Szkoła')
-          }
+          active={activePage === 'Szkoła'}
+          onClick={() => changePage('Szkoła')}
           icon="◇"
           label="Szkoła"
         />
 
         <NavButton
-          active={
-            activePage === 'Rodzina'
-          }
-          onClick={() =>
-            changePage('Rodzina')
-          }
+          active={activePage === 'Rodzina'}
+          onClick={() => changePage('Rodzina')}
           icon="♧"
           label="Rodzina"
         />
 
         <NavButton
-          active={
-            activePage === 'Ustawienia'
-          }
-          onClick={() =>
-            changePage('Ustawienia')
-          }
+          active={activePage === 'Ustawienia'}
+          onClick={() => changePage('Ustawienia')}
           icon="⚙"
           label="Ustawienia"
         />
-
       </nav>
 
       <button
@@ -565,7 +499,6 @@ function Sidebar({
       >
         ↪ Wyloguj
       </button>
-
     </aside>
   );
 }
@@ -583,9 +516,7 @@ function NavButton({
 }) {
   return (
     <button
-      className={
-        active ? 'nav-active' : ''
-      }
+      className={active ? 'nav-active' : ''}
       onClick={onClick}
     >
       <span>{icon}</span>
@@ -601,7 +532,6 @@ function NavButton({
 function FamilyHeader() {
   return (
     <header className="family-header">
-
       {family.map((person) => (
         <div
           className="family-person"
@@ -614,17 +544,11 @@ function FamilyHeader() {
           </div>
 
           <div>
-            <strong>
-              {person.name}
-            </strong>
-
-            <small>
-              {person.role}
-            </small>
+            <strong>{person.name}</strong>
+            <small>{person.role}</small>
           </div>
         </div>
       ))}
-
     </header>
   );
 }
@@ -640,13 +564,9 @@ function StartPage({
 }) {
   return (
     <div className="page-content">
-
       <section className="start-hero">
-
         <div>
-          <small>
-            Niedziela, 27 września
-          </small>
+          <small>Niedziela, 27 września</small>
 
           <h1>
             Dzień dobry,
@@ -655,29 +575,21 @@ function StartPage({
           </h1>
 
           <p>
-            Oto co dzieje się dziś
-            w Waszej rodzinie.
+            Oto co dzieje się dziś w Waszej rodzinie.
           </p>
         </div>
 
         <div className="weather-card">
-          <span className="weather-icon">
-            ☀️
-          </span>
+          <span className="weather-icon">☀️</span>
 
           <div>
-            <strong>
-              Kołobrzeg
-            </strong>
-
+            <strong>Kołobrzeg</strong>
             <b>18°C</b>
           </div>
         </div>
-
       </section>
 
       <section className="dashboard-grid">
-
         <AppCard title="📅 Dzisiaj w rodzinie">
           <div className="rows">
             <p>08:00 • Paweł — szkoła</p>
@@ -703,53 +615,30 @@ function StartPage({
         </AppCard>
 
         <AppCard title="🎒 Szkoła — Paweł">
-
           <div className="vulcan-status">
-            <strong>
-              VULCAN ●
-            </strong>
-
-            <span>
-              Połączono
-            </span>
+            <strong>VULCAN ●</strong>
+            <span>Połączono</span>
           </div>
 
           <div className="rows">
-            <p>
-              🔔 Zmiana planu lekcji
-            </p>
-
-            <p>
-              ✉️ Nowa wiadomość od wychowawcy
-            </p>
+            <p>🔔 Zmiana planu lekcji</p>
+            <p>✉️ Nowa wiadomość od wychowawcy</p>
           </div>
-
         </AppCard>
 
         <AppCard title="❤️ Zdrowie">
           <div className="rows">
-            <p>
-              Layla — szczepienie • za 2 dni
-            </p>
-
-            <p>
-              Dominika — wizyta kontrolna • za 7 dni
-            </p>
+            <p>Layla — szczepienie • za 2 dni</p>
+            <p>Dominika — wizyta kontrolna • za 7 dni</p>
           </div>
         </AppCard>
 
         <AppCard title="👨‍👩‍👧‍👦 Rodzina">
           <div className="rows">
-            <p>
-              🎂 Roczek Layli — 10.10
-            </p>
-
-            <p>
-              ❤️ Rocznica ślubu — 06.09
-            </p>
+            <p>🎂 Roczek Layli — 10.10</p>
+            <p>❤️ Rocznica ślubu — 06.09</p>
           </div>
         </AppCard>
-
       </section>
     </div>
   );
@@ -764,85 +653,77 @@ function CalendarPage({
 }: {
   user: User;
 }) {
-  const [weekStart, setWeekStart] =
-    useState(() =>
-      startOfWeek(new Date())
-    );
+  const [weekStart, setWeekStart] = useState<Date>(
+    () => startOfWeek(new Date())
+  );
 
-  const [events, setEvents] =
-    useState<CalendarEventData[]>([]);
+  const [events, setEvents] = useState<CalendarEventData[]>([]);
 
   const [selectedPerson, setSelectedPerson] =
     useState<PersonKey>('family');
 
-  const [showForm, setShowForm] =
-    useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const [saving, setSaving] =
-    useState(false);
+  const [form, setForm] = useState<NewEventForm>({
+    title: '',
+    person: 'family',
+    date: formatDateInput(new Date()),
+    time: '12:00',
+  });
 
-  const [form, setForm] =
-    useState<NewEventForm>({
-      title: '',
-      person: 'family',
-      date: formatDateInput(new Date()),
-      time: '12:00',
-    });
-
-  /* -------------------------
-     FIRESTORE – ODCZYT
-     ------------------------- */
+  /* =======================================================
+     FIRESTORE — ODCZYT WYDARZEŃ
+     ======================================================= */
 
   useEffect(() => {
-    const eventsRef = collection(
-      db,
-      'calendarEvents'
-    );
-
-    const eventsQuery = query(eventsRef);
+    const eventsRef = collection(db, 'calendarEvents');
 
     const unsubscribe = onSnapshot(
-      eventsQuery,
+      eventsRef,
+
       (snapshot) => {
-        const loadedEvents =
-          snapshot.docs
-            .map((item) => {
-              const data = item.data();
+        const loadedEvents: CalendarEventData[] = [];
 
-              const timestamp =
-                data.date as Timestamp;
+        snapshot.forEach((eventDocument) => {
+          const data = eventDocument.data();
 
-              if (!timestamp) {
-                return null;
-              }
+          if (!(data.date instanceof Timestamp)) {
+            return;
+          }
 
-              return {
-                id: item.id,
-                title:
-                  data.title || 'Wydarzenie',
-                person:
-                  (data.person ||
-                    'family') as PersonKey,
-                date: timestamp.toDate(),
-                createdBy:
-                  data.createdBy || '',
-              };
-            })
-            .filter(
-              (
-                item
-              ): item is CalendarEventData =>
-                item !== null
-            );
+          const person: PersonKey =
+            isPersonKey(data.person)
+              ? data.person
+              : 'family';
+
+          const title =
+            typeof data.title === 'string' &&
+            data.title.trim().length > 0
+              ? data.title
+              : 'Wydarzenie';
+
+          const createdBy =
+            typeof data.createdBy === 'string'
+              ? data.createdBy
+              : '';
+
+          loadedEvents.push({
+            id: eventDocument.id,
+            title,
+            person,
+            date: data.date.toDate(),
+            createdBy,
+          });
+        });
 
         loadedEvents.sort(
-          (a, b) =>
-            a.date.getTime() -
-            b.date.getTime()
+          (a, b) => a.date.getTime() - b.date.getTime()
         );
 
         setEvents(loadedEvents);
       },
+
       (error) => {
         console.error(
           'Błąd pobierania wydarzeń:',
@@ -854,103 +735,102 @@ function CalendarPage({
     return unsubscribe;
   }, []);
 
+  /* =======================================================
+     DNI TYGODNIA
+     ======================================================= */
+
   const weekDays = useMemo(() => {
     return Array.from(
       { length: 7 },
-      (_, index) =>
-        addDays(weekStart, index)
+      (_, index) => addDays(weekStart, index)
     );
   }, [weekStart]);
 
-  const visibleEvents =
-    useMemo(() => {
-      const weekEnd =
-        addDays(weekStart, 7);
+  /* =======================================================
+     FILTROWANIE WYDARZEŃ
+     ======================================================= */
 
-      return events.filter(
-        (event) => {
-          const inWeek =
-            event.date >= weekStart &&
-            event.date < weekEnd;
+  const visibleEvents = useMemo(() => {
+    const weekEnd = addDays(weekStart, 7);
 
-          const personMatches =
-            selectedPerson === 'family' ||
-            event.person ===
-              selectedPerson ||
-            event.person === 'family';
+    return events.filter((event) => {
+      const inWeek =
+        event.date >= weekStart &&
+        event.date < weekEnd;
 
-          return (
-            inWeek &&
-            personMatches
-          );
-        }
-      );
-    }, [
-      events,
-      weekStart,
-      selectedPerson,
-    ]);
+      const personMatches =
+        selectedPerson === 'family' ||
+        event.person === selectedPerson ||
+        event.person === 'family';
 
-  const todayEvents =
-    events.filter((event) =>
-      sameDay(
-        event.date,
-        new Date()
-      )
+      return inWeek && personMatches;
+    });
+  }, [events, weekStart, selectedPerson]);
+
+  const todayEvents = useMemo(() => {
+    const today = new Date();
+
+    return events.filter((event) =>
+      sameDay(event.date, today)
     );
+  }, [events]);
 
-  /* -------------------------
-     ZAPIS WYDARZENIA
-     ------------------------- */
+  const upcomingEvents = useMemo(() => {
+    const now = new Date();
 
-  async function saveEvent(
-    e: React.FormEvent
-  ) {
+    return events
+      .filter((event) => event.date > now)
+      .slice(0, 3);
+  }, [events]);
+
+  /* =======================================================
+     ZAPIS NOWEGO WYDARZENIA
+     ======================================================= */
+
+  async function saveEvent(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!form.title.trim()) {
+    const cleanTitle = form.title.trim();
+
+    if (!cleanTitle) {
+      return;
+    }
+
+    if (!form.date || !form.time) {
+      return;
+    }
+
+    const eventDate = new Date(
+      `${form.date}T${form.time}:00`
+    );
+
+    if (Number.isNaN(eventDate.getTime())) {
+      alert('Nieprawidłowa data lub godzina.');
       return;
     }
 
     setSaving(true);
 
     try {
-      const eventDate =
-        new Date(
-          `${form.date}T${form.time}:00`
-        );
-
       await addDoc(
-        collection(
-          db,
-          'calendarEvents'
-        ),
+        collection(db, 'calendarEvents'),
         {
-          title: form.title.trim(),
+          title: cleanTitle,
           person: form.person,
-          date:
-            Timestamp.fromDate(
-              eventDate
-            ),
+          date: Timestamp.fromDate(eventDate),
           createdBy: user.uid,
-          createdAt:
-            Timestamp.now(),
+          createdAt: Timestamp.now(),
         }
       );
+
+      setWeekStart(startOfWeek(eventDate));
 
       setForm({
         title: '',
         person: 'family',
-        date:
-          formatDateInput(
-            eventDate
-          ),
+        date: formatDateInput(eventDate),
         time: '12:00',
       });
-
-      setWeekStart(
-        startOfWeek(eventDate)
-      );
 
       setShowForm(false);
     } catch (error) {
@@ -960,7 +840,7 @@ function CalendarPage({
       );
 
       alert(
-        'Nie udało się zapisać wydarzenia. Sprawdzimy reguły Firestore.'
+        'Nie udało się zapisać wydarzenia. Jeśli aplikacja działa poprawnie, w następnym kroku ustawimy reguły Firestore dla kalendarza.'
       );
     } finally {
       setSaving(false);
@@ -969,51 +849,35 @@ function CalendarPage({
 
   return (
     <div className="page-content">
-
       <section className="page-header">
-
         <div>
-          <small>
-            Nasza Rodzina
-          </small>
+          <small>Nasza Rodzina</small>
 
-          <h1>
-            📅 Kalendarz
-          </h1>
+          <h1>📅 Kalendarz</h1>
 
           <p>
-            Wszystkie rodzinne wydarzenia
-            w jednym miejscu.
+            Wszystkie rodzinne wydarzenia w jednym miejscu.
           </p>
         </div>
 
         <button
           className="primary-button"
           onClick={() =>
-            setShowForm(
-              (current) => !current
-            )
+            setShowForm((current) => !current)
           }
         >
           {showForm
             ? '✕ Zamknij'
             : '＋ Dodaj wydarzenie'}
         </button>
-
       </section>
-
-      {/* FORMULARZ DODAWANIA */}
 
       {showForm && (
         <section
           className="app-card"
-          style={{
-            marginBottom: '20px',
-          }}
+          style={{ marginBottom: '20px' }}
         >
-          <h2>
-            ➕ Nowe wydarzenie
-          </h2>
+          <h2>➕ Nowe wydarzenie</h2>
 
           <form
             onSubmit={saveEvent}
@@ -1025,27 +889,17 @@ function CalendarPage({
               alignItems: 'end',
             }}
           >
-
-            <label
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '6px',
-              }}
-            >
-              <strong>
-                Nazwa
-              </strong>
+            <label style={formLabelStyle}>
+              <strong>Nazwa</strong>
 
               <input
                 type="text"
                 value={form.title}
                 onChange={(e) =>
-                  setForm({
-                    ...form,
-                    title:
-                      e.target.value,
-                  })
+                  setForm((current) => ({
+                    ...current,
+                    title: e.target.value,
+                  }))
                 }
                 placeholder="Np. Dentysta"
                 required
@@ -1053,26 +907,16 @@ function CalendarPage({
               />
             </label>
 
-            <label
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '6px',
-              }}
-            >
-              <strong>
-                Dla kogo?
-              </strong>
+            <label style={formLabelStyle}>
+              <strong>Dla kogo?</strong>
 
               <select
                 value={form.person}
                 onChange={(e) =>
-                  setForm({
-                    ...form,
-                    person:
-                      e.target
-                        .value as PersonKey,
-                  })
+                  setForm((current) => ({
+                    ...current,
+                    person: e.target.value as PersonKey,
+                  }))
                 }
                 style={inputStyle}
               >
@@ -1102,52 +946,34 @@ function CalendarPage({
               </select>
             </label>
 
-            <label
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '6px',
-              }}
-            >
-              <strong>
-                Data
-              </strong>
+            <label style={formLabelStyle}>
+              <strong>Data</strong>
 
               <input
                 type="date"
                 value={form.date}
                 onChange={(e) =>
-                  setForm({
-                    ...form,
-                    date:
-                      e.target.value,
-                  })
+                  setForm((current) => ({
+                    ...current,
+                    date: e.target.value,
+                  }))
                 }
                 required
                 style={inputStyle}
               />
             </label>
 
-            <label
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '6px',
-              }}
-            >
-              <strong>
-                Godzina
-              </strong>
+            <label style={formLabelStyle}>
+              <strong>Godzina</strong>
 
               <input
                 type="time"
                 value={form.time}
                 onChange={(e) =>
-                  setForm({
-                    ...form,
-                    time:
-                      e.target.value,
-                  })
+                  setForm((current) => ({
+                    ...current,
+                    time: e.target.value,
+                  }))
                 }
                 required
                 style={inputStyle}
@@ -1158,32 +984,23 @@ function CalendarPage({
               type="submit"
               className="primary-button"
               disabled={saving}
-              style={{
-                height: '48px',
-              }}
+              style={{ height: '48px' }}
             >
               {saving
                 ? 'Zapisywanie...'
                 : '✓ Zapisz'}
             </button>
-
           </form>
         </section>
       )}
 
-      {/* NAWIGACJA TYGODNIA */}
-
       <section className="calendar-toolbar">
-
         <div className="calendar-navigation">
-
           <button
+            type="button"
             onClick={() =>
-              setWeekStart(
-                addDays(
-                  weekStart,
-                  -7
-                )
+              setWeekStart((current) =>
+                addDays(current, -7)
               )
             }
           >
@@ -1195,44 +1012,38 @@ function CalendarPage({
           </strong>
 
           <button
+            type="button"
             onClick={() =>
-              setWeekStart(
-                addDays(
-                  weekStart,
-                  7
-                )
+              setWeekStart((current) =>
+                addDays(current, 7)
               )
             }
           >
             ›
           </button>
-
         </div>
 
         <div className="view-switch">
-          <button>
+          <button type="button">
             Dzień
           </button>
 
-          <button className="selected">
+          <button
+            type="button"
+            className="selected"
+          >
             Tydzień
           </button>
 
-          <button>
+          <button type="button">
             Miesiąc
           </button>
         </div>
-
       </section>
 
-      {/* FILTRY */}
-
       <section className="family-filters">
-
         <FilterButton
-          active={
-            selectedPerson === 'family'
-          }
+          active={selectedPerson === 'family'}
           onClick={() =>
             setSelectedPerson('family')
           }
@@ -1241,38 +1052,25 @@ function CalendarPage({
         </FilterButton>
 
         <FilterButton
-          active={
-            selectedPerson ===
-            'Sebastian'
-          }
+          active={selectedPerson === 'Sebastian'}
           onClick={() =>
-            setSelectedPerson(
-              'Sebastian'
-            )
+            setSelectedPerson('Sebastian')
           }
         >
           🔵 Sebastian
         </FilterButton>
 
         <FilterButton
-          active={
-            selectedPerson ===
-            'Dominika'
-          }
+          active={selectedPerson === 'Dominika'}
           onClick={() =>
-            setSelectedPerson(
-              'Dominika'
-            )
+            setSelectedPerson('Dominika')
           }
         >
           🟣 Dominika
         </FilterButton>
 
         <FilterButton
-          active={
-            selectedPerson ===
-            'Paweł'
-          }
+          active={selectedPerson === 'Paweł'}
           onClick={() =>
             setSelectedPerson('Paweł')
           }
@@ -1281,66 +1079,45 @@ function CalendarPage({
         </FilterButton>
 
         <FilterButton
-          active={
-            selectedPerson ===
-            'Nikodem'
-          }
+          active={selectedPerson === 'Nikodem'}
           onClick={() =>
-            setSelectedPerson(
-              'Nikodem'
-            )
+            setSelectedPerson('Nikodem')
           }
         >
           🟠 Nikodem
         </FilterButton>
 
         <FilterButton
-          active={
-            selectedPerson ===
-            'Layla'
-          }
+          active={selectedPerson === 'Layla'}
           onClick={() =>
             setSelectedPerson('Layla')
           }
         >
           🩷 Layla
         </FilterButton>
-
       </section>
 
-      {/* KALENDARZ */}
-
       <section className="calendar-layout">
-
         <div className="calendar-box">
-
           <div className="week-grid">
-
             {weekDays.map((day) => {
-              const dayEvents =
-                visibleEvents.filter(
-                  (event) =>
-                    sameDay(
-                      event.date,
-                      day
-                    )
-                );
+              const dayEvents = visibleEvents.filter(
+                (event) =>
+                  sameDay(event.date, day)
+              );
 
               return (
                 <div
                   className="calendar-day"
                   key={day.toISOString()}
                 >
-
                   <div className="calendar-day-header">
-
                     <small>
                       {capitalize(
                         day.toLocaleDateString(
                           'pl-PL',
                           {
-                            weekday:
-                              'short',
+                            weekday: 'short',
                           }
                         )
                       )}
@@ -1349,39 +1126,31 @@ function CalendarPage({
                     <strong>
                       {day.getDate()}
                     </strong>
-
                   </div>
 
-                  {dayEvents.map(
-                    (event) => (
-                      <div
-                        className={`calendar-event ${personEventClass(
-                          event.person
-                        )}`}
-                        key={event.id}
-                      >
-                        <small>
-                          {formatTime(
-                            event.date
-                          )}
-                        </small>
+                  {dayEvents.map((event) => (
+                    <div
+                      className={`calendar-event ${personEventClass(
+                        event.person
+                      )}`}
+                      key={event.id}
+                    >
+                      <small>
+                        {formatTime(event.date)}
+                      </small>
 
-                        <strong>
-                          {event.title}
-                        </strong>
-                      </div>
-                    )
-                  )}
-
+                      <strong>
+                        {event.title}
+                      </strong>
+                    </div>
+                  ))}
                 </div>
               );
             })}
-
           </div>
         </div>
 
         <aside className="calendar-side">
-
           <h2>Dzisiaj</h2>
 
           {todayEvents.length === 0 && (
@@ -1390,70 +1159,57 @@ function CalendarPage({
             </p>
           )}
 
-          {todayEvents.map(
-            (event) => (
-              <div
-                className="today-event"
-                key={event.id}
-              >
-                <b>
-                  {formatTime(
-                    event.date
-                  )}
-                </b>
+          {todayEvents.map((event) => (
+            <div
+              className="today-event"
+              key={event.id}
+            >
+              <b>{formatTime(event.date)}</b>
 
-                <span>
-                  {event.title}
-                </span>
-              </div>
-            )
-          )}
+              <span>{event.title}</span>
+            </div>
+          ))}
 
           <h2 className="side-heading">
             Nadchodzące
           </h2>
 
-          {events
-            .filter(
-              (event) =>
-                event.date >
-                new Date()
-            )
-            .slice(0, 3)
-            .map((event) => (
-              <div
-                className="upcoming"
-                key={event.id}
-              >
-                <span>📅</span>
+          {upcomingEvents.length === 0 && (
+            <p className="muted">
+              Brak nadchodzących wydarzeń.
+            </p>
+          )}
 
-                <div>
-                  <strong>
-                    {event.title}
-                  </strong>
+          {upcomingEvents.map((event) => (
+            <div
+              className="upcoming"
+              key={event.id}
+            >
+              <span>📅</span>
 
-                  <small>
-                    {event.date.toLocaleDateString(
-                      'pl-PL'
-                    )}
-                    {' • '}
-                    {formatTime(
-                      event.date
-                    )}
-                  </small>
-                </div>
+              <div>
+                <strong>
+                  {event.title}
+                </strong>
+
+                <small>
+                  {event.date.toLocaleDateString(
+                    'pl-PL'
+                  )}
+                  {' • '}
+                  {formatTime(event.date)}
+                </small>
               </div>
-            ))}
-
+            </div>
+          ))}
         </aside>
-
       </section>
     </div>
   );
 }
 
 /* =========================================================
-   FILTR KALENDARZA
+   FILTRY
    ========================================================= */
 
 function FilterButton({
@@ -1467,10 +1223,9 @@ function FilterButton({
 }) {
   return (
     <button
+      type="button"
       className={
-        active
-          ? 'filter-selected'
-          : ''
+        active ? 'filter-selected' : ''
       }
       onClick={onClick}
     >
@@ -1486,28 +1241,21 @@ function FilterButton({
 function TasksPage() {
   return (
     <div className="page-content">
-
       <section className="page-header">
         <div>
-          <small>
-            Nasza Rodzina
-          </small>
+          <small>Nasza Rodzina</small>
 
           <h1>Zadania</h1>
 
           <p>
-            Rodzinne obowiązki
-            i rzeczy do zrobienia.
+            Rodzinne obowiązki i rzeczy do zrobienia.
           </p>
         </div>
       </section>
 
       <section className="module-grid module-grid-wide">
-
         <AppCard title="✅ Zadania">
-
           <div className="task-list">
-
             <label className="task-row">
               <input
                 type="checkbox"
@@ -1534,12 +1282,10 @@ function TasksPage() {
                 Przygotować drugie śniadanie
               </span>
             </label>
-
           </div>
         </AppCard>
 
         <AppCard title="📊 Dzisiaj">
-
           <div className="progress-number">
             1/3
           </div>
@@ -1549,15 +1295,9 @@ function TasksPage() {
           </p>
 
           <div className="progress-bar">
-            <span
-              style={{
-                width: '33%',
-              }}
-            />
+            <span style={{ width: '33%' }} />
           </div>
-
         </AppCard>
-
       </section>
     </div>
   );
@@ -1574,18 +1314,14 @@ function ComingSoonPage({
 }) {
   return (
     <div className="page-content">
-
       <section className="page-header">
         <div>
-          <small>
-            Nasza Rodzina
-          </small>
+          <small>Nasza Rodzina</small>
 
           <h1>{page}</h1>
 
           <p>
-            Ten moduł przygotujemy
-            w kolejnym kroku.
+            Ten moduł przygotujemy w kolejnym kroku.
           </p>
         </div>
       </section>
@@ -1593,17 +1329,14 @@ function ComingSoonPage({
       <AppCard title={`🚧 ${page}`}>
         <div className="rows">
           <p>
-            Moduł jest już podłączony
-            do nawigacji.
+            Moduł jest już podłączony do nawigacji.
           </p>
 
           <p>
-            Za chwilę dodamy tutaj jego
-            właściwą zawartość.
+            Za chwilę dodamy tutaj jego właściwą zawartość.
           </p>
         </div>
       </AppCard>
-
     </div>
   );
 }
@@ -1640,7 +1373,6 @@ function MobileNavigation({
 }) {
   return (
     <nav className="mobile-nav">
-
       <button
         className={
           activePage === 'Start'
@@ -1705,7 +1437,6 @@ function MobileNavigation({
         <span>•••</span>
         <small>Więcej</small>
       </button>
-
     </nav>
   );
 }
@@ -1713,6 +1444,12 @@ function MobileNavigation({
 /* =========================================================
    STYLE FORMULARZA
    ========================================================= */
+
+const formLabelStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '6px',
+};
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
