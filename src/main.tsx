@@ -142,7 +142,7 @@ function Start({
   member: Member | null;
 }) {
   const name = member?.name || 'Użytkowniku';
-
+const [activePage, setActivePage] = useState('Start');
   return (
     <div className="app-shell">
 
