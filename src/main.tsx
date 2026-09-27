@@ -11,10 +11,12 @@ import {
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   onSnapshot,
   Timestamp,
+  updateDoc,
 } from 'firebase/firestore';
 
 import { auth, db } from './firebase';
@@ -59,7 +61,7 @@ type CalendarEventData = {
   createdBy: string;
 };
 
-type NewEventForm = {
+type EventForm = {
   title: string;
   person: PersonKey;
   date: string;
@@ -71,46 +73,20 @@ type NewEventForm = {
    ========================================================= */
 
 const family = [
-  {
-    name: 'Sebastian',
-    role: 'Tata',
-    letter: 'S',
-    avatarClass: 'avatar-blue',
-  },
-  {
-    name: 'Dominika',
-    role: 'Mama',
-    letter: 'D',
-    avatarClass: 'avatar-purple',
-  },
-  {
-    name: 'Paweł',
-    role: 'Syn',
-    letter: 'P',
-    avatarClass: 'avatar-green',
-  },
-  {
-    name: 'Nikodem',
-    role: 'Syn',
-    letter: 'N',
-    avatarClass: 'avatar-orange',
-  },
-  {
-    name: 'Layla',
-    role: 'Córka',
-    letter: 'L',
-    avatarClass: 'avatar-pink',
-  },
+  { name: 'Sebastian', role: 'Tata', letter: 'S', avatarClass: 'avatar-blue' },
+  { name: 'Dominika', role: 'Mama', letter: 'D', avatarClass: 'avatar-purple' },
+  { name: 'Paweł', role: 'Syn', letter: 'P', avatarClass: 'avatar-green' },
+  { name: 'Nikodem', role: 'Syn', letter: 'N', avatarClass: 'avatar-orange' },
+  { name: 'Layla', role: 'Córka', letter: 'L', avatarClass: 'avatar-pink' },
 ];
 
 /* =========================================================
-   FUNKCJE DAT
+   DATY
    ========================================================= */
 
 function startOfWeek(date: Date): Date {
   const result = new Date(date);
   const day = result.getDay();
-
   const difference = day === 0 ? -6 : 1 - day;
 
   result.setDate(result.getDate() + difference);
@@ -139,6 +115,12 @@ function formatDateInput(date: Date): string {
   const day = String(date.getDate()).padStart(2, '0');
 
   return `${year}-${month}-${day}`;
+}
+
+function formatTimeInput(date: Date): string {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(
+    date.getMinutes()
+  ).padStart(2, '0')}`;
 }
 
 function formatTime(date: Date): string {
@@ -177,22 +159,21 @@ function personEventClass(person: PersonKey): string {
   switch (person) {
     case 'Sebastian':
       return 'event-blue';
-
     case 'Dominika':
       return 'event-purple';
-
     case 'Paweł':
       return 'event-green';
-
     case 'Nikodem':
       return 'event-orange';
-
     case 'Layla':
       return 'event-pink';
-
     default:
       return 'event-family';
   }
+}
+
+function personLabel(person: PersonKey): string {
+  return person === 'family' ? 'Cała rodzina' : person;
 }
 
 function isPersonKey(value: unknown): value is PersonKey {
@@ -216,46 +197,34 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(
-      auth,
-      async (firebaseUser) => {
-        setUser(firebaseUser);
-        setMember(null);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
+      setMember(null);
 
-        if (!firebaseUser) {
-          setLoading(false);
-          return;
-        }
-
-        try {
-          const memberRef = doc(
-            db,
-            'members',
-            firebaseUser.uid
-          );
-
-          const memberSnap = await getDoc(memberRef);
-
-          if (memberSnap.exists()) {
-            setMember(memberSnap.data() as Member);
-          }
-        } catch (error) {
-          console.error('Błąd pobierania profilu:', error);
-        }
-
+      if (!firebaseUser) {
         setLoading(false);
+        return;
       }
-    );
+
+      try {
+        const memberRef = doc(db, 'members', firebaseUser.uid);
+        const memberSnap = await getDoc(memberRef);
+
+        if (memberSnap.exists()) {
+          setMember(memberSnap.data() as Member);
+        }
+      } catch (error) {
+        console.error('Błąd pobierania profilu:', error);
+      }
+
+      setLoading(false);
+    });
 
     return unsubscribe;
   }, []);
 
   if (loading) {
-    return (
-      <div className="loading">
-        Ładowanie Naszej Rodziny...
-      </div>
-    );
+    return <div className="loading">Ładowanie Naszej Rodziny...</div>;
   }
 
   if (!user) {
@@ -297,13 +266,11 @@ function Login() {
         <div className="login-logo">🏠</div>
 
         <h1>Nasza Rodzina</h1>
-
         <p>Zaloguj się do rodzinnego centrum</p>
 
         <form onSubmit={handleLogin}>
           <label>
             E-mail
-
             <input
               type="email"
               value={email}
@@ -315,7 +282,6 @@ function Login() {
 
           <label>
             Hasło
-
             <input
               type="password"
               value={password}
@@ -325,11 +291,7 @@ function Login() {
             />
           </label>
 
-          {error && (
-            <div className="login-error">
-              {error}
-            </div>
-          )}
+          {error && <div className="login-error">{error}</div>}
 
           <button type="submit" disabled={loggingIn}>
             {loggingIn ? 'Logowanie...' : 'Zaloguj się'}
@@ -366,35 +328,22 @@ function FamilyApp({
 
   return (
     <div className="app-shell">
-      <Sidebar
-        activePage={activePage}
-        changePage={changePage}
-      />
+      <Sidebar activePage={activePage} changePage={changePage} />
 
       <main className="main-area">
         <FamilyHeader />
 
-        {activePage === 'Start' && (
-          <StartPage name={name} />
-        )}
+        {activePage === 'Start' && <StartPage name={name} />}
 
-        {activePage === 'Kalendarz' && (
-          <CalendarPage user={user} />
-        )}
+        {activePage === 'Kalendarz' && <CalendarPage user={user} />}
 
-        {activePage === 'Zadania' && (
-          <TasksPage />
-        )}
+        {activePage === 'Zadania' && <TasksPage />}
 
         {activePage !== 'Start' &&
           activePage !== 'Kalendarz' &&
-          activePage !== 'Zadania' && (
-            <ComingSoonPage page={activePage} />
-          )}
+          activePage !== 'Zadania' && <ComingSoonPage page={activePage} />}
 
-        <button className="floating-add">
-          ＋ Dodaj
-        </button>
+        <button className="floating-add">＋ Dodaj</button>
 
         <MobileNavigation
           activePage={activePage}
@@ -493,10 +442,7 @@ function Sidebar({
         />
       </nav>
 
-      <button
-        className="logout-button"
-        onClick={() => signOut(auth)}
-      >
+      <button className="logout-button" onClick={() => signOut(auth)}>
         ↪ Wyloguj
       </button>
     </aside>
@@ -515,10 +461,7 @@ function NavButton({
   label: string;
 }) {
   return (
-    <button
-      className={active ? 'nav-active' : ''}
-      onClick={onClick}
-    >
+    <button className={active ? 'nav-active' : ''} onClick={onClick}>
       <span>{icon}</span>
       {label}
     </button>
@@ -533,13 +476,8 @@ function FamilyHeader() {
   return (
     <header className="family-header">
       {family.map((person) => (
-        <div
-          className="family-person"
-          key={person.name}
-        >
-          <div
-            className={`avatar ${person.avatarClass}`}
-          >
+        <div className="family-person" key={person.name}>
+          <div className={`avatar ${person.avatarClass}`}>
             {person.letter}
           </div>
 
@@ -557,11 +495,7 @@ function FamilyHeader() {
    START
    ========================================================= */
 
-function StartPage({
-  name,
-}: {
-  name: string;
-}) {
+function StartPage({ name }: { name: string }) {
   return (
     <div className="page-content">
       <section className="start-hero">
@@ -574,9 +508,7 @@ function StartPage({
             {name}!
           </h1>
 
-          <p>
-            Oto co dzieje się dziś w Waszej rodzinie.
-          </p>
+          <p>Oto co dzieje się dziś w Waszej rodzinie.</p>
         </div>
 
         <div className="weather-card">
@@ -648,32 +580,41 @@ function StartPage({
    KALENDARZ
    ========================================================= */
 
-function CalendarPage({
-  user,
-}: {
-  user: User;
-}) {
-  const [weekStart, setWeekStart] = useState<Date>(
-    () => startOfWeek(new Date())
+function CalendarPage({ user }: { user: User }) {
+  const [weekStart, setWeekStart] = useState<Date>(() =>
+    startOfWeek(new Date())
   );
 
   const [events, setEvents] = useState<CalendarEventData[]>([]);
-
   const [selectedPerson, setSelectedPerson] =
     useState<PersonKey>('family');
 
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const [form, setForm] = useState<NewEventForm>({
+  const [selectedEvent, setSelectedEvent] =
+    useState<CalendarEventData | null>(null);
+
+  const [editingEvent, setEditingEvent] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const [form, setForm] = useState<EventForm>({
     title: '',
     person: 'family',
     date: formatDateInput(new Date()),
     time: '12:00',
   });
 
+  const [editForm, setEditForm] = useState<EventForm>({
+    title: '',
+    person: 'family',
+    date: '',
+    time: '',
+  });
+
   /* =======================================================
-     FIRESTORE — ODCZYT WYDARZEŃ
+     FIRESTORE — ODCZYT
      ======================================================= */
 
   useEffect(() => {
@@ -681,7 +622,6 @@ function CalendarPage({
 
     const unsubscribe = onSnapshot(
       eventsRef,
-
       (snapshot) => {
         const loadedEvents: CalendarEventData[] = [];
 
@@ -692,21 +632,17 @@ function CalendarPage({
             return;
           }
 
-          const person: PersonKey =
-            isPersonKey(data.person)
-              ? data.person
-              : 'family';
+          const person: PersonKey = isPersonKey(data.person)
+            ? data.person
+            : 'family';
 
           const title =
-            typeof data.title === 'string' &&
-            data.title.trim().length > 0
+            typeof data.title === 'string' && data.title.trim().length > 0
               ? data.title
               : 'Wydarzenie';
 
           const createdBy =
-            typeof data.createdBy === 'string'
-              ? data.createdBy
-              : '';
+            typeof data.createdBy === 'string' ? data.createdBy : '';
 
           loadedEvents.push({
             id: eventDocument.id,
@@ -722,41 +658,39 @@ function CalendarPage({
         );
 
         setEvents(loadedEvents);
-      },
 
+        setSelectedEvent((current) => {
+          if (!current) {
+            return null;
+          }
+
+          return (
+            loadedEvents.find((event) => event.id === current.id) || null
+          );
+        });
+      },
       (error) => {
-        console.error(
-          'Błąd pobierania wydarzeń:',
-          error
-        );
+        console.error('Błąd pobierania wydarzeń:', error);
       }
     );
 
     return unsubscribe;
   }, []);
 
-  /* =======================================================
-     DNI TYGODNIA
-     ======================================================= */
-
-  const weekDays = useMemo(() => {
-    return Array.from(
-      { length: 7 },
-      (_, index) => addDays(weekStart, index)
-    );
-  }, [weekStart]);
-
-  /* =======================================================
-     FILTROWANIE WYDARZEŃ
-     ======================================================= */
+  const weekDays = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, index) =>
+        addDays(weekStart, index)
+      ),
+    [weekStart]
+  );
 
   const visibleEvents = useMemo(() => {
     const weekEnd = addDays(weekStart, 7);
 
     return events.filter((event) => {
       const inWeek =
-        event.date >= weekStart &&
-        event.date < weekEnd;
+        event.date >= weekStart && event.date < weekEnd;
 
       const personMatches =
         selectedPerson === 'family' ||
@@ -770,9 +704,7 @@ function CalendarPage({
   const todayEvents = useMemo(() => {
     const today = new Date();
 
-    return events.filter((event) =>
-      sameDay(event.date, today)
-    );
+    return events.filter((event) => sameDay(event.date, today));
   }, [events]);
 
   const upcomingEvents = useMemo(() => {
@@ -784,7 +716,7 @@ function CalendarPage({
   }, [events]);
 
   /* =======================================================
-     ZAPIS NOWEGO WYDARZENIA
+     DODAWANIE
      ======================================================= */
 
   async function saveEvent(e: React.FormEvent) {
@@ -792,17 +724,11 @@ function CalendarPage({
 
     const cleanTitle = form.title.trim();
 
-    if (!cleanTitle) {
+    if (!cleanTitle || !form.date || !form.time) {
       return;
     }
 
-    if (!form.date || !form.time) {
-      return;
-    }
-
-    const eventDate = new Date(
-      `${form.date}T${form.time}:00`
-    );
+    const eventDate = new Date(`${form.date}T${form.time}:00`);
 
     if (Number.isNaN(eventDate.getTime())) {
       alert('Nieprawidłowa data lub godzina.');
@@ -812,16 +738,13 @@ function CalendarPage({
     setSaving(true);
 
     try {
-      await addDoc(
-        collection(db, 'calendarEvents'),
-        {
-          title: cleanTitle,
-          person: form.person,
-          date: Timestamp.fromDate(eventDate),
-          createdBy: user.uid,
-          createdAt: Timestamp.now(),
-        }
-      );
+      await addDoc(collection(db, 'calendarEvents'), {
+        title: cleanTitle,
+        person: form.person,
+        date: Timestamp.fromDate(eventDate),
+        createdBy: user.uid,
+        createdAt: Timestamp.now(),
+      });
 
       setWeekStart(startOfWeek(eventDate));
 
@@ -834,16 +757,118 @@ function CalendarPage({
 
       setShowForm(false);
     } catch (error) {
-      console.error(
-        'Błąd zapisywania wydarzenia:',
-        error
-      );
-
-      alert(
-        'Nie udało się zapisać wydarzenia. Jeśli aplikacja działa poprawnie, w następnym kroku ustawimy reguły Firestore dla kalendarza.'
-      );
+      console.error('Błąd zapisywania wydarzenia:', error);
+      alert('Nie udało się zapisać wydarzenia.');
     } finally {
       setSaving(false);
+    }
+  }
+
+  /* =======================================================
+     OTWIERANIE WYDARZENIA
+     ======================================================= */
+
+  function openEvent(event: CalendarEventData) {
+    setSelectedEvent(event);
+    setEditingEvent(false);
+
+    setEditForm({
+      title: event.title,
+      person: event.person,
+      date: formatDateInput(event.date),
+      time: formatTimeInput(event.date),
+    });
+  }
+
+  function closeEvent() {
+    setSelectedEvent(null);
+    setEditingEvent(false);
+  }
+
+  /* =======================================================
+     EDYCJA
+     ======================================================= */
+
+  async function updateEvent(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!selectedEvent) {
+      return;
+    }
+
+    const cleanTitle = editForm.title.trim();
+
+    if (!cleanTitle || !editForm.date || !editForm.time) {
+      return;
+    }
+
+    const eventDate = new Date(
+      `${editForm.date}T${editForm.time}:00`
+    );
+
+    if (Number.isNaN(eventDate.getTime())) {
+      alert('Nieprawidłowa data lub godzina.');
+      return;
+    }
+
+    setUpdating(true);
+
+    try {
+      const eventRef = doc(
+        db,
+        'calendarEvents',
+        selectedEvent.id
+      );
+
+      await updateDoc(eventRef, {
+        title: cleanTitle,
+        person: editForm.person,
+        date: Timestamp.fromDate(eventDate),
+        updatedBy: user.uid,
+        updatedAt: Timestamp.now(),
+      });
+
+      setWeekStart(startOfWeek(eventDate));
+      setEditingEvent(false);
+    } catch (error) {
+      console.error('Błąd edycji wydarzenia:', error);
+      alert('Nie udało się zapisać zmian.');
+    } finally {
+      setUpdating(false);
+    }
+  }
+
+  /* =======================================================
+     USUWANIE
+     ======================================================= */
+
+  async function removeEvent() {
+    if (!selectedEvent) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Czy na pewno chcesz usunąć wydarzenie „${selectedEvent.title}”?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeleting(true);
+
+    try {
+      await deleteDoc(
+        doc(db, 'calendarEvents', selectedEvent.id)
+      );
+
+      setSelectedEvent(null);
+      setEditingEvent(false);
+    } catch (error) {
+      console.error('Błąd usuwania wydarzenia:', error);
+      alert('Nie udało się usunąć wydarzenia.');
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -852,23 +877,15 @@ function CalendarPage({
       <section className="page-header">
         <div>
           <small>Nasza Rodzina</small>
-
           <h1>📅 Kalendarz</h1>
-
-          <p>
-            Wszystkie rodzinne wydarzenia w jednym miejscu.
-          </p>
+          <p>Wszystkie rodzinne wydarzenia w jednym miejscu.</p>
         </div>
 
         <button
           className="primary-button"
-          onClick={() =>
-            setShowForm((current) => !current)
-          }
+          onClick={() => setShowForm((current) => !current)}
         >
-          {showForm
-            ? '✕ Zamknij'
-            : '＋ Dodaj wydarzenie'}
+          {showForm ? '✕ Zamknij' : '＋ Dodaj wydarzenie'}
         </button>
       </section>
 
@@ -879,118 +896,13 @@ function CalendarPage({
         >
           <h2>➕ Nowe wydarzenie</h2>
 
-          <form
+          <EventFormFields
+            form={form}
+            setForm={setForm}
             onSubmit={saveEvent}
-            style={{
-              display: 'grid',
-              gridTemplateColumns:
-                'repeat(auto-fit, minmax(160px, 1fr))',
-              gap: '14px',
-              alignItems: 'end',
-            }}
-          >
-            <label style={formLabelStyle}>
-              <strong>Nazwa</strong>
-
-              <input
-                type="text"
-                value={form.title}
-                onChange={(e) =>
-                  setForm((current) => ({
-                    ...current,
-                    title: e.target.value,
-                  }))
-                }
-                placeholder="Np. Dentysta"
-                required
-                style={inputStyle}
-              />
-            </label>
-
-            <label style={formLabelStyle}>
-              <strong>Dla kogo?</strong>
-
-              <select
-                value={form.person}
-                onChange={(e) =>
-                  setForm((current) => ({
-                    ...current,
-                    person: e.target.value as PersonKey,
-                  }))
-                }
-                style={inputStyle}
-              >
-                <option value="family">
-                  Cała rodzina
-                </option>
-
-                <option value="Sebastian">
-                  Sebastian
-                </option>
-
-                <option value="Dominika">
-                  Dominika
-                </option>
-
-                <option value="Paweł">
-                  Paweł
-                </option>
-
-                <option value="Nikodem">
-                  Nikodem
-                </option>
-
-                <option value="Layla">
-                  Layla
-                </option>
-              </select>
-            </label>
-
-            <label style={formLabelStyle}>
-              <strong>Data</strong>
-
-              <input
-                type="date"
-                value={form.date}
-                onChange={(e) =>
-                  setForm((current) => ({
-                    ...current,
-                    date: e.target.value,
-                  }))
-                }
-                required
-                style={inputStyle}
-              />
-            </label>
-
-            <label style={formLabelStyle}>
-              <strong>Godzina</strong>
-
-              <input
-                type="time"
-                value={form.time}
-                onChange={(e) =>
-                  setForm((current) => ({
-                    ...current,
-                    time: e.target.value,
-                  }))
-                }
-                required
-                style={inputStyle}
-              />
-            </label>
-
-            <button
-              type="submit"
-              className="primary-button"
-              disabled={saving}
-              style={{ height: '48px' }}
-            >
-              {saving
-                ? 'Zapisywanie...'
-                : '✓ Zapisz'}
-            </button>
-          </form>
+            buttonText={saving ? 'Zapisywanie...' : '✓ Zapisz'}
+            disabled={saving}
+          />
         </section>
       )}
 
@@ -999,24 +911,18 @@ function CalendarPage({
           <button
             type="button"
             onClick={() =>
-              setWeekStart((current) =>
-                addDays(current, -7)
-              )
+              setWeekStart((current) => addDays(current, -7))
             }
           >
             ‹
           </button>
 
-          <strong>
-            {weekTitle(weekStart)}
-          </strong>
+          <strong>{weekTitle(weekStart)}</strong>
 
           <button
             type="button"
             onClick={() =>
-              setWeekStart((current) =>
-                addDays(current, 7)
-              )
+              setWeekStart((current) => addDays(current, 7))
             }
           >
             ›
@@ -1024,74 +930,55 @@ function CalendarPage({
         </div>
 
         <div className="view-switch">
-          <button type="button">
-            Dzień
-          </button>
+          <button type="button">Dzień</button>
 
-          <button
-            type="button"
-            className="selected"
-          >
+          <button type="button" className="selected">
             Tydzień
           </button>
 
-          <button type="button">
-            Miesiąc
-          </button>
+          <button type="button">Miesiąc</button>
         </div>
       </section>
 
       <section className="family-filters">
         <FilterButton
           active={selectedPerson === 'family'}
-          onClick={() =>
-            setSelectedPerson('family')
-          }
+          onClick={() => setSelectedPerson('family')}
         >
           ● Cała rodzina
         </FilterButton>
 
         <FilterButton
           active={selectedPerson === 'Sebastian'}
-          onClick={() =>
-            setSelectedPerson('Sebastian')
-          }
+          onClick={() => setSelectedPerson('Sebastian')}
         >
           🔵 Sebastian
         </FilterButton>
 
         <FilterButton
           active={selectedPerson === 'Dominika'}
-          onClick={() =>
-            setSelectedPerson('Dominika')
-          }
+          onClick={() => setSelectedPerson('Dominika')}
         >
           🟣 Dominika
         </FilterButton>
 
         <FilterButton
           active={selectedPerson === 'Paweł'}
-          onClick={() =>
-            setSelectedPerson('Paweł')
-          }
+          onClick={() => setSelectedPerson('Paweł')}
         >
           🟢 Paweł
         </FilterButton>
 
         <FilterButton
           active={selectedPerson === 'Nikodem'}
-          onClick={() =>
-            setSelectedPerson('Nikodem')
-          }
+          onClick={() => setSelectedPerson('Nikodem')}
         >
           🟠 Nikodem
         </FilterButton>
 
         <FilterButton
           active={selectedPerson === 'Layla'}
-          onClick={() =>
-            setSelectedPerson('Layla')
-          }
+          onClick={() => setSelectedPerson('Layla')}
         >
           🩷 Layla
         </FilterButton>
@@ -1101,9 +988,8 @@ function CalendarPage({
         <div className="calendar-box">
           <div className="week-grid">
             {weekDays.map((day) => {
-              const dayEvents = visibleEvents.filter(
-                (event) =>
-                  sameDay(event.date, day)
+              const dayEvents = visibleEvents.filter((event) =>
+                sameDay(event.date, day)
               );
 
               return (
@@ -1114,35 +1000,35 @@ function CalendarPage({
                   <div className="calendar-day-header">
                     <small>
                       {capitalize(
-                        day.toLocaleDateString(
-                          'pl-PL',
-                          {
-                            weekday: 'short',
-                          }
-                        )
+                        day.toLocaleDateString('pl-PL', {
+                          weekday: 'short',
+                        })
                       )}
                     </small>
 
-                    <strong>
-                      {day.getDate()}
-                    </strong>
+                    <strong>{day.getDate()}</strong>
                   </div>
 
                   {dayEvents.map((event) => (
-                    <div
+                    <button
+                      type="button"
                       className={`calendar-event ${personEventClass(
                         event.person
                       )}`}
                       key={event.id}
+                      onClick={() => openEvent(event)}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        borderTop: 'none',
+                        borderRight: 'none',
+                        borderBottom: 'none',
+                        cursor: 'pointer',
+                      }}
                     >
-                      <small>
-                        {formatTime(event.date)}
-                      </small>
-
-                      <strong>
-                        {event.title}
-                      </strong>
-                    </div>
+                      <small>{formatTime(event.date)}</small>
+                      <strong>{event.title}</strong>
+                    </button>
                   ))}
                 </div>
               );
@@ -1154,25 +1040,29 @@ function CalendarPage({
           <h2>Dzisiaj</h2>
 
           {todayEvents.length === 0 && (
-            <p className="muted">
-              Brak wydarzeń na dziś.
-            </p>
+            <p className="muted">Brak wydarzeń na dziś.</p>
           )}
 
           {todayEvents.map((event) => (
-            <div
+            <button
+              type="button"
               className="today-event"
               key={event.id}
+              onClick={() => openEvent(event)}
+              style={{
+                width: '100%',
+                background: 'transparent',
+                border: 0,
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
             >
               <b>{formatTime(event.date)}</b>
-
               <span>{event.title}</span>
-            </div>
+            </button>
           ))}
 
-          <h2 className="side-heading">
-            Nadchodzące
-          </h2>
+          <h2 className="side-heading">Nadchodzące</h2>
 
           {upcomingEvents.length === 0 && (
             <p className="muted">
@@ -1181,30 +1071,322 @@ function CalendarPage({
           )}
 
           {upcomingEvents.map((event) => (
-            <div
+            <button
+              type="button"
               className="upcoming"
               key={event.id}
+              onClick={() => openEvent(event)}
+              style={{
+                width: '100%',
+                background: 'transparent',
+                border: 0,
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
             >
               <span>📅</span>
 
               <div>
-                <strong>
-                  {event.title}
-                </strong>
+                <strong>{event.title}</strong>
 
                 <small>
-                  {event.date.toLocaleDateString(
-                    'pl-PL'
-                  )}
+                  {event.date.toLocaleDateString('pl-PL')}
                   {' • '}
                   {formatTime(event.date)}
                 </small>
               </div>
-            </div>
+            </button>
           ))}
         </aside>
       </section>
+
+      {selectedEvent && (
+        <div
+          onClick={closeEvent}
+          style={modalOverlayStyle}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={modalStyle}
+          >
+            {!editingEvent ? (
+              <>
+                <div style={modalHeaderStyle}>
+                  <div>
+                    <small
+                      style={{
+                        color: '#7b91aa',
+                        fontWeight: 700,
+                      }}
+                    >
+                      WYDARZENIE
+                    </small>
+
+                    <h2
+                      style={{
+                        margin: '5px 0 0',
+                        color: '#12345e',
+                        fontSize: '28px',
+                      }}
+                    >
+                      {selectedEvent.title}
+                    </h2>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={closeEvent}
+                    style={closeButtonStyle}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div style={eventDetailsStyle}>
+                  <div style={detailRowStyle}>
+                    <span>👤</span>
+
+                    <div>
+                      <small style={detailLabelStyle}>
+                        Dla kogo?
+                      </small>
+
+                      <strong>
+                        {personLabel(selectedEvent.person)}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div style={detailRowStyle}>
+                    <span>📅</span>
+
+                    <div>
+                      <small style={detailLabelStyle}>
+                        Data
+                      </small>
+
+                      <strong>
+                        {selectedEvent.date.toLocaleDateString(
+                          'pl-PL',
+                          {
+                            weekday: 'long',
+                            day: 'numeric',
+                            month: 'long',
+                            year: 'numeric',
+                          }
+                        )}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div style={detailRowStyle}>
+                    <span>🕐</span>
+
+                    <div>
+                      <small style={detailLabelStyle}>
+                        Godzina
+                      </small>
+
+                      <strong>
+                        {formatTime(selectedEvent.date)}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={modalActionsStyle}>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => setEditingEvent(true)}
+                  >
+                    ✏️ Edytuj
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={removeEvent}
+                    disabled={deleting}
+                    style={deleteButtonStyle}
+                  >
+                    {deleting ? 'Usuwanie...' : '🗑️ Usuń'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={modalHeaderStyle}>
+                  <div>
+                    <small
+                      style={{
+                        color: '#7b91aa',
+                        fontWeight: 700,
+                      }}
+                    >
+                      EDYCJA
+                    </small>
+
+                    <h2
+                      style={{
+                        margin: '5px 0 0',
+                        color: '#12345e',
+                        fontSize: '28px',
+                      }}
+                    >
+                      Edytuj wydarzenie
+                    </h2>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setEditingEvent(false)}
+                    style={closeButtonStyle}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <EventFormFields
+                  form={editForm}
+                  setForm={setEditForm}
+                  onSubmit={updateEvent}
+                  buttonText={
+                    updating ? 'Zapisywanie...' : '✓ Zapisz zmiany'
+                  }
+                  disabled={updating}
+                />
+
+                <button
+                  type="button"
+                  onClick={() => setEditingEvent(false)}
+                  style={{
+                    ...secondaryButtonStyle,
+                    marginTop: '12px',
+                    width: '100%',
+                  }}
+                >
+                  Anuluj
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+/* =========================================================
+   FORMULARZ WYDARZENIA
+   ========================================================= */
+
+function EventFormFields({
+  form,
+  setForm,
+  onSubmit,
+  buttonText,
+  disabled,
+}: {
+  form: EventForm;
+  setForm: React.Dispatch<React.SetStateAction<EventForm>>;
+  onSubmit: (e: React.FormEvent) => void;
+  buttonText: string;
+  disabled: boolean;
+}) {
+  return (
+    <form
+      onSubmit={onSubmit}
+      style={{
+        display: 'grid',
+        gridTemplateColumns:
+          'repeat(auto-fit, minmax(160px, 1fr))',
+        gap: '14px',
+        alignItems: 'end',
+      }}
+    >
+      <label style={formLabelStyle}>
+        <strong>Nazwa</strong>
+
+        <input
+          type="text"
+          value={form.title}
+          onChange={(e) =>
+            setForm((current) => ({
+              ...current,
+              title: e.target.value,
+            }))
+          }
+          placeholder="Np. Dentysta"
+          required
+          style={inputStyle}
+        />
+      </label>
+
+      <label style={formLabelStyle}>
+        <strong>Dla kogo?</strong>
+
+        <select
+          value={form.person}
+          onChange={(e) =>
+            setForm((current) => ({
+              ...current,
+              person: e.target.value as PersonKey,
+            }))
+          }
+          style={inputStyle}
+        >
+          <option value="family">Cała rodzina</option>
+          <option value="Sebastian">Sebastian</option>
+          <option value="Dominika">Dominika</option>
+          <option value="Paweł">Paweł</option>
+          <option value="Nikodem">Nikodem</option>
+          <option value="Layla">Layla</option>
+        </select>
+      </label>
+
+      <label style={formLabelStyle}>
+        <strong>Data</strong>
+
+        <input
+          type="date"
+          value={form.date}
+          onChange={(e) =>
+            setForm((current) => ({
+              ...current,
+              date: e.target.value,
+            }))
+          }
+          required
+          style={inputStyle}
+        />
+      </label>
+
+      <label style={formLabelStyle}>
+        <strong>Godzina</strong>
+
+        <input
+          type="time"
+          value={form.time}
+          onChange={(e) =>
+            setForm((current) => ({
+              ...current,
+              time: e.target.value,
+            }))
+          }
+          required
+          style={inputStyle}
+        />
+      </label>
+
+      <button
+        type="submit"
+        className="primary-button"
+        disabled={disabled}
+        style={{ height: '48px' }}
+      >
+        {buttonText}
+      </button>
+    </form>
   );
 }
 
@@ -1224,9 +1406,7 @@ function FilterButton({
   return (
     <button
       type="button"
-      className={
-        active ? 'filter-selected' : ''
-      }
+      className={active ? 'filter-selected' : ''}
       onClick={onClick}
     >
       {children}
@@ -1244,12 +1424,8 @@ function TasksPage() {
       <section className="page-header">
         <div>
           <small>Nasza Rodzina</small>
-
           <h1>Zadania</h1>
-
-          <p>
-            Rodzinne obowiązki i rzeczy do zrobienia.
-          </p>
+          <p>Rodzinne obowiązki i rzeczy do zrobienia.</p>
         </div>
       </section>
 
@@ -1257,10 +1433,7 @@ function TasksPage() {
         <AppCard title="✅ Zadania">
           <div className="task-list">
             <label className="task-row">
-              <input
-                type="checkbox"
-                defaultChecked
-              />
+              <input type="checkbox" defaultChecked />
 
               <span className="completed">
                 Strój na WF — Paweł
@@ -1270,29 +1443,21 @@ function TasksPage() {
             <label className="task-row">
               <input type="checkbox" />
 
-              <span>
-                Zeszyt do matematyki
-              </span>
+              <span>Zeszyt do matematyki</span>
             </label>
 
             <label className="task-row">
               <input type="checkbox" />
 
-              <span>
-                Przygotować drugie śniadanie
-              </span>
+              <span>Przygotować drugie śniadanie</span>
             </label>
           </div>
         </AppCard>
 
         <AppCard title="📊 Dzisiaj">
-          <div className="progress-number">
-            1/3
-          </div>
+          <div className="progress-number">1/3</div>
 
-          <p className="muted">
-            wykonanych zadań
-          </p>
+          <p className="muted">wykonanych zadań</p>
 
           <div className="progress-bar">
             <span style={{ width: '33%' }} />
@@ -1307,34 +1472,21 @@ function TasksPage() {
    POZOSTAŁE MODUŁY
    ========================================================= */
 
-function ComingSoonPage({
-  page,
-}: {
-  page: Page;
-}) {
+function ComingSoonPage({ page }: { page: Page }) {
   return (
     <div className="page-content">
       <section className="page-header">
         <div>
           <small>Nasza Rodzina</small>
-
           <h1>{page}</h1>
-
-          <p>
-            Ten moduł przygotujemy w kolejnym kroku.
-          </p>
+          <p>Ten moduł przygotujemy w kolejnym kroku.</p>
         </div>
       </section>
 
       <AppCard title={`🚧 ${page}`}>
         <div className="rows">
-          <p>
-            Moduł jest już podłączony do nawigacji.
-          </p>
-
-          <p>
-            Za chwilę dodamy tutaj jego właściwą zawartość.
-          </p>
+          <p>Moduł jest już podłączony do nawigacji.</p>
+          <p>Za chwilę dodamy tutaj jego właściwą zawartość.</p>
         </div>
       </AppCard>
     </div>
@@ -1374,14 +1526,8 @@ function MobileNavigation({
   return (
     <nav className="mobile-nav">
       <button
-        className={
-          activePage === 'Start'
-            ? 'mobile-active'
-            : ''
-        }
-        onClick={() =>
-          changePage('Start')
-        }
+        className={activePage === 'Start' ? 'mobile-active' : ''}
+        onClick={() => changePage('Start')}
       >
         <span>⌂</span>
         <small>Start</small>
@@ -1389,27 +1535,17 @@ function MobileNavigation({
 
       <button
         className={
-          activePage === 'Kalendarz'
-            ? 'mobile-active'
-            : ''
+          activePage === 'Kalendarz' ? 'mobile-active' : ''
         }
-        onClick={() =>
-          changePage('Kalendarz')
-        }
+        onClick={() => changePage('Kalendarz')}
       >
         <span>▦</span>
         <small>Kalendarz</small>
       </button>
 
       <button
-        className={
-          activePage === 'Zakupy'
-            ? 'mobile-active'
-            : ''
-        }
-        onClick={() =>
-          changePage('Zakupy')
-        }
+        className={activePage === 'Zakupy' ? 'mobile-active' : ''}
+        onClick={() => changePage('Zakupy')}
       >
         <span>🛒</span>
         <small>Zakupy</small>
@@ -1417,23 +1553,15 @@ function MobileNavigation({
 
       <button
         className={
-          activePage === 'Rodzina'
-            ? 'mobile-active'
-            : ''
+          activePage === 'Rodzina' ? 'mobile-active' : ''
         }
-        onClick={() =>
-          changePage('Rodzina')
-        }
+        onClick={() => changePage('Rodzina')}
       >
         <span>♧</span>
         <small>Rodzina</small>
       </button>
 
-      <button
-        onClick={() =>
-          changePage('Ustawienia')
-        }
-      >
+      <button onClick={() => changePage('Ustawienia')}>
         <span>•••</span>
         <small>Więcej</small>
       </button>
@@ -1442,7 +1570,7 @@ function MobileNavigation({
 }
 
 /* =========================================================
-   STYLE FORMULARZA
+   STYLE
    ========================================================= */
 
 const formLabelStyle: React.CSSProperties = {
@@ -1463,13 +1591,101 @@ const inputStyle: React.CSSProperties = {
   fontSize: '16px',
 };
 
+const modalOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(9, 34, 62, 0.48)',
+  zIndex: 5000,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '20px',
+};
+
+const modalStyle: React.CSSProperties = {
+  width: 'min(680px, 100%)',
+  maxHeight: '90vh',
+  overflowY: 'auto',
+  background: '#ffffff',
+  borderRadius: '24px',
+  padding: '26px',
+  boxShadow: '0 24px 70px rgba(10, 45, 80, 0.25)',
+};
+
+const modalHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
+  gap: '20px',
+};
+
+const closeButtonStyle: React.CSSProperties = {
+  width: '42px',
+  height: '42px',
+  border: 0,
+  borderRadius: '12px',
+  background: '#eef5fb',
+  color: '#12345e',
+  fontSize: '18px',
+  cursor: 'pointer',
+};
+
+const eventDetailsStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '12px',
+  marginTop: '24px',
+};
+
+const detailRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '14px',
+  padding: '15px',
+  background: '#f7faff',
+  borderRadius: '14px',
+  color: '#12345e',
+};
+
+const detailLabelStyle: React.CSSProperties = {
+  display: 'block',
+  marginBottom: '3px',
+  color: '#7b91aa',
+};
+
+const modalActionsStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: '1fr 1fr',
+  gap: '12px',
+  marginTop: '24px',
+};
+
+const deleteButtonStyle: React.CSSProperties = {
+  minHeight: '48px',
+  border: '1px solid #ffd2d2',
+  borderRadius: '12px',
+  background: '#fff1f1',
+  color: '#c53a3a',
+  fontWeight: 700,
+  fontSize: '16px',
+  cursor: 'pointer',
+};
+
+const secondaryButtonStyle: React.CSSProperties = {
+  minHeight: '48px',
+  border: '1px solid #dce6f0',
+  borderRadius: '12px',
+  background: '#f5f8fc',
+  color: '#12345e',
+  fontWeight: 700,
+  fontSize: '16px',
+  cursor: 'pointer',
+};
+
 /* =========================================================
    START REACT
    ========================================================= */
 
-createRoot(
-  document.getElementById('root')!
-).render(
+createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>
