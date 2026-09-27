@@ -1,3 +1,5 @@
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { auth } from './firebase';
 import React,{useState} from 'react';import{createRoot}from'react-dom/client';import{Home,CalendarDays,CheckSquare,ShoppingCart,MessageCircle,Heart,GraduationCap,Users,Settings,Plus,Bell,CloudSun}from'lucide-react';import'./style.css';
 const tabs=[['Start',Home],['Kalendarz',CalendarDays],['Zadania',CheckSquare],['Zakupy',ShoppingCart],['Czat',MessageCircle],['Zdrowie',Heart],['Szkoła',GraduationCap],['Rodzina',Users],['Ustawienia',Settings]] as const;
 const people=[['Sebastian','Tata','S'],['Dominika','Mama','D'],['Paweł','Syn','P'],['Nikodem','Syn','N'],['Layla','Córka','L']];
