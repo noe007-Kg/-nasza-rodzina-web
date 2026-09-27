@@ -1,15 +1,29 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut,
   User,
 } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  onSnapshot,
+  query,
+  Timestamp,
+} from 'firebase/firestore';
 
 import { auth, db } from './firebase';
 import './style.css';
+
+/* =========================================================
+   TYPY
+   ========================================================= */
 
 type Member = {
   name?: string;
@@ -30,25 +44,161 @@ type Page =
   | 'Rodzina'
   | 'Ustawienia';
 
+type PersonKey =
+  | 'family'
+  | 'Sebastian'
+  | 'Dominika'
+  | 'Paweł'
+  | 'Nikodem'
+  | 'Layla';
+
+type CalendarEventData = {
+  id: string;
+  title: string;
+  person: PersonKey;
+  date: Date;
+  createdBy?: string;
+};
+
+type NewEventForm = {
+  title: string;
+  person: PersonKey;
+  date: string;
+  time: string;
+};
+
+/* =========================================================
+   RODZINA
+   ========================================================= */
+
 const family = [
-  { name: 'Sebastian', role: 'Tata', letter: 'S', color: 'blue' },
-  { name: 'Dominika', role: 'Mama', letter: 'D', color: 'purple' },
-  { name: 'Paweł', role: 'Syn', letter: 'P', color: 'green' },
-  { name: 'Nikodem', role: 'Syn', letter: 'N', color: 'orange' },
-  { name: 'Layla', role: 'Córka', letter: 'L', color: 'pink' },
+  {
+    name: 'Sebastian',
+    role: 'Tata',
+    letter: 'S',
+    avatarClass: 'avatar-blue',
+  },
+  {
+    name: 'Dominika',
+    role: 'Mama',
+    letter: 'D',
+    avatarClass: 'avatar-purple',
+  },
+  {
+    name: 'Paweł',
+    role: 'Syn',
+    letter: 'P',
+    avatarClass: 'avatar-green',
+  },
+  {
+    name: 'Nikodem',
+    role: 'Syn',
+    letter: 'N',
+    avatarClass: 'avatar-orange',
+  },
+  {
+    name: 'Layla',
+    role: 'Córka',
+    letter: 'L',
+    avatarClass: 'avatar-pink',
+  },
 ];
 
-const navigation: { page: Page; icon: string }[] = [
-  { page: 'Start', icon: '⌂' },
-  { page: 'Kalendarz', icon: '▦' },
-  { page: 'Zadania', icon: '☑' },
-  { page: 'Zakupy', icon: '🛒' },
-  { page: 'Czat', icon: '○' },
-  { page: 'Zdrowie', icon: '♡' },
-  { page: 'Szkoła', icon: '◇' },
-  { page: 'Rodzina', icon: '♧' },
-  { page: 'Ustawienia', icon: '⚙' },
-];
+/* =========================================================
+   FUNKCJE DAT
+   ========================================================= */
+
+function startOfWeek(date: Date) {
+  const result = new Date(date);
+  const day = result.getDay();
+
+  const difference = day === 0 ? -6 : 1 - day;
+
+  result.setDate(result.getDate() + difference);
+  result.setHours(0, 0, 0, 0);
+
+  return result;
+}
+
+function addDays(date: Date, days: number) {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function sameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function formatDateInput(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
+function formatTime(date: Date) {
+  return date.toLocaleTimeString('pl-PL', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function capitalize(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function weekTitle(start: Date) {
+  const end = addDays(start, 6);
+
+  const startDay = start.getDate();
+  const endDay = end.getDate();
+
+  const startMonth = start.toLocaleDateString('pl-PL', {
+    month: 'long',
+  });
+
+  const endMonth = end.toLocaleDateString('pl-PL', {
+    month: 'long',
+  });
+
+  if (start.getMonth() === end.getMonth()) {
+    return `${startDay}–${endDay} ${endMonth}`;
+  }
+
+  return `${startDay} ${startMonth} – ${endDay} ${endMonth}`;
+}
+
+function personEventClass(person: PersonKey) {
+  switch (person) {
+    case 'Sebastian':
+      return 'event-blue';
+
+    case 'Dominika':
+      return 'event-purple';
+
+    case 'Paweł':
+      return 'event-green';
+
+    case 'Nikodem':
+      return 'event-orange';
+
+    case 'Layla':
+      return 'event-pink';
+
+    default:
+      return 'event-family';
+  }
+}
+
+/* =========================================================
+   APP
+   ========================================================= */
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -56,74 +206,123 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    return onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
-      setMember(null);
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      async (firebaseUser) => {
+        setUser(firebaseUser);
+        setMember(null);
 
-      if (firebaseUser) {
+        if (!firebaseUser) {
+          setLoading(false);
+          return;
+        }
+
         try {
-          const memberSnap = await getDoc(
-            doc(db, 'members', firebaseUser.uid)
+          const memberRef = doc(
+            db,
+            'members',
+            firebaseUser.uid
           );
+
+          const memberSnap = await getDoc(memberRef);
 
           if (memberSnap.exists()) {
             setMember(memberSnap.data() as Member);
           }
         } catch (error) {
-          console.error('Błąd pobierania profilu:', error);
+          console.error(
+            'Błąd pobierania profilu:',
+            error
+          );
         }
-      }
 
-      setLoading(false);
-    });
+        setLoading(false);
+      }
+    );
+
+    return unsubscribe;
   }, []);
 
   if (loading) {
-    return <div className="loading">Ładowanie Naszej Rodziny…</div>;
+    return (
+      <div className="loading">
+        Ładowanie Naszej Rodziny...
+      </div>
+    );
   }
 
   if (!user) {
     return <Login />;
   }
 
-  return <FamilyApp user={user} member={member} />;
+  return (
+    <FamilyApp
+      user={user}
+      member={member}
+    />
+  );
 }
+
+/* =========================================================
+   LOGOWANIE
+   ========================================================= */
 
 function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
+  const [error, setError] = useState('');
+  const [loggingIn, setLoggingIn] =
+    useState(false);
+
+  async function handleLogin(
+    e: React.FormEvent
+  ) {
     e.preventDefault();
+
     setError('');
-    setBusy(true);
+    setLoggingIn(true);
 
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch {
-      setError('Nieprawidłowy e-mail lub hasło.');
+      await signInWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
+    } catch (error) {
+      console.error(error);
+
+      setError(
+        'Nieprawidłowy e-mail lub hasło.'
+      );
     } finally {
-      setBusy(false);
+      setLoggingIn(false);
     }
   }
 
   return (
     <div className="login-page">
       <div className="login-card">
-        <div className="login-logo">🏠</div>
+        <div className="login-logo">
+          🏠
+        </div>
 
         <h1>Nasza Rodzina</h1>
-        <p>Wasze rodzinne centrum w jednym miejscu.</p>
 
-        <form onSubmit={handleSubmit}>
+        <p>
+          Zaloguj się do rodzinnego centrum
+        </p>
+
+        <form onSubmit={handleLogin}>
           <label>
             E-mail
+
             <input
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) =>
+                setEmail(e.target.value)
+              }
               placeholder="Twój e-mail"
               required
             />
@@ -131,25 +330,41 @@ function Login() {
 
           <label>
             Hasło
+
             <input
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) =>
+                setPassword(e.target.value)
+              }
               placeholder="Twoje hasło"
               required
             />
           </label>
 
-          {error && <div className="login-error">{error}</div>}
+          {error && (
+            <div className="login-error">
+              {error}
+            </div>
+          )}
 
-          <button type="submit" disabled={busy}>
-            {busy ? 'Logowanie…' : 'Zaloguj się'}
+          <button
+            type="submit"
+            disabled={loggingIn}
+          >
+            {loggingIn
+              ? 'Logowanie...'
+              : 'Zaloguj się'}
           </button>
         </form>
       </div>
     </div>
   );
 }
+
+/* =========================================================
+   GŁÓWNA APLIKACJA
+   ========================================================= */
 
 function FamilyApp({
   user,
@@ -158,826 +373,1366 @@ function FamilyApp({
   user: User;
   member: Member | null;
 }) {
-  const [page, setPage] = useState<Page>('Start');
+  const [activePage, setActivePage] =
+    useState<Page>('Start');
 
-  function changePage(nextPage: Page) {
-    setPage(nextPage);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+  const name =
+    member?.name || 'Użytkowniku';
+
+  function changePage(page: Page) {
+    setActivePage(page);
+
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth',
+    });
   }
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-icon">🏠</span>
-          <strong>
-            Nasza
-            <br />
-            Rodzina
-          </strong>
-        </div>
 
-        <nav className="sidebar-nav">
-          {navigation.map((item) => (
-            <button
-              key={item.page}
-              className={page === item.page ? 'nav-active' : ''}
-              onClick={() => changePage(item.page)}
-            >
-              <span>{item.icon}</span>
-              {item.page}
-            </button>
-          ))}
-        </nav>
-
-        <button className="logout-button" onClick={() => signOut(auth)}>
-          ↪ Wyloguj
-        </button>
-      </aside>
+      <Sidebar
+        activePage={activePage}
+        changePage={changePage}
+      />
 
       <main className="main-area">
+
         <FamilyHeader />
 
-        {page === 'Start' && (
-          <StartPage name={member?.name || 'Użytkowniku'} />
+        {activePage === 'Start' && (
+          <StartPage name={name} />
         )}
 
-        {page === 'Kalendarz' && <CalendarPage />}
-        {page === 'Zadania' && <TasksPage />}
-        {page === 'Zakupy' && <ShoppingPage />}
-        {page === 'Czat' && <ChatPage />}
-        {page === 'Zdrowie' && <HealthPage />}
-        {page === 'Szkoła' && <SchoolPage />}
-        {page === 'Rodzina' && <FamilyPage />}
-        {page === 'Ustawienia' && (
-          <SettingsPage user={user} member={member} />
+        {activePage === 'Kalendarz' && (
+          <CalendarPage user={user} />
         )}
 
-        <button className="floating-add">＋ Dodaj</button>
+        {activePage === 'Zadania' && (
+          <TasksPage />
+        )}
 
-        <div className="mobile-nav">
-          <MobileButton
-            icon="⌂"
-            label="Start"
-            active={page === 'Start'}
-            onClick={() => changePage('Start')}
-          />
-          <MobileButton
-            icon="▦"
-            label="Kalendarz"
-            active={page === 'Kalendarz'}
-            onClick={() => changePage('Kalendarz')}
-          />
-          <MobileButton
-            icon="🛒"
-            label="Zakupy"
-            active={page === 'Zakupy'}
-            onClick={() => changePage('Zakupy')}
-          />
-          <MobileButton
-            icon="♧"
-            label="Rodzina"
-            active={page === 'Rodzina'}
-            onClick={() => changePage('Rodzina')}
-          />
-          <MobileButton
-            icon="•••"
-            label="Więcej"
-            active={page === 'Ustawienia'}
-            onClick={() => changePage('Ustawienia')}
-          />
-        </div>
+        {activePage !== 'Start' &&
+          activePage !== 'Kalendarz' &&
+          activePage !== 'Zadania' && (
+            <ComingSoonPage
+              page={activePage}
+            />
+          )}
+
+        <button className="floating-add">
+          ＋ Dodaj
+        </button>
+
+        <MobileNavigation
+          activePage={activePage}
+          changePage={changePage}
+        />
+
       </main>
     </div>
   );
 }
 
-function MobileButton({
-  icon,
-  label,
-  active,
-  onClick,
+/* =========================================================
+   SIDEBAR
+   ========================================================= */
+
+function Sidebar({
+  activePage,
+  changePage,
 }: {
-  icon: string;
-  label: string;
-  active: boolean;
-  onClick: () => void;
+  activePage: Page;
+  changePage: (page: Page) => void;
 }) {
   return (
-    <button className={active ? 'mobile-active' : ''} onClick={onClick}>
+    <aside className="sidebar">
+
+      <div className="brand">
+        <span className="brand-icon">
+          🏠
+        </span>
+
+        <strong>
+          Nasza
+          <br />
+          Rodzina
+        </strong>
+      </div>
+
+      <nav className="sidebar-nav">
+
+        <NavButton
+          active={activePage === 'Start'}
+          onClick={() =>
+            changePage('Start')
+          }
+          icon="⌂"
+          label="Start"
+        />
+
+        <NavButton
+          active={
+            activePage === 'Kalendarz'
+          }
+          onClick={() =>
+            changePage('Kalendarz')
+          }
+          icon="▦"
+          label="Kalendarz"
+        />
+
+        <NavButton
+          active={
+            activePage === 'Zadania'
+          }
+          onClick={() =>
+            changePage('Zadania')
+          }
+          icon="☑"
+          label="Zadania"
+        />
+
+        <NavButton
+          active={
+            activePage === 'Zakupy'
+          }
+          onClick={() =>
+            changePage('Zakupy')
+          }
+          icon="🛒"
+          label="Zakupy"
+        />
+
+        <NavButton
+          active={activePage === 'Czat'}
+          onClick={() =>
+            changePage('Czat')
+          }
+          icon="○"
+          label="Czat"
+        />
+
+        <NavButton
+          active={
+            activePage === 'Zdrowie'
+          }
+          onClick={() =>
+            changePage('Zdrowie')
+          }
+          icon="♡"
+          label="Zdrowie"
+        />
+
+        <NavButton
+          active={
+            activePage === 'Szkoła'
+          }
+          onClick={() =>
+            changePage('Szkoła')
+          }
+          icon="◇"
+          label="Szkoła"
+        />
+
+        <NavButton
+          active={
+            activePage === 'Rodzina'
+          }
+          onClick={() =>
+            changePage('Rodzina')
+          }
+          icon="♧"
+          label="Rodzina"
+        />
+
+        <NavButton
+          active={
+            activePage === 'Ustawienia'
+          }
+          onClick={() =>
+            changePage('Ustawienia')
+          }
+          icon="⚙"
+          label="Ustawienia"
+        />
+
+      </nav>
+
+      <button
+        className="logout-button"
+        onClick={() => signOut(auth)}
+      >
+        ↪ Wyloguj
+      </button>
+
+    </aside>
+  );
+}
+
+function NavButton({
+  active,
+  onClick,
+  icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: string;
+  label: string;
+}) {
+  return (
+    <button
+      className={
+        active ? 'nav-active' : ''
+      }
+      onClick={onClick}
+    >
       <span>{icon}</span>
-      <small>{label}</small>
+      {label}
     </button>
   );
 }
 
+/* =========================================================
+   GÓRNY PASEK RODZINY
+   ========================================================= */
+
 function FamilyHeader() {
   return (
     <header className="family-header">
+
       {family.map((person) => (
-        <div className="family-person" key={person.name}>
-          <div className={`avatar avatar-${person.color}`}>
+        <div
+          className="family-person"
+          key={person.name}
+        >
+          <div
+            className={`avatar ${person.avatarClass}`}
+          >
             {person.letter}
           </div>
 
           <div>
-            <strong>{person.name}</strong>
-            <small>{person.role}</small>
+            <strong>
+              {person.name}
+            </strong>
+
+            <small>
+              {person.role}
+            </small>
           </div>
         </div>
       ))}
+
     </header>
   );
 }
 
-function PageHeader({
-  title,
-  description,
-  action,
+/* =========================================================
+   START
+   ========================================================= */
+
+function StartPage({
+  name,
 }: {
-  title: string;
-  description: string;
-  action?: string;
+  name: string;
 }) {
   return (
-    <section className="page-header">
-      <div>
-        <small>Nasza Rodzina</small>
-        <h1>{title}</h1>
-        <p>{description}</p>
-      </div>
+    <div className="page-content">
 
-      {action && <button className="primary-button">＋ {action}</button>}
-    </section>
+      <section className="start-hero">
+
+        <div>
+          <small>
+            Niedziela, 27 września
+          </small>
+
+          <h1>
+            Dzień dobry,
+            <br />
+            {name}!
+          </h1>
+
+          <p>
+            Oto co dzieje się dziś
+            w Waszej rodzinie.
+          </p>
+        </div>
+
+        <div className="weather-card">
+          <span className="weather-icon">
+            ☀️
+          </span>
+
+          <div>
+            <strong>
+              Kołobrzeg
+            </strong>
+
+            <b>18°C</b>
+          </div>
+        </div>
+
+      </section>
+
+      <section className="dashboard-grid">
+
+        <AppCard title="📅 Dzisiaj w rodzinie">
+          <div className="rows">
+            <p>08:00 • Paweł — szkoła</p>
+            <p>08:00 • Nikodem — szkoła</p>
+            <p>13:00 • Sebastian — dyżur</p>
+          </div>
+        </AppCard>
+
+        <AppCard title="✅ Zadania na dziś">
+          <div className="rows">
+            <p>☑ Strój na WF — Paweł</p>
+            <p>☐ Zeszyt do matematyki</p>
+            <p>☐ Przygotować drugie śniadanie</p>
+          </div>
+        </AppCard>
+
+        <AppCard title="🛒 Lista zakupów">
+          <div className="rows">
+            <p>☐ Mleko</p>
+            <p>☑ Chleb</p>
+            <p>☐ Banany</p>
+          </div>
+        </AppCard>
+
+        <AppCard title="🎒 Szkoła — Paweł">
+
+          <div className="vulcan-status">
+            <strong>
+              VULCAN ●
+            </strong>
+
+            <span>
+              Połączono
+            </span>
+          </div>
+
+          <div className="rows">
+            <p>
+              🔔 Zmiana planu lekcji
+            </p>
+
+            <p>
+              ✉️ Nowa wiadomość od wychowawcy
+            </p>
+          </div>
+
+        </AppCard>
+
+        <AppCard title="❤️ Zdrowie">
+          <div className="rows">
+            <p>
+              Layla — szczepienie • za 2 dni
+            </p>
+
+            <p>
+              Dominika — wizyta kontrolna • za 7 dni
+            </p>
+          </div>
+        </AppCard>
+
+        <AppCard title="👨‍👩‍👧‍👦 Rodzina">
+          <div className="rows">
+            <p>
+              🎂 Roczek Layli — 10.10
+            </p>
+
+            <p>
+              ❤️ Rocznica ślubu — 06.09
+            </p>
+          </div>
+        </AppCard>
+
+      </section>
+    </div>
   );
 }
 
-function Card({
+/* =========================================================
+   KALENDARZ
+   ========================================================= */
+
+function CalendarPage({
+  user,
+}: {
+  user: User;
+}) {
+  const [weekStart, setWeekStart] =
+    useState(() =>
+      startOfWeek(new Date())
+    );
+
+  const [events, setEvents] =
+    useState<CalendarEventData[]>([]);
+
+  const [selectedPerson, setSelectedPerson] =
+    useState<PersonKey>('family');
+
+  const [showForm, setShowForm] =
+    useState(false);
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const [form, setForm] =
+    useState<NewEventForm>({
+      title: '',
+      person: 'family',
+      date: formatDateInput(new Date()),
+      time: '12:00',
+    });
+
+  /* -------------------------
+     FIRESTORE – ODCZYT
+     ------------------------- */
+
+  useEffect(() => {
+    const eventsRef = collection(
+      db,
+      'calendarEvents'
+    );
+
+    const eventsQuery = query(eventsRef);
+
+    const unsubscribe = onSnapshot(
+      eventsQuery,
+      (snapshot) => {
+        const loadedEvents =
+          snapshot.docs
+            .map((item) => {
+              const data = item.data();
+
+              const timestamp =
+                data.date as Timestamp;
+
+              if (!timestamp) {
+                return null;
+              }
+
+              return {
+                id: item.id,
+                title:
+                  data.title || 'Wydarzenie',
+                person:
+                  (data.person ||
+                    'family') as PersonKey,
+                date: timestamp.toDate(),
+                createdBy:
+                  data.createdBy || '',
+              };
+            })
+            .filter(
+              (
+                item
+              ): item is CalendarEventData =>
+                item !== null
+            );
+
+        loadedEvents.sort(
+          (a, b) =>
+            a.date.getTime() -
+            b.date.getTime()
+        );
+
+        setEvents(loadedEvents);
+      },
+      (error) => {
+        console.error(
+          'Błąd pobierania wydarzeń:',
+          error
+        );
+      }
+    );
+
+    return unsubscribe;
+  }, []);
+
+  const weekDays = useMemo(() => {
+    return Array.from(
+      { length: 7 },
+      (_, index) =>
+        addDays(weekStart, index)
+    );
+  }, [weekStart]);
+
+  const visibleEvents =
+    useMemo(() => {
+      const weekEnd =
+        addDays(weekStart, 7);
+
+      return events.filter(
+        (event) => {
+          const inWeek =
+            event.date >= weekStart &&
+            event.date < weekEnd;
+
+          const personMatches =
+            selectedPerson === 'family' ||
+            event.person ===
+              selectedPerson ||
+            event.person === 'family';
+
+          return (
+            inWeek &&
+            personMatches
+          );
+        }
+      );
+    }, [
+      events,
+      weekStart,
+      selectedPerson,
+    ]);
+
+  const todayEvents =
+    events.filter((event) =>
+      sameDay(
+        event.date,
+        new Date()
+      )
+    );
+
+  /* -------------------------
+     ZAPIS WYDARZENIA
+     ------------------------- */
+
+  async function saveEvent(
+    e: React.FormEvent
+  ) {
+    e.preventDefault();
+
+    if (!form.title.trim()) {
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const eventDate =
+        new Date(
+          `${form.date}T${form.time}:00`
+        );
+
+      await addDoc(
+        collection(
+          db,
+          'calendarEvents'
+        ),
+        {
+          title: form.title.trim(),
+          person: form.person,
+          date:
+            Timestamp.fromDate(
+              eventDate
+            ),
+          createdBy: user.uid,
+          createdAt:
+            Timestamp.now(),
+        }
+      );
+
+      setForm({
+        title: '',
+        person: 'family',
+        date:
+          formatDateInput(
+            eventDate
+          ),
+        time: '12:00',
+      });
+
+      setWeekStart(
+        startOfWeek(eventDate)
+      );
+
+      setShowForm(false);
+    } catch (error) {
+      console.error(
+        'Błąd zapisywania wydarzenia:',
+        error
+      );
+
+      alert(
+        'Nie udało się zapisać wydarzenia. Sprawdzimy reguły Firestore.'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="page-content">
+
+      <section className="page-header">
+
+        <div>
+          <small>
+            Nasza Rodzina
+          </small>
+
+          <h1>
+            📅 Kalendarz
+          </h1>
+
+          <p>
+            Wszystkie rodzinne wydarzenia
+            w jednym miejscu.
+          </p>
+        </div>
+
+        <button
+          className="primary-button"
+          onClick={() =>
+            setShowForm(
+              (current) => !current
+            )
+          }
+        >
+          {showForm
+            ? '✕ Zamknij'
+            : '＋ Dodaj wydarzenie'}
+        </button>
+
+      </section>
+
+      {/* FORMULARZ DODAWANIA */}
+
+      {showForm && (
+        <section
+          className="app-card"
+          style={{
+            marginBottom: '20px',
+          }}
+        >
+          <h2>
+            ➕ Nowe wydarzenie
+          </h2>
+
+          <form
+            onSubmit={saveEvent}
+            style={{
+              display: 'grid',
+              gridTemplateColumns:
+                'repeat(auto-fit, minmax(160px, 1fr))',
+              gap: '14px',
+              alignItems: 'end',
+            }}
+          >
+
+            <label
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+              }}
+            >
+              <strong>
+                Nazwa
+              </strong>
+
+              <input
+                type="text"
+                value={form.title}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    title:
+                      e.target.value,
+                  })
+                }
+                placeholder="Np. Dentysta"
+                required
+                style={inputStyle}
+              />
+            </label>
+
+            <label
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+              }}
+            >
+              <strong>
+                Dla kogo?
+              </strong>
+
+              <select
+                value={form.person}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    person:
+                      e.target
+                        .value as PersonKey,
+                  })
+                }
+                style={inputStyle}
+              >
+                <option value="family">
+                  Cała rodzina
+                </option>
+
+                <option value="Sebastian">
+                  Sebastian
+                </option>
+
+                <option value="Dominika">
+                  Dominika
+                </option>
+
+                <option value="Paweł">
+                  Paweł
+                </option>
+
+                <option value="Nikodem">
+                  Nikodem
+                </option>
+
+                <option value="Layla">
+                  Layla
+                </option>
+              </select>
+            </label>
+
+            <label
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+              }}
+            >
+              <strong>
+                Data
+              </strong>
+
+              <input
+                type="date"
+                value={form.date}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    date:
+                      e.target.value,
+                  })
+                }
+                required
+                style={inputStyle}
+              />
+            </label>
+
+            <label
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+              }}
+            >
+              <strong>
+                Godzina
+              </strong>
+
+              <input
+                type="time"
+                value={form.time}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    time:
+                      e.target.value,
+                  })
+                }
+                required
+                style={inputStyle}
+              />
+            </label>
+
+            <button
+              type="submit"
+              className="primary-button"
+              disabled={saving}
+              style={{
+                height: '48px',
+              }}
+            >
+              {saving
+                ? 'Zapisywanie...'
+                : '✓ Zapisz'}
+            </button>
+
+          </form>
+        </section>
+      )}
+
+      {/* NAWIGACJA TYGODNIA */}
+
+      <section className="calendar-toolbar">
+
+        <div className="calendar-navigation">
+
+          <button
+            onClick={() =>
+              setWeekStart(
+                addDays(
+                  weekStart,
+                  -7
+                )
+              )
+            }
+          >
+            ‹
+          </button>
+
+          <strong>
+            {weekTitle(weekStart)}
+          </strong>
+
+          <button
+            onClick={() =>
+              setWeekStart(
+                addDays(
+                  weekStart,
+                  7
+                )
+              )
+            }
+          >
+            ›
+          </button>
+
+        </div>
+
+        <div className="view-switch">
+          <button>
+            Dzień
+          </button>
+
+          <button className="selected">
+            Tydzień
+          </button>
+
+          <button>
+            Miesiąc
+          </button>
+        </div>
+
+      </section>
+
+      {/* FILTRY */}
+
+      <section className="family-filters">
+
+        <FilterButton
+          active={
+            selectedPerson === 'family'
+          }
+          onClick={() =>
+            setSelectedPerson('family')
+          }
+        >
+          ● Cała rodzina
+        </FilterButton>
+
+        <FilterButton
+          active={
+            selectedPerson ===
+            'Sebastian'
+          }
+          onClick={() =>
+            setSelectedPerson(
+              'Sebastian'
+            )
+          }
+        >
+          🔵 Sebastian
+        </FilterButton>
+
+        <FilterButton
+          active={
+            selectedPerson ===
+            'Dominika'
+          }
+          onClick={() =>
+            setSelectedPerson(
+              'Dominika'
+            )
+          }
+        >
+          🟣 Dominika
+        </FilterButton>
+
+        <FilterButton
+          active={
+            selectedPerson ===
+            'Paweł'
+          }
+          onClick={() =>
+            setSelectedPerson('Paweł')
+          }
+        >
+          🟢 Paweł
+        </FilterButton>
+
+        <FilterButton
+          active={
+            selectedPerson ===
+            'Nikodem'
+          }
+          onClick={() =>
+            setSelectedPerson(
+              'Nikodem'
+            )
+          }
+        >
+          🟠 Nikodem
+        </FilterButton>
+
+        <FilterButton
+          active={
+            selectedPerson ===
+            'Layla'
+          }
+          onClick={() =>
+            setSelectedPerson('Layla')
+          }
+        >
+          🩷 Layla
+        </FilterButton>
+
+      </section>
+
+      {/* KALENDARZ */}
+
+      <section className="calendar-layout">
+
+        <div className="calendar-box">
+
+          <div className="week-grid">
+
+            {weekDays.map((day) => {
+              const dayEvents =
+                visibleEvents.filter(
+                  (event) =>
+                    sameDay(
+                      event.date,
+                      day
+                    )
+                );
+
+              return (
+                <div
+                  className="calendar-day"
+                  key={day.toISOString()}
+                >
+
+                  <div className="calendar-day-header">
+
+                    <small>
+                      {capitalize(
+                        day.toLocaleDateString(
+                          'pl-PL',
+                          {
+                            weekday:
+                              'short',
+                          }
+                        )
+                      )}
+                    </small>
+
+                    <strong>
+                      {day.getDate()}
+                    </strong>
+
+                  </div>
+
+                  {dayEvents.map(
+                    (event) => (
+                      <div
+                        className={`calendar-event ${personEventClass(
+                          event.person
+                        )}`}
+                        key={event.id}
+                      >
+                        <small>
+                          {formatTime(
+                            event.date
+                          )}
+                        </small>
+
+                        <strong>
+                          {event.title}
+                        </strong>
+                      </div>
+                    )
+                  )}
+
+                </div>
+              );
+            })}
+
+          </div>
+        </div>
+
+        <aside className="calendar-side">
+
+          <h2>Dzisiaj</h2>
+
+          {todayEvents.length === 0 && (
+            <p className="muted">
+              Brak wydarzeń na dziś.
+            </p>
+          )}
+
+          {todayEvents.map(
+            (event) => (
+              <div
+                className="today-event"
+                key={event.id}
+              >
+                <b>
+                  {formatTime(
+                    event.date
+                  )}
+                </b>
+
+                <span>
+                  {event.title}
+                </span>
+              </div>
+            )
+          )}
+
+          <h2 className="side-heading">
+            Nadchodzące
+          </h2>
+
+          {events
+            .filter(
+              (event) =>
+                event.date >
+                new Date()
+            )
+            .slice(0, 3)
+            .map((event) => (
+              <div
+                className="upcoming"
+                key={event.id}
+              >
+                <span>📅</span>
+
+                <div>
+                  <strong>
+                    {event.title}
+                  </strong>
+
+                  <small>
+                    {event.date.toLocaleDateString(
+                      'pl-PL'
+                    )}
+                    {' • '}
+                    {formatTime(
+                      event.date
+                    )}
+                  </small>
+                </div>
+              </div>
+            ))}
+
+        </aside>
+
+      </section>
+    </div>
+  );
+}
+
+/* =========================================================
+   FILTR KALENDARZA
+   ========================================================= */
+
+function FilterButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      className={
+        active
+          ? 'filter-selected'
+          : ''
+      }
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+/* =========================================================
+   ZADANIA
+   ========================================================= */
+
+function TasksPage() {
+  return (
+    <div className="page-content">
+
+      <section className="page-header">
+        <div>
+          <small>
+            Nasza Rodzina
+          </small>
+
+          <h1>Zadania</h1>
+
+          <p>
+            Rodzinne obowiązki
+            i rzeczy do zrobienia.
+          </p>
+        </div>
+      </section>
+
+      <section className="module-grid module-grid-wide">
+
+        <AppCard title="✅ Zadania">
+
+          <div className="task-list">
+
+            <label className="task-row">
+              <input
+                type="checkbox"
+                defaultChecked
+              />
+
+              <span className="completed">
+                Strój na WF — Paweł
+              </span>
+            </label>
+
+            <label className="task-row">
+              <input type="checkbox" />
+
+              <span>
+                Zeszyt do matematyki
+              </span>
+            </label>
+
+            <label className="task-row">
+              <input type="checkbox" />
+
+              <span>
+                Przygotować drugie śniadanie
+              </span>
+            </label>
+
+          </div>
+        </AppCard>
+
+        <AppCard title="📊 Dzisiaj">
+
+          <div className="progress-number">
+            1/3
+          </div>
+
+          <p className="muted">
+            wykonanych zadań
+          </p>
+
+          <div className="progress-bar">
+            <span
+              style={{
+                width: '33%',
+              }}
+            />
+          </div>
+
+        </AppCard>
+
+      </section>
+    </div>
+  );
+}
+
+/* =========================================================
+   POZOSTAŁE MODUŁY
+   ========================================================= */
+
+function ComingSoonPage({
+  page,
+}: {
+  page: Page;
+}) {
+  return (
+    <div className="page-content">
+
+      <section className="page-header">
+        <div>
+          <small>
+            Nasza Rodzina
+          </small>
+
+          <h1>{page}</h1>
+
+          <p>
+            Ten moduł przygotujemy
+            w kolejnym kroku.
+          </p>
+        </div>
+      </section>
+
+      <AppCard title={`🚧 ${page}`}>
+        <div className="rows">
+          <p>
+            Moduł jest już podłączony
+            do nawigacji.
+          </p>
+
+          <p>
+            Za chwilę dodamy tutaj jego
+            właściwą zawartość.
+          </p>
+        </div>
+      </AppCard>
+
+    </div>
+  );
+}
+
+/* =========================================================
+   KARTA
+   ========================================================= */
+
+function AppCard({
   title,
   children,
-  className = '',
 }: {
   title: string;
   children: React.ReactNode;
-  className?: string;
 }) {
   return (
-    <section className={`app-card ${className}`}>
+    <section className="app-card">
       <h2>{title}</h2>
       {children}
     </section>
   );
 }
 
-function Rows({ rows }: { rows: string[] }) {
-  return (
-    <div className="rows">
-      {rows.map((row, index) => (
-        <p key={index}>{row}</p>
-      ))}
-    </div>
-  );
-}
+/* =========================================================
+   NAWIGACJA MOBILNA
+   ========================================================= */
 
-/* START */
-
-function StartPage({ name }: { name: string }) {
-  return (
-    <div className="page-content">
-      <section className="start-hero">
-        <div>
-          <small>Niedziela, 27 września</small>
-          <h1>Dzień dobry, {name}! 👋</h1>
-          <p>Oto co dzieje się dziś w Waszej rodzinie.</p>
-        </div>
-
-        <div className="weather-card">
-          <span className="weather-icon">☀️</span>
-          <div>
-            <strong>Kołobrzeg</strong>
-            <b>18°C</b>
-          </div>
-        </div>
-      </section>
-
-      <div className="dashboard-grid">
-        <Card title="📅 Dzisiaj w rodzinie">
-          <Rows
-            rows={[
-              '08:00 • Paweł — szkoła',
-              '08:00 • Nikodem — szkoła',
-              '13:00 • Sebastian — dyżur',
-            ]}
-          />
-        </Card>
-
-        <Card title="✅ Zadania na dziś">
-          <Rows
-            rows={[
-              '☑ Strój na WF — Paweł',
-              '☐ Zeszyt do matematyki',
-              '☐ Przygotować drugie śniadanie',
-            ]}
-          />
-        </Card>
-
-        <Card title="🛒 Lista zakupów">
-          <Rows rows={['☐ Mleko', '☑ Chleb', '☐ Banany']} />
-        </Card>
-
-        <Card title="🎒 Szkoła — Paweł">
-          <div className="vulcan-status">
-            <strong>VULCAN ●</strong>
-            <span>Połączono</span>
-          </div>
-
-          <Rows
-            rows={[
-              '🔔 Zmiana planu lekcji',
-              '✉️ Nowa wiadomość od wychowawcy',
-            ]}
-          />
-        </Card>
-
-        <Card title="❤️ Zdrowie">
-          <Rows
-            rows={[
-              'Layla — szczepienie • za 2 dni',
-              'Paweł — kontrola • 3 października',
-            ]}
-          />
-        </Card>
-
-        <Card title="👨‍👩‍👧‍👦 Rodzina">
-          <Rows
-            rows={[
-              '🎂 Roczek Layli — 10.10',
-              '📌 Rodzinny wyjazd — sobota',
-            ]}
-          />
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-/* KALENDARZ */
-
-const calendarDays = [
-  { day: 'Pon', date: '28' },
-  { day: 'Wt', date: '29' },
-  { day: 'Śr', date: '30' },
-  { day: 'Czw', date: '1' },
-  { day: 'Pt', date: '2' },
-  { day: 'Sob', date: '3' },
-  { day: 'Niedz', date: '4' },
-];
-
-function CalendarPage() {
-  return (
-    <div className="page-content">
-      <PageHeader
-        title="📅 Kalendarz"
-        description="Wszystkie rodzinne wydarzenia w jednym miejscu."
-        action="Dodaj wydarzenie"
-      />
-
-      <section className="calendar-toolbar">
-        <div className="calendar-navigation">
-          <button>‹</button>
-          <strong>28 września – 4 października</strong>
-          <button>›</button>
-        </div>
-
-        <div className="view-switch">
-          <button>Dzień</button>
-          <button className="selected">Tydzień</button>
-          <button>Miesiąc</button>
-        </div>
-      </section>
-
-      <section className="family-filters">
-        <button className="filter-selected">● Cała rodzina</button>
-        <button>🔵 Sebastian</button>
-        <button>🟣 Dominika</button>
-        <button>🟢 Paweł</button>
-        <button>🟠 Nikodem</button>
-        <button>🩷 Layla</button>
-      </section>
-
-      <div className="calendar-layout">
-        <section className="calendar-box">
-          <div className="week-grid">
-            {calendarDays.map((item, index) => (
-              <div className="calendar-day" key={item.day}>
-                <div className="calendar-day-header">
-                  <small>{item.day}</small>
-                  <strong>{item.date}</strong>
-                </div>
-
-                {index === 0 && (
-                  <>
-                    <CalendarEvent
-                      time="08:00"
-                      title="Paweł — szkoła"
-                      color="green"
-                    />
-                    <CalendarEvent
-                      time="08:00"
-                      title="Nikodem — szkoła"
-                      color="orange"
-                    />
-                  </>
-                )}
-
-                {index === 1 && (
-                  <CalendarEvent
-                    time="10:30"
-                    title="Layla — szczepienie"
-                    color="pink"
-                  />
-                )}
-
-                {index === 2 && (
-                  <CalendarEvent
-                    time="13:00"
-                    title="Sebastian — dyżur"
-                    color="blue"
-                  />
-                )}
-
-                {index === 3 && (
-                  <CalendarEvent
-                    time="16:30"
-                    title="Nikodem — zajęcia"
-                    color="orange"
-                  />
-                )}
-
-                {index === 4 && (
-                  <CalendarEvent
-                    time="14:00"
-                    title="Dominika — wizyta"
-                    color="purple"
-                  />
-                )}
-
-                {index === 5 && (
-                  <CalendarEvent
-                    time="11:00"
-                    title="Rodzinny wyjazd"
-                    color="family"
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <aside className="calendar-side">
-          <h2>Dzisiaj</h2>
-
-          <div className="today-event">
-            <b>08:00</b>
-            <span>Paweł — szkoła</span>
-          </div>
-
-          <div className="today-event">
-            <b>08:00</b>
-            <span>Nikodem — szkoła</span>
-          </div>
-
-          <div className="today-event">
-            <b>13:00</b>
-            <span>Sebastian — dyżur</span>
-          </div>
-
-          <h2 className="side-heading">Nadchodzące</h2>
-
-          <div className="upcoming">
-            <span>❤️</span>
-            <div>
-              <strong>Szczepienie Layli</strong>
-              <small>Za 2 dni • 10:30</small>
-            </div>
-          </div>
-
-          <div className="upcoming">
-            <span>🎂</span>
-            <div>
-              <strong>Roczek Layli</strong>
-              <small>10 października</small>
-            </div>
-          </div>
-        </aside>
-      </div>
-    </div>
-  );
-}
-
-function CalendarEvent({
-  time,
-  title,
-  color,
+function MobileNavigation({
+  activePage,
+  changePage,
 }: {
-  time: string;
-  title: string;
-  color: string;
+  activePage: Page;
+  changePage: (page: Page) => void;
 }) {
   return (
-    <div className={`calendar-event event-${color}`}>
-      <small>{time}</small>
-      <strong>{title}</strong>
-    </div>
+    <nav className="mobile-nav">
+
+      <button
+        className={
+          activePage === 'Start'
+            ? 'mobile-active'
+            : ''
+        }
+        onClick={() =>
+          changePage('Start')
+        }
+      >
+        <span>⌂</span>
+        <small>Start</small>
+      </button>
+
+      <button
+        className={
+          activePage === 'Kalendarz'
+            ? 'mobile-active'
+            : ''
+        }
+        onClick={() =>
+          changePage('Kalendarz')
+        }
+      >
+        <span>▦</span>
+        <small>Kalendarz</small>
+      </button>
+
+      <button
+        className={
+          activePage === 'Zakupy'
+            ? 'mobile-active'
+            : ''
+        }
+        onClick={() =>
+          changePage('Zakupy')
+        }
+      >
+        <span>🛒</span>
+        <small>Zakupy</small>
+      </button>
+
+      <button
+        className={
+          activePage === 'Rodzina'
+            ? 'mobile-active'
+            : ''
+        }
+        onClick={() =>
+          changePage('Rodzina')
+        }
+      >
+        <span>♧</span>
+        <small>Rodzina</small>
+      </button>
+
+      <button
+        onClick={() =>
+          changePage('Ustawienia')
+        }
+      >
+        <span>•••</span>
+        <small>Więcej</small>
+      </button>
+
+    </nav>
   );
 }
 
-/* ZADANIA */
+/* =========================================================
+   STYLE FORMULARZA
+   ========================================================= */
 
-function TasksPage() {
-  const [tasks, setTasks] = useState([
-    { text: 'Strój na WF — Paweł', done: true },
-    { text: 'Zeszyt do matematyki', done: false },
-    { text: 'Przygotować drugie śniadanie', done: false },
-    { text: 'Umówić wizytę kontrolną', done: false },
-    { text: 'Spakować rzeczy na wyjazd', done: false },
-  ]);
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  minWidth: 0,
+  height: '48px',
+  padding: '10px 12px',
+  border: '1px solid #dce6f0',
+  borderRadius: '10px',
+  background: '#f8fbff',
+  color: '#12345e',
+  fontSize: '16px',
+};
 
-  function toggleTask(index: number) {
-    setTasks((current) =>
-      current.map((task, i) =>
-        i === index ? { ...task, done: !task.done } : task
-      )
-    );
-  }
+/* =========================================================
+   START REACT
+   ========================================================= */
 
-  const completed = tasks.filter((task) => task.done).length;
-
-  return (
-    <div className="page-content">
-      <PageHeader
-        title="✅ Zadania"
-        description="Rodzinne obowiązki i rzeczy do zrobienia."
-        action="Dodaj zadanie"
-      />
-
-      <div className="module-grid module-grid-wide">
-        <Card title="Na dziś">
-          <div className="task-list">
-            {tasks.map((task, index) => (
-              <label className="task-row" key={task.text}>
-                <input
-                  type="checkbox"
-                  checked={task.done}
-                  onChange={() => toggleTask(index)}
-                />
-
-                <span className={task.done ? 'completed' : ''}>
-                  {task.text}
-                </span>
-              </label>
-            ))}
-          </div>
-        </Card>
-
-        <Card title="Postęp">
-          <div className="progress-number">
-            {completed}/{tasks.length}
-          </div>
-
-          <p className="muted">wykonanych zadań</p>
-
-          <div className="progress-bar">
-            <span
-              style={{
-                width: `${(completed / tasks.length) * 100}%`,
-              }}
-            />
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-/* ZAKUPY */
-
-function ShoppingPage() {
-  const [products, setProducts] = useState([
-    { text: 'Mleko', done: false },
-    { text: 'Chleb', done: true },
-    { text: 'Banany', done: false },
-    { text: 'Pieluchy', done: false },
-    { text: 'Woda', done: false },
-  ]);
-
-  function toggleProduct(index: number) {
-    setProducts((current) =>
-      current.map((product, i) =>
-        i === index
-          ? { ...product, done: !product.done }
-          : product
-      )
-    );
-  }
-
-  return (
-    <div className="page-content">
-      <PageHeader
-        title="🛒 Zakupy"
-        description="Wspólne listy zakupów dostępne dla całej rodziny."
-        action="Dodaj produkt"
-      />
-
-      <div className="module-grid module-grid-wide">
-        <Card title="🛒 Bieżące zakupy">
-          <div className="task-list">
-            {products.map((product, index) => (
-              <label className="task-row" key={product.text}>
-                <input
-                  type="checkbox"
-                  checked={product.done}
-                  onChange={() => toggleProduct(index)}
-                />
-
-                <span className={product.done ? 'completed' : ''}>
-                  {product.text}
-                </span>
-              </label>
-            ))}
-          </div>
-        </Card>
-
-        <Card title="Moje listy">
-          <Rows
-            rows={[
-              '🛒 Bieżące zakupy',
-              '🎂 Roczek Layli',
-              '🚗 Rodzinny wyjazd',
-              '🎄 Święta',
-            ]}
-          />
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-/* CZAT */
-
-function ChatPage() {
-  const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState([
-    { author: 'Dominika', text: 'Kto kupi dzisiaj mleko?' },
-    { author: 'Sebastian', text: 'Ja wezmę po pracy 👍' },
-    { author: 'Paweł', text: 'Potrzebuję też zeszyt do matematyki.' },
-  ]);
-
-  function sendMessage(e: React.FormEvent) {
-    e.preventDefault();
-
-    if (!message.trim()) return;
-
-    setMessages((current) => [
-      ...current,
-      { author: 'Ja', text: message.trim() },
-    ]);
-
-    setMessage('');
-  }
-
-  return (
-    <div className="page-content">
-      <PageHeader
-        title="💬 Czat rodzinny"
-        description="Jedno miejsce do rozmów całej rodziny."
-      />
-
-      <section className="chat-card">
-        <div className="chat-title">
-          <div>
-            <strong>Nasza Rodzina</strong>
-            <small>5 członków</small>
-          </div>
-        </div>
-
-        <div className="messages">
-          {messages.map((item, index) => (
-            <div
-              className={`message ${
-                item.author === 'Ja' ? 'message-me' : ''
-              }`}
-              key={index}
-            >
-              <small>{item.author}</small>
-              <p>{item.text}</p>
-            </div>
-          ))}
-        </div>
-
-        <form className="message-form" onSubmit={sendMessage}>
-          <input
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            placeholder="Napisz wiadomość…"
-          />
-          <button>Wyślij</button>
-        </form>
-      </section>
-    </div>
-  );
-}
-
-/* ZDROWIE */
-
-function HealthPage() {
-  return (
-    <div className="page-content">
-      <PageHeader
-        title="❤️ Zdrowie"
-        description="Wizyty, historia leczenia, wyniki i dokumenty całej rodziny."
-        action="Dodaj wizytę"
-      />
-
-      <section className="family-filters">
-        {family.map((person) => (
-          <button key={person.name}>{person.name}</button>
-        ))}
-      </section>
-
-      <div className="dashboard-grid">
-        <Card title="🩺 Nadchodzące wizyty">
-          <Rows
-            rows={[
-              'Layla • szczepienie • 29.09 • 10:30',
-              'Paweł • kontrola • 03.10 • 12:00',
-              'Dominika • wizyta • 04.10 • 14:00',
-            ]}
-          />
-        </Card>
-
-        <Card title="📋 Historia wizyt">
-          <Rows
-            rows={[
-              'Paweł • Neurolog • 12.09',
-              'Paweł • Ortopeda • 18.08',
-              'Layla • Pediatra • 05.08',
-            ]}
-          />
-        </Card>
-
-        <Card title="📄 Wyniki i dokumenty">
-          <Rows
-            rows={[
-              '📄 Wyniki badań',
-              '🖼️ Zdjęcia z wizyt',
-              '📎 Zalecenia lekarzy',
-              '💊 Leki i dawkowanie',
-            ]}
-          />
-        </Card>
-
-        <Card title="💉 Szczepienia">
-          <Rows
-            rows={[
-              'Layla • następne za 2 dni',
-              'Nikodem • aktualne',
-              'Paweł • aktualne',
-            ]}
-          />
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-/* SZKOŁA */
-
-function SchoolPage() {
-  return (
-    <div className="page-content">
-      <PageHeader
-        title="🎒 Szkoła"
-        description="Plan lekcji, zadania, oceny i informacje szkolne."
-      />
-
-      <div className="module-grid module-grid-wide">
-        <Card title="Paweł — VULCAN">
-          <div className="vulcan-status">
-            <strong>VULCAN ●</strong>
-            <span>Połączono</span>
-          </div>
-
-          <Rows
-            rows={[
-              '🔔 Zmiana planu lekcji',
-              '✉️ Nowa wiadomość od wychowawcy',
-              '📝 Zadanie — matematyka',
-              '⭐ Ostatnia ocena — 5',
-            ]}
-          />
-
-          <button className="secondary-button">
-            Otwórz VULCAN
-          </button>
-        </Card>
-
-        <Card title="📚 Dzisiejszy plan">
-          <Rows
-            rows={[
-              '08:00 • Matematyka',
-              '08:55 • Język polski',
-              '09:50 • Fizyka',
-              '10:45 • WF',
-              '11:40 • Język angielski',
-            ]}
-          />
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-/* RODZINA */
-
-function FamilyPage() {
-  return (
-    <div className="page-content">
-      <PageHeader
-        title="👨‍👩‍👧‍👦 Rodzina"
-        description="Profile wszystkich członków Waszej rodziny."
-      />
-
-      <div className="family-profile-grid">
-        {family.map((person) => (
-          <section className="family-profile" key={person.name}>
-            <div className={`profile-avatar avatar-${person.color}`}>
-              {person.letter}
-            </div>
-
-            <h2>{person.name}</h2>
-            <p>{person.role}</p>
-
-            <button className="secondary-button">
-              Otwórz profil
-            </button>
-          </section>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* USTAWIENIA */
-
-function SettingsPage({
-  user,
-  member,
-}: {
-  user: User;
-  member: Member | null;
-}) {
-  return (
-    <div className="page-content">
-      <PageHeader
-        title="⚙️ Ustawienia"
-        description="Konto i ustawienia Naszej Rodziny."
-      />
-
-      <div className="module-grid module-grid-wide">
-        <Card title="👤 Moje konto">
-          <Rows
-            rows={[
-              `Imię: ${member?.name || '—'}`,
-              `Rola: ${member?.role || '—'}`,
-              `E-mail: ${user.email || '—'}`,
-            ]}
-          />
-        </Card>
-
-        <Card title="⚙️ Aplikacja">
-          <Rows
-            rows={[
-              '🔔 Powiadomienia',
-              '🎨 Wygląd aplikacji',
-              '🔒 Prywatność',
-              '📱 Instalacja na urządzeniu',
-            ]}
-          />
-
-          <button
-            className="danger-button"
-            onClick={() => signOut(auth)}
-          >
-            Wyloguj się
-          </button>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-createRoot(document.getElementById('root')!).render(
+createRoot(
+  document.getElementById('root')!
+).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>
