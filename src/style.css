@@ -1,6 +1,6 @@
 /* =========================================================
    NASZA RODZINA VOL.1
-   RESPONSIVE UI
+   RESPONSIVE UI + KALENDARZ 2.0
    ========================================================= */
 
 * {
@@ -33,7 +33,9 @@ body {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -45,13 +47,38 @@ img {
   max-width: 100%;
 }
 
-.loading {
+
+/* =========================================================
+   ŁADOWANIE
+   ========================================================= */
+
+.loading-screen {
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: 24px;
-  font-size: 20px;
-  font-weight: 700;
+  background: #f3f7fc;
+}
+
+.loading-card {
+  min-width: 260px;
+  padding: 32px;
+  background: white;
+  border-radius: 25px;
+  text-align: center;
+  box-shadow: 0 15px 50px rgba(22, 55, 94, 0.12);
+}
+
+.family-logo {
+  font-size: 45px;
+}
+
+.loading-card h2 {
+  margin: 12px 0 5px;
+}
+
+.loading-card p {
+  color: #8191a4;
 }
 
 
@@ -75,7 +102,7 @@ img {
   box-shadow: 0 20px 60px rgba(22, 55, 94, 0.14);
 }
 
-.login-logo {
+.login-card .family-logo {
   font-size: 44px;
 }
 
@@ -89,20 +116,20 @@ img {
   color: #7b8ca0;
 }
 
-.login-card form {
+.login-form {
   display: flex;
   flex-direction: column;
   gap: 17px;
 }
 
-.login-card label {
+.login-form label {
   display: flex;
   flex-direction: column;
   gap: 7px;
   font-weight: 700;
 }
 
-.login-card input {
+.login-form input {
   width: 100%;
   padding: 14px;
   border: 1px solid #dbe5ef;
@@ -111,11 +138,11 @@ img {
   background: #f9fbfe;
 }
 
-.login-card input:focus {
+.login-form input:focus {
   border-color: #1685ff;
 }
 
-.login-card form button {
+.login-form button {
   padding: 14px;
   border: 0;
   border-radius: 12px;
@@ -151,7 +178,7 @@ img {
 
   width: clamp(205px, 20vw, 250px);
   min-height: 100vh;
-  padding: 30px 15px 22px;
+  padding: 26px 15px 22px;
 
   display: flex;
   flex-direction: column;
@@ -160,20 +187,36 @@ img {
   color: white;
 }
 
-.brand {
+.sidebar-brand {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 8px 18px 30px;
+  gap: 12px;
+  padding: 7px 10px 28px;
 }
 
-.brand-icon {
-  font-size: 29px;
+.sidebar-logo {
+  flex: 0 0 auto;
+  font-size: 28px;
 }
 
-.brand strong {
-  font-size: clamp(22px, 2.2vw, 26px);
-  line-height: 1.05;
+.sidebar-brand > div:last-child {
+  min-width: 0;
+}
+
+.sidebar-brand strong,
+.sidebar-brand small {
+  display: block;
+}
+
+.sidebar-brand strong {
+  font-size: clamp(18px, 2vw, 23px);
+  line-height: 1.08;
+}
+
+.sidebar-brand small {
+  margin-top: 4px;
+  color: #bfd0dc;
+  font-size: 12px;
 }
 
 .sidebar-nav {
@@ -182,13 +225,13 @@ img {
   gap: 5px;
 }
 
-.sidebar-nav button {
+.nav-button {
   width: 100%;
-  padding: 13px 17px;
+  padding: 13px 13px;
 
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 
   border: 0;
   border-radius: 12px;
@@ -197,32 +240,73 @@ img {
   color: #cbdbe7;
 
   text-align: left;
-  font-size: clamp(15px, 1.7vw, 17px);
+  font-size: clamp(14px, 1.5vw, 17px);
 }
 
-.sidebar-nav button:hover {
+.nav-button:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.sidebar-nav button.nav-active {
-  background: rgba(63, 143, 201, 0.28);
+.nav-button.active {
+  background: rgba(63, 143, 201, 0.3);
   color: white;
 }
 
-.sidebar-nav button span {
-  width: 22px;
-  flex: 0 0 22px;
+.nav-button span {
+  width: 23px;
+  flex: 0 0 23px;
   text-align: center;
 }
 
-.logout-button {
+.sidebar-profile {
   margin-top: auto;
-  padding: 13px 17px;
-  border: 0;
-  border-radius: 12px;
-  background: transparent;
-  color: #cbdbe7;
-  text-align: left;
+  padding: 15px 10px 2px;
+
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.sidebar-profile > div:last-child {
+  min-width: 0;
+}
+
+.sidebar-profile strong,
+.sidebar-profile small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-profile small {
+  margin-top: 3px;
+  color: #b9ccd9;
+  font-size: 12px;
+}
+
+.sidebar-profile .profile-avatar {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  margin: 0;
+
+  display: grid;
+  place-items: center;
+
+  overflow: hidden;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+
+  font-size: 20px;
+}
+
+.sidebar-profile .profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .main-area {
@@ -234,91 +318,67 @@ img {
 
 
 /* =========================================================
-   GÓRNY PASEK RODZINY
+   GÓRNY PASEK
    ========================================================= */
 
-.family-header {
+.top-header {
   width: 100%;
-  min-height: 94px;
-  padding: 12px clamp(18px, 3vw, 32px);
+  min-height: 76px;
+  padding: 10px clamp(18px, 3vw, 32px);
 
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  display: flex;
   align-items: center;
-  gap: clamp(8px, 2vw, 29px);
-
-  overflow: hidden;
+  justify-content: space-between;
+  gap: 20px;
 
   background: white;
   border-bottom: 1px solid #e4ebf3;
 }
 
-.family-person {
-  min-width: 0;
+.top-header > div:first-child small,
+.top-header > div:first-child strong {
+  display: block;
+}
 
+.top-header > div:first-child small {
+  margin-bottom: 3px;
+  color: #7c8ea1;
+  font-size: 12px;
+}
+
+.top-header > div:first-child strong {
+  color: #12345e;
+  font-size: 18px;
+}
+
+.header-user {
   display: flex;
   align-items: center;
-  gap: clamp(7px, 1vw, 10px);
+  gap: 15px;
 }
 
-.family-person > div:last-child {
-  min-width: 0;
+.header-user-text {
+  text-align: right;
 }
 
-.family-person strong,
-.family-person small {
+.header-user-text strong,
+.header-user-text small {
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.family-person strong {
-  font-size: clamp(13px, 1.5vw, 16px);
-}
-
-.family-person small {
+.header-user-text small {
   margin-top: 2px;
-  color: #8494a8;
-  font-size: clamp(11px, 1.3vw, 14px);
+  color: #8292a4;
+  font-size: 12px;
 }
 
-.avatar {
-  width: clamp(38px, 4.5vw, 48px);
-  height: clamp(38px, 4.5vw, 48px);
-  flex: 0 0 clamp(38px, 4.5vw, 48px);
-
-  display: grid;
-  place-items: center;
-
-  border-radius: 50%;
-  font-size: clamp(15px, 1.7vw, 18px);
-  font-weight: 900;
-}
-
-.avatar-blue {
-  background: #e5f1ff;
-  color: #1574d4;
-}
-
-.avatar-purple {
-  background: #f1e9ff;
-  color: #8a42d5;
-}
-
-.avatar-green {
-  background: #e7f7ec;
-  color: #218c47;
-}
-
-.avatar-orange {
-  background: #fff0df;
-  color: #dc7a0a;
-}
-
-.avatar-pink {
-  background: #ffe8f2;
-  color: #d94f8b;
+.header-user > button {
+  padding: 9px 13px;
+  border: 0;
+  border-radius: 10px;
+  background: #eef4f8;
+  color: #365674;
+  font-weight: 700;
 }
 
 
@@ -328,16 +388,16 @@ img {
 
 .page-content {
   width: 100%;
-  max-width: 1320px;
+  max-width: 1500px;
   margin: 0 auto;
+
   padding:
-    clamp(25px, 4vw, 42px)
-    clamp(18px, 3.5vw, 38px)
+    clamp(25px, 3vw, 40px)
+    clamp(18px, 3vw, 38px)
     120px;
 }
 
-.page-header,
-.start-hero {
+.page-header {
   width: 100%;
   margin-bottom: clamp(22px, 3vw, 30px);
 
@@ -347,18 +407,15 @@ img {
   gap: 25px;
 }
 
-.page-header > div,
-.start-hero > div {
+.page-header > div {
   min-width: 0;
 }
 
-.page-header small,
-.start-hero small {
+.page-header small {
   color: #496b91;
 }
 
-.page-header h1,
-.start-hero h1 {
+.page-header h1 {
   margin: 7px 0;
   color: #102f5b;
 
@@ -366,8 +423,7 @@ img {
   line-height: 1.05;
 }
 
-.page-header p,
-.start-hero p {
+.page-header p {
   max-width: 720px;
   margin: 0;
 
@@ -376,32 +432,24 @@ img {
   line-height: 1.45;
 }
 
-.primary-button,
-.secondary-button,
-.danger-button {
-  border: 0;
-  border-radius: 12px;
-  padding: 12px 17px;
-  font-weight: 800;
-}
-
 .primary-button {
   flex: 0 0 auto;
+
+  padding: 12px 17px;
+
+  border: 0;
+  border-radius: 12px;
+
   background: #1685ff;
   color: white;
+
+  font-weight: 800;
   white-space: nowrap;
 }
 
-.secondary-button {
-  margin-top: 17px;
-  background: #e9f3ff;
-  color: #176fc5;
-}
-
-.danger-button {
-  margin-top: 20px;
-  background: #ffe8e8;
-  color: #ad2929;
+.primary-button:disabled {
+  opacity: 0.65;
+  cursor: default;
 }
 
 
@@ -409,34 +457,48 @@ img {
    START
    ========================================================= */
 
-.weather-card {
-  min-width: clamp(190px, 23vw, 230px);
-  padding: 18px clamp(18px, 2.5vw, 25px);
+.welcome-card {
+  width: 100%;
+  margin-bottom: 24px;
+  padding: clamp(22px, 3vw, 32px);
 
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 14px;
+  gap: 25px;
 
-  background: white;
-  border-radius: 24px;
-  box-shadow: 0 8px 30px rgba(30, 66, 104, 0.08);
+  background:
+    linear-gradient(135deg, #e8f4ff 0%, #ffffff 70%);
+
+  border: 1px solid #dceaf5;
+  border-radius: 25px;
+
+  box-shadow: 0 8px 30px rgba(30, 66, 104, 0.06);
 }
 
-.weather-icon {
-  font-size: clamp(29px, 4vw, 35px);
+.welcome-card small {
+  color: #58799b;
 }
 
-.weather-card strong,
-.weather-card b {
-  display: block;
+.welcome-card h1 {
+  margin: 8px 0;
+  color: #102f5b;
+  font-size: clamp(28px, 4vw, 43px);
 }
 
-.weather-card b {
-  margin-top: 2px;
-  font-size: clamp(25px, 3vw, 30px);
+.welcome-card p {
+  margin: 0;
+  color: #7b8da0;
+}
+
+.welcome-illustration {
+  flex: 0 0 auto;
+  font-size: clamp(55px, 8vw, 90px);
 }
 
 .dashboard-grid {
+  width: 100%;
+
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: clamp(15px, 2vw, 21px);
@@ -449,584 +511,114 @@ img {
   background: white;
   border: 1px solid #e2eaf3;
   border-radius: 23px;
+
   box-shadow: 0 7px 25px rgba(31, 63, 101, 0.06);
 }
 
-.app-card h2 {
-  margin: 0 0 17px;
+.card-icon {
+  margin-bottom: 12px;
+  font-size: 29px;
+}
+
+.app-card h3 {
+  margin: 0 0 8px;
   color: #12345e;
-  font-size: clamp(18px, 2vw, 21px);
 }
 
-.rows p {
+.app-card p {
   margin: 0;
-  padding: 12px 0;
-
-  border-bottom: 1px solid #e7edf4;
-
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.rows p:last-child {
-  border-bottom: 0;
-}
-
-.vulcan-status {
-  padding: 15px 17px;
-  margin-bottom: 5px;
-
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-
-  background: #d9f7e8;
-  color: #15845d;
-  border-radius: 14px;
+  color: #7d8ea1;
+  line-height: 1.45;
 }
 
 
 /* =========================================================
    KALENDARZ
+   Podstawowe klasy są w main.tsx.
+   Tutaj pilnujemy szerokości aplikacji.
    ========================================================= */
 
-.calendar-toolbar {
+.calendar2-toolbar,
+.calendar2-filters,
+.calendar2-week-layout,
+.calendar2-month-card,
+.calendar2-day-view {
   width: 100%;
-  margin-bottom: 14px;
-  padding: 14px 16px;
-
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-
-  background: white;
-  border: 1px solid #e1e9f2;
-  border-radius: 18px;
+  max-width: none;
 }
 
-.calendar-navigation,
-.view-switch {
+.calendar2-week-layout {
   min-width: 0;
-
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
-.calendar-navigation {
-  flex: 1 1 auto;
-}
-
-.calendar-navigation button,
-.view-switch button {
-  flex: 0 0 auto;
-
-  padding: 9px clamp(9px, 1.5vw, 13px);
-
-  border: 0;
-  border-radius: 10px;
-
-  background: #eef3f8;
-  color: #244769;
-}
-
-.calendar-navigation strong {
-  min-width: 0;
-
-  font-size: clamp(13px, 1.8vw, 16px);
-  text-align: center;
-}
-
-.view-switch {
-  flex: 0 0 auto;
-}
-
-.view-switch .selected {
-  background: #1685ff;
-  color: white;
-}
-
-
-/* FILTRY */
-
-.family-filters {
-  width: 100%;
-  padding: 2px 0 17px;
-
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.family-filters button {
-  flex: 1 1 auto;
-  min-width: max-content;
-
-  padding: 9px clamp(9px, 1.4vw, 14px);
-
-  border: 1px solid #dce6f0;
-  border-radius: 999px;
-
-  background: white;
-  color: #365674;
-
-  font-size: clamp(12px, 1.5vw, 15px);
-  white-space: nowrap;
-}
-
-.family-filters .filter-selected {
-  background: #153e62;
-  color: white;
-  border-color: #153e62;
-}
-
-
-/* KALENDARZ + PANEL BOCZNY */
-
-.calendar-layout {
-  width: 100%;
-
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
-  gap: 20px;
-  align-items: start;
-}
-
-.calendar-box {
+.calendar2-week-card {
   width: 100%;
   min-width: 0;
-  overflow: hidden;
-
-  background: white;
-  border: 1px solid #e0e8f1;
-  border-radius: 21px;
 }
 
-
-/*
-   KLUCZOWA ZMIANA:
-   7 kolumn zawsze dzieli dostępną szerokość.
-   Nie ma już min-width: 875px.
-*/
-
-.week-grid {
+.calendar2-week-grid {
   width: 100%;
+}
+
+.calendar2-week-day {
   min-width: 0;
-
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-}
-
-.calendar-day {
-  min-width: 0;
-  min-height: clamp(360px, 48vw, 470px);
-
-  padding: clamp(6px, 1vw, 10px);
-
-  border-right: 1px solid #e6edf4;
-}
-
-.calendar-day:last-child {
-  border-right: 0;
-}
-
-.calendar-day-header {
-  margin-bottom: 12px;
-  padding: 4px 0 12px;
-
-  text-align: center;
-  border-bottom: 1px solid #e7edf4;
-}
-
-.calendar-day-header small,
-.calendar-day-header strong {
-  display: block;
-}
-
-.calendar-day-header small {
-  color: #8392a3;
-  font-size: clamp(10px, 1.3vw, 13px);
-}
-
-.calendar-day-header strong {
-  margin-top: 3px;
-  font-size: clamp(18px, 2.4vw, 24px);
-}
-
-.calendar-event {
-  min-width: 0;
-  margin-bottom: 8px;
-  padding: clamp(6px, 1vw, 10px);
-
-  overflow: hidden;
-
-  border-left: clamp(3px, 0.5vw, 4px) solid;
-  border-radius: 10px;
-}
-
-.calendar-event small,
-.calendar-event strong {
-  display: block;
-}
-
-.calendar-event small {
-  margin-bottom: 4px;
-  opacity: 0.72;
-  font-size: clamp(9px, 1.15vw, 12px);
-}
-
-.calendar-event strong {
-  font-size: clamp(9px, 1.2vw, 13px);
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-}
-
-.event-blue {
-  background: #e7f2ff;
-  border-color: #1685ff;
-}
-
-.event-purple {
-  background: #f2eaff;
-  border-color: #984ce5;
-}
-
-.event-green {
-  background: #e7f8eb;
-  border-color: #29a44d;
-}
-
-.event-orange {
-  background: #fff0df;
-  border-color: #ef8a16;
-}
-
-.event-pink {
-  background: #ffe8f2;
-  border-color: #e45593;
-}
-
-.event-family {
-  background: #e5f5f5;
-  border-color: #229797;
-}
-
-
-/* PANEL KALENDARZA */
-
-.calendar-side {
-  min-width: 0;
-  padding: 21px;
-
-  background: white;
-  border: 1px solid #e0e8f1;
-  border-radius: 21px;
-}
-
-.calendar-side h2 {
-  margin: 0 0 12px;
-}
-
-.today-event {
-  padding: 11px 0;
-
-  display: grid;
-  grid-template-columns: 55px minmax(0, 1fr);
-  gap: 8px;
-
-  border-bottom: 1px solid #e8eef4;
-}
-
-.side-heading {
-  margin-top: 27px !important;
-}
-
-.upcoming {
-  padding: 10px 0;
-
-  display: flex;
-  gap: 10px;
-}
-
-.upcoming > span {
-  font-size: 22px;
-}
-
-.upcoming strong,
-.upcoming small {
-  display: block;
-}
-
-.upcoming small {
-  margin-top: 3px;
-  color: #7e8ea0;
 }
 
 
 /* =========================================================
-   ZADANIA + ZAKUPY
+   ZADANIA
    ========================================================= */
 
-.module-grid {
-  width: 100%;
-  display: grid;
-  gap: 20px;
-}
-
-.module-grid-wide {
-  grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
-}
-
-.task-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.task-row {
-  padding: 15px 2px;
-
-  display: flex;
-  align-items: center;
-  gap: 12px;
-
-  border-bottom: 1px solid #e7edf4;
-}
-
-.task-row:last-child {
-  border-bottom: 0;
-}
-
-.task-row input {
-  width: 19px;
-  height: 19px;
-  flex: 0 0 19px;
-  accent-color: #1685ff;
-}
-
-.completed {
-  color: #8795a5;
-  text-decoration: line-through;
-}
-
-.progress-number {
-  color: #1685ff;
-  font-size: clamp(44px, 6vw, 58px);
-  font-weight: 900;
-}
-
-.muted {
-  color: #7c8c9e;
-}
-
-.progress-bar {
-  height: 10px;
-  margin-top: 20px;
-
-  overflow: hidden;
-
-  border-radius: 999px;
-  background: #e8eef5;
-}
-
-.progress-bar span {
-  display: block;
-  height: 100%;
-
-  border-radius: inherit;
-  background: #1685ff;
-}
-
-
-/* =========================================================
-   CZAT
-   ========================================================= */
-
-.chat-card {
-  width: 100%;
-  overflow: hidden;
-
-  background: white;
-  border: 1px solid #e0e8f1;
-  border-radius: 23px;
-}
-
-.chat-title {
-  padding: 18px 22px;
-  border-bottom: 1px solid #e6edf4;
-}
-
-.chat-title strong,
-.chat-title small {
-  display: block;
-}
-
-.chat-title small {
-  margin-top: 3px;
-  color: #8593a4;
-}
-
-.messages {
-  min-height: 390px;
-  padding: 23px;
+.coming-soon {
+  min-height: 420px;
+  padding: 40px;
 
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.message {
-  max-width: min(520px, 78%);
-  align-self: flex-start;
-}
-
-.message small {
-  color: #7f8fa1;
-}
-
-.message p {
-  margin: 4px 0 0;
-  padding: 12px 15px;
-
-  background: #eef4fa;
-  border-radius: 6px 16px 16px 16px;
-
-  overflow-wrap: anywhere;
-}
-
-.message-me {
-  align-self: flex-end;
-}
-
-.message-me small {
-  display: block;
-  text-align: right;
-}
-
-.message-me p {
-  background: #1685ff;
-  color: white;
-  border-radius: 16px 6px 16px 16px;
-}
-
-.message-form {
-  padding: 15px;
-
-  display: flex;
-  gap: 10px;
-
-  border-top: 1px solid #e6edf4;
-}
-
-.message-form input {
-  min-width: 0;
-  flex: 1;
-
-  padding: 13px;
-
-  border: 1px solid #dce5ee;
-  border-radius: 12px;
-  outline: none;
-
-  background: #f7fafe;
-}
-
-.message-form button {
-  padding: 0 19px;
-
-  border: 0;
-  border-radius: 12px;
-
-  background: #1685ff;
-  color: white;
-
-  font-weight: 800;
-}
-
-
-/* =========================================================
-   RODZINA
-   ========================================================= */
-
-.family-profile-grid {
-  width: 100%;
-
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: clamp(10px, 1.7vw, 16px);
-}
-
-.family-profile {
-  min-width: 0;
-  padding: clamp(17px, 2.5vw, 24px) 12px;
+  align-items: center;
+  justify-content: center;
 
   background: white;
-  border: 1px solid #e1e9f2;
-  border-radius: 22px;
+  border: 1px solid #e2eaf3;
+  border-radius: 24px;
 
   text-align: center;
 }
 
-.profile-avatar {
-  width: clamp(55px, 7vw, 72px);
-  height: clamp(55px, 7vw, 72px);
-
-  margin: 0 auto 13px;
-
-  display: grid;
-  place-items: center;
-
-  border-radius: 50%;
-
-  font-size: clamp(20px, 3vw, 26px);
-  font-weight: 900;
+.coming-icon {
+  margin-bottom: 10px;
+  font-size: 55px;
 }
 
-.family-profile h2 {
+.coming-soon h1 {
+  margin: 5px 0 10px;
+  color: #12345e;
+}
+
+.coming-soon p {
   margin: 0;
-  font-size: clamp(16px, 2vw, 21px);
-  overflow-wrap: anywhere;
+  color: #7c8da0;
 }
 
-.family-profile p {
-  margin: 5px 0;
-  color: #8190a1;
+.coming-soon span {
+  margin-top: 12px;
+  color: #9aa8b5;
+  font-size: 13px;
 }
 
 
 /* =========================================================
-   PŁYWAJĄCY PRZYCISK
+   NAWIGACJA MOBILNA
+   Domyślnie całkowicie ukryta.
    ========================================================= */
 
-.floating-add {
-  position: fixed;
-  z-index: 40;
-
-  right: clamp(16px, 3vw, 28px);
-  bottom: 25px;
-
-  padding: 14px 20px;
-
-  border: 0;
-  border-radius: 15px;
-
-  background: #1685ff;
-  color: white;
-
-  font-size: 16px;
-  font-weight: 900;
-
-  box-shadow: 0 12px 28px rgba(22, 133, 255, 0.3);
-}
-
-.mobile-nav {
+.mobile-navigation {
   display: none;
 }
 
 
 /* =========================================================
-   TABLET / IPAD
+   DUŻY TABLET / IPAD LANDSCAPE
    ========================================================= */
 
 @media (max-width: 1180px) {
@@ -1036,37 +628,29 @@ img {
   }
 
   /*
-     Na iPadzie panel "Dzisiaj" schodzi pod kalendarz.
-     Dzięki temu cały kalendarz dostaje pełną szerokość.
+     Na iPadzie panel Dzisiaj/Nadchodzące
+     schodzi pod kalendarz.
+     Dzięki temu 7 dni dostaje pełną szerokość.
   */
 
-  .calendar-layout {
-    grid-template-columns: minmax(0, 1fr);
+  .calendar2-week-layout {
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 
-  .calendar-side {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px 20px;
+  .calendar2-side {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 15px;
   }
 
-  .calendar-side h2,
-  .side-heading {
-    grid-column: 1 / -1;
-  }
-
-  .side-heading {
-    margin-top: 10px !important;
-  }
-
-  .family-profile-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .calendar2-week-grid {
+    min-width: 0 !important;
   }
 }
 
 
 /* =========================================================
-   IPAD PIONOWO / MNIEJSZY TABLET
+   IPAD PIONOWO
    ========================================================= */
 
 @media (max-width: 900px) {
@@ -1082,111 +666,81 @@ img {
     margin-left: 190px;
   }
 
-  .brand {
-    padding-left: 10px;
-    padding-right: 8px;
+  .sidebar-brand {
+    padding-left: 7px;
+    padding-right: 7px;
   }
 
-  .brand strong {
-    font-size: 21px;
+  .sidebar-brand strong {
+    font-size: 19px;
   }
 
-  .sidebar-nav button {
-    padding: 12px 11px;
+  .sidebar-brand small {
+    font-size: 11px;
+  }
+
+  .nav-button {
+    padding: 12px 10px;
     gap: 9px;
     font-size: 15px;
   }
 
   .page-content {
+    max-width: none;
     padding-left: 18px;
     padding-right: 18px;
   }
 
-  /*
-     Wszystkich 5 członków rodziny nadal mieści się w jednym rzędzie.
-  */
-
-  .family-header {
-    min-height: 82px;
-    padding-left: 14px;
-    padding-right: 14px;
-    gap: 5px;
+  .top-header {
+    min-height: 70px;
+    padding-left: 18px;
+    padding-right: 18px;
   }
 
-  .family-person {
-    justify-content: center;
+  .calendar2-week-grid {
+    min-width: 0 !important;
+    grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
   }
 
-  .family-person strong {
-    font-size: 11px;
+  .calendar2-week-card {
+    overflow: hidden !important;
   }
 
-  .family-person small {
+  .calendar2-week-day {
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+  }
+
+  .calendar2-day-heading {
+    padding-left: 1px !important;
+    padding-right: 1px !important;
+  }
+
+  .calendar2-day-heading span {
     font-size: 10px;
   }
 
-  .avatar {
-    width: 34px;
-    height: 34px;
-    flex-basis: 34px;
-    font-size: 13px;
+  .calendar2-day-heading strong {
+    width: 30px !important;
+    height: 30px !important;
+    font-size: 15px !important;
   }
 
-  .calendar-toolbar {
-    align-items: stretch;
-    flex-direction: column;
+  .calendar2-event {
+    padding: 6px 4px !important;
   }
 
-  .calendar-navigation {
-    justify-content: space-between;
+  .calendar2-event strong {
+    font-size: 9px !important;
   }
 
-  .view-switch {
-    width: 100%;
+  .calendar2-event span {
+    font-size: 8px !important;
   }
 
-  .view-switch button {
-    flex: 1 1 0;
-  }
-
-  .family-filters button {
-    flex: 1 1 calc(33.333% - 8px);
-    min-width: 0;
-    text-align: center;
-  }
-
-  /*
-     W kalendarzu zmniejszamy elementy,
-     ale nadal pokazujemy pełne 7 dni.
-  */
-
-  .calendar-day {
-    min-height: 350px;
-    padding: 5px;
-  }
-
-  .calendar-event {
-    padding: 6px 4px;
-  }
-
-  .calendar-event strong {
-    font-size: 9px;
-  }
-
-  .calendar-event small {
-    font-size: 8px;
-  }
-
-  .calendar-day-header strong {
-    font-size: 18px;
-  }
-
-  .calendar-day-header small {
-    font-size: 9px;
-  }
-
-  .module-grid-wide {
-    grid-template-columns: minmax(0, 1.5fr) minmax(180px, 1fr);
+  .calendar2-empty-add {
+    width: 27px !important;
+    height: 27px !important;
   }
 }
 
@@ -1206,43 +760,44 @@ img {
     margin-left: 0;
   }
 
-  .family-header {
-    min-height: 68px;
-    padding: 8px 10px;
-
-    grid-template-columns: repeat(5, 1fr);
-    gap: 5px;
+  .top-header {
+    min-height: 62px;
+    padding: 8px 12px;
   }
 
-  .family-person {
-    display: block;
-    text-align: center;
-  }
-
-  .family-person > div:last-child {
+  .top-header > div:first-child small {
     display: none;
   }
 
-  .avatar {
-    width: 39px;
-    height: 39px;
-    margin: auto;
-    font-size: 14px;
+  .top-header > div:first-child strong {
+    font-size: 16px;
+  }
+
+  .header-user-text {
+    display: none;
+  }
+
+  .header-user {
+    gap: 6px;
+  }
+
+  .header-user > button {
+    padding: 8px 10px;
+    font-size: 12px;
   }
 
   .page-content {
-    padding: 22px 13px 115px;
+    width: 100%;
+    padding: 22px 13px 100px;
   }
 
-  .page-header,
-  .start-hero {
+  .page-header {
     align-items: stretch;
     flex-direction: column;
     gap: 17px;
   }
 
-  .page-header h1,
-  .start-hero h1 {
+  .page-header h1 {
     font-size: 31px;
   }
 
@@ -1250,14 +805,15 @@ img {
     width: 100%;
   }
 
-  .weather-card {
-    width: 100%;
-    min-width: 0;
+  .welcome-card {
+    align-items: flex-start;
   }
 
-  .dashboard-grid,
-  .module-grid-wide,
-  .family-profile-grid {
+  .welcome-illustration {
+    font-size: 48px;
+  }
+
+  .dashboard-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1266,73 +822,50 @@ img {
     border-radius: 19px;
   }
 
-  .family-filters button {
-    flex: 1 1 calc(50% - 8px);
-  }
-
   /*
-     Na telefonie 7 pełnych kolumn byłoby zbyt małych.
-     Zamiast ucinać ekran, kalendarz dostaje kontrolowane
-     przewijanie wewnątrz własnej karty.
+     Na telefonie tydzień przewijamy poziomo.
   */
 
-  .calendar-box {
-    overflow-x: auto;
+  .calendar2-week-card {
+    overflow-x: auto !important;
     -webkit-overflow-scrolling: touch;
   }
 
-  .week-grid {
-    width: 770px;
-    min-width: 770px;
-    grid-template-columns: repeat(7, 110px);
+  .calendar2-week-grid {
+    width: 770px !important;
+    min-width: 770px !important;
+    grid-template-columns: repeat(7, 110px) !important;
   }
 
-  .calendar-day {
-    min-height: 370px;
-    padding: 7px;
+  .calendar2-week-day {
+    min-height: 360px;
+    padding: 7px !important;
   }
 
-  .calendar-event {
-    padding: 8px;
+  .calendar2-event {
+    padding: 7px !important;
   }
 
-  .calendar-event strong {
-    font-size: 11px;
+  .calendar2-event strong {
+    font-size: 11px !important;
   }
 
-  .calendar-event small {
-    font-size: 10px;
+  .calendar2-event span {
+    font-size: 9px !important;
   }
 
-  .calendar-side {
-    display: block;
+  .calendar2-side {
+    display: flex !important;
+    flex-direction: column;
   }
 
-  .messages {
-    min-height: 330px;
-    padding: 15px;
-  }
+  /*
+     Dolna nawigacja jest wyłącznie na telefonie.
+  */
 
-  .message {
-    max-width: 88%;
-  }
-
-  .message-form {
-    align-items: stretch;
-  }
-
-  .message-form button {
-    padding: 0 14px;
-  }
-
-  .floating-add {
-    right: 15px;
-    bottom: 82px;
-  }
-
-  .mobile-nav {
+  .mobile-navigation {
     position: fixed;
-    z-index: 45;
+    z-index: 60;
 
     left: 0;
     right: 0;
@@ -1341,13 +874,17 @@ img {
     height: 68px;
 
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
 
     background: white;
     border-top: 1px solid #dfe7ef;
+
+    box-shadow: 0 -5px 20px rgba(20, 52, 83, 0.07);
   }
 
-  .mobile-nav button {
+  .mobile-navigation button {
+    min-width: 0;
+
     border: 0;
     background: white;
     color: #64798f;
@@ -1357,17 +894,24 @@ img {
     align-items: center;
     justify-content: center;
     gap: 3px;
+
+    padding: 4px;
   }
 
-  .mobile-nav button span {
+  .mobile-navigation button span {
     font-size: 18px;
   }
 
-  .mobile-nav button small {
-    font-size: 10px;
+  .mobile-navigation button small {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    font-size: 9px;
   }
 
-  .mobile-nav .mobile-active {
+  .mobile-navigation button.active {
     color: #1685ff;
   }
 }
@@ -1384,17 +928,7 @@ img {
     padding-right: 10px;
   }
 
-  .avatar {
-    width: 35px;
-    height: 35px;
-  }
-
-  .family-filters button {
-    font-size: 11px;
-  }
-
-  .floating-add {
-    padding: 12px 16px;
-    font-size: 14px;
+  .welcome-illustration {
+    display: none;
   }
 }
