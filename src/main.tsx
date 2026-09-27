@@ -31,11 +31,23 @@ type Page =
   | 'Ustawienia';
 
 const family = [
-  { name: 'Sebastian', role: 'Tata', letter: 'S' },
-  { name: 'Dominika', role: 'Mama', letter: 'D' },
-  { name: 'Paweł', role: 'Syn', letter: 'P' },
-  { name: 'Nikodem', role: 'Syn', letter: 'N' },
-  { name: 'Layla', role: 'Córka', letter: 'L' },
+  { name: 'Sebastian', role: 'Tata', letter: 'S', color: 'blue' },
+  { name: 'Dominika', role: 'Mama', letter: 'D', color: 'purple' },
+  { name: 'Paweł', role: 'Syn', letter: 'P', color: 'green' },
+  { name: 'Nikodem', role: 'Syn', letter: 'N', color: 'orange' },
+  { name: 'Layla', role: 'Córka', letter: 'L', color: 'pink' },
+];
+
+const navigation: { page: Page; icon: string }[] = [
+  { page: 'Start', icon: '⌂' },
+  { page: 'Kalendarz', icon: '▦' },
+  { page: 'Zadania', icon: '☑' },
+  { page: 'Zakupy', icon: '🛒' },
+  { page: 'Czat', icon: '○' },
+  { page: 'Zdrowie', icon: '♡' },
+  { page: 'Szkoła', icon: '◇' },
+  { page: 'Rodzina', icon: '♧' },
+  { page: 'Ustawienia', icon: '⚙' },
 ];
 
 function App() {
@@ -44,34 +56,30 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    return onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       setMember(null);
 
-      if (!firebaseUser) {
-        setLoading(false);
-        return;
-      }
+      if (firebaseUser) {
+        try {
+          const memberSnap = await getDoc(
+            doc(db, 'members', firebaseUser.uid)
+          );
 
-      try {
-        const memberRef = doc(db, 'members', firebaseUser.uid);
-        const memberSnap = await getDoc(memberRef);
-
-        if (memberSnap.exists()) {
-          setMember(memberSnap.data() as Member);
+          if (memberSnap.exists()) {
+            setMember(memberSnap.data() as Member);
+          }
+        } catch (error) {
+          console.error('Błąd pobierania profilu:', error);
         }
-      } catch (error) {
-        console.error('Błąd pobierania profilu:', error);
       }
 
       setLoading(false);
     });
-
-    return unsubscribe;
   }, []);
 
   if (loading) {
-    return <div className="loading">Ładowanie...</div>;
+    return <div className="loading">Ładowanie Naszej Rodziny…</div>;
   }
 
   if (!user) {
@@ -85,21 +93,19 @@ function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [loggingIn, setLoggingIn] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  async function handleLogin(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-
     setError('');
-    setLoggingIn(true);
+    setBusy(true);
 
     try {
       await signInWithEmailAndPassword(auth, email, password);
-    } catch (error) {
-      console.error(error);
+    } catch {
       setError('Nieprawidłowy e-mail lub hasło.');
     } finally {
-      setLoggingIn(false);
+      setBusy(false);
     }
   }
 
@@ -109,9 +115,9 @@ function Login() {
         <div className="login-logo">🏠</div>
 
         <h1>Nasza Rodzina</h1>
-        <p>Zaloguj się do rodzinnego centrum</p>
+        <p>Wasze rodzinne centrum w jednym miejscu.</p>
 
-        <form onSubmit={handleLogin}>
+        <form onSubmit={handleSubmit}>
           <label>
             E-mail
             <input
@@ -136,8 +142,8 @@ function Login() {
 
           {error && <div className="login-error">{error}</div>}
 
-          <button type="submit" disabled={loggingIn}>
-            {loggingIn ? 'Logowanie...' : 'Zaloguj się'}
+          <button type="submit" disabled={busy}>
+            {busy ? 'Logowanie…' : 'Zaloguj się'}
           </button>
         </form>
       </div>
@@ -152,12 +158,10 @@ function FamilyApp({
   user: User;
   member: Member | null;
 }) {
-  const [activePage, setActivePage] = useState<Page>('Start');
+  const [page, setPage] = useState<Page>('Start');
 
-  const name = member?.name || 'Użytkowniku';
-
-  function changePage(page: Page) {
-    setActivePage(page);
+  function changePage(nextPage: Page) {
+    setPage(nextPage);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -165,84 +169,28 @@ function FamilyApp({
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <span>🏠</span>
-
-          <div>
+          <span className="brand-icon">🏠</span>
+          <strong>
             Nasza
             <br />
             Rodzina
-          </div>
+          </strong>
         </div>
 
-        <nav>
-          <NavButton
-            active={activePage === 'Start'}
-            onClick={() => changePage('Start')}
-            icon="⌂"
-            label="Start"
-          />
-
-          <NavButton
-            active={activePage === 'Kalendarz'}
-            onClick={() => changePage('Kalendarz')}
-            icon="▦"
-            label="Kalendarz"
-          />
-
-          <NavButton
-            active={activePage === 'Zadania'}
-            onClick={() => changePage('Zadania')}
-            icon="☑"
-            label="Zadania"
-          />
-
-          <NavButton
-            active={activePage === 'Zakupy'}
-            onClick={() => changePage('Zakupy')}
-            icon="🛒"
-            label="Zakupy"
-          />
-
-          <NavButton
-            active={activePage === 'Czat'}
-            onClick={() => changePage('Czat')}
-            icon="○"
-            label="Czat"
-          />
-
-          <NavButton
-            active={activePage === 'Zdrowie'}
-            onClick={() => changePage('Zdrowie')}
-            icon="♡"
-            label="Zdrowie"
-          />
-
-          <NavButton
-            active={activePage === 'Szkoła'}
-            onClick={() => changePage('Szkoła')}
-            icon="◇"
-            label="Szkoła"
-          />
-
-          <NavButton
-            active={activePage === 'Rodzina'}
-            onClick={() => changePage('Rodzina')}
-            icon="♧"
-            label="Rodzina"
-          />
-
-          <NavButton
-            active={activePage === 'Ustawienia'}
-            onClick={() => changePage('Ustawienia')}
-            icon="⚙"
-            label="Ustawienia"
-          />
+        <nav className="sidebar-nav">
+          {navigation.map((item) => (
+            <button
+              key={item.page}
+              className={page === item.page ? 'nav-active' : ''}
+              onClick={() => changePage(item.page)}
+            >
+              <span>{item.icon}</span>
+              {item.page}
+            </button>
+          ))}
         </nav>
 
-        <button
-          className="logout-button"
-          onClick={() => signOut(auth)}
-        >
+        <button className="logout-button" onClick={() => signOut(auth)}>
           ↪ Wyloguj
         </button>
       </aside>
@@ -250,86 +198,75 @@ function FamilyApp({
       <main className="main-area">
         <FamilyHeader />
 
-        {activePage === 'Start' && (
-          <StartPage name={name} />
+        {page === 'Start' && (
+          <StartPage name={member?.name || 'Użytkowniku'} />
         )}
 
-        {activePage === 'Kalendarz' && (
-          <CalendarPage />
+        {page === 'Kalendarz' && <CalendarPage />}
+        {page === 'Zadania' && <TasksPage />}
+        {page === 'Zakupy' && <ShoppingPage />}
+        {page === 'Czat' && <ChatPage />}
+        {page === 'Zdrowie' && <HealthPage />}
+        {page === 'Szkoła' && <SchoolPage />}
+        {page === 'Rodzina' && <FamilyPage />}
+        {page === 'Ustawienia' && (
+          <SettingsPage user={user} member={member} />
         )}
 
-        {activePage !== 'Start' &&
-          activePage !== 'Kalendarz' && (
-            <ComingSoonPage page={activePage} />
-          )}
-
-        <button className="add-button">
-          <span>＋</span> Dodaj
-        </button>
+        <button className="floating-add">＋ Dodaj</button>
 
         <div className="mobile-nav">
-          <button
+          <MobileButton
+            icon="⌂"
+            label="Start"
+            active={page === 'Start'}
             onClick={() => changePage('Start')}
-            className={activePage === 'Start' ? 'mobile-active' : ''}
-          >
-            ⌂
-            <small>Start</small>
-          </button>
-
-          <button
+          />
+          <MobileButton
+            icon="▦"
+            label="Kalendarz"
+            active={page === 'Kalendarz'}
             onClick={() => changePage('Kalendarz')}
-            className={
-              activePage === 'Kalendarz' ? 'mobile-active' : ''
-            }
-          >
-            ▦
-            <small>Kalendarz</small>
-          </button>
-
-          <button
+          />
+          <MobileButton
+            icon="🛒"
+            label="Zakupy"
+            active={page === 'Zakupy'}
             onClick={() => changePage('Zakupy')}
-            className={activePage === 'Zakupy' ? 'mobile-active' : ''}
-          >
-            🛒
-            <small>Zakupy</small>
-          </button>
-
-          <button
+          />
+          <MobileButton
+            icon="♧"
+            label="Rodzina"
+            active={page === 'Rodzina'}
             onClick={() => changePage('Rodzina')}
-            className={activePage === 'Rodzina' ? 'mobile-active' : ''}
-          >
-            ♧
-            <small>Rodzina</small>
-          </button>
-
-          <button>
-            •••
-            <small>Więcej</small>
-          </button>
+          />
+          <MobileButton
+            icon="•••"
+            label="Więcej"
+            active={page === 'Ustawienia'}
+            onClick={() => changePage('Ustawienia')}
+          />
         </div>
       </main>
     </div>
   );
 }
 
-function NavButton({
-  active,
-  onClick,
+function MobileButton({
   icon,
   label,
+  active,
+  onClick,
 }: {
-  active: boolean;
-  onClick: () => void;
   icon: string;
   label: string;
+  active: boolean;
+  onClick: () => void;
 }) {
   return (
-    <button
-      className={active ? 'nav-active' : ''}
-      onClick={onClick}
-    >
-      {icon}
-      <span>{label}</span>
+    <button className={active ? 'mobile-active' : ''} onClick={onClick}>
+      <span>{icon}</span>
+      <small>{label}</small>
     </button>
   );
 }
@@ -339,7 +276,7 @@ function FamilyHeader() {
     <header className="family-header">
       {family.map((person) => (
         <div className="family-person" key={person.name}>
-          <div className="avatar">
+          <div className={`avatar avatar-${person.color}`}>
             {person.letter}
           </div>
 
@@ -353,23 +290,69 @@ function FamilyHeader() {
   );
 }
 
+function PageHeader({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: string;
+  action?: string;
+}) {
+  return (
+    <section className="page-header">
+      <div>
+        <small>Nasza Rodzina</small>
+        <h1>{title}</h1>
+        <p>{description}</p>
+      </div>
+
+      {action && <button className="primary-button">＋ {action}</button>}
+    </section>
+  );
+}
+
+function Card({
+  title,
+  children,
+  className = '',
+}: {
+  title: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={`app-card ${className}`}>
+      <h2>{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function Rows({ rows }: { rows: string[] }) {
+  return (
+    <div className="rows">
+      {rows.map((row, index) => (
+        <p key={index}>{row}</p>
+      ))}
+    </div>
+  );
+}
+
+/* START */
+
 function StartPage({ name }: { name: string }) {
   return (
-    <div className="dashboard">
-      <section className="welcome">
+    <div className="page-content">
+      <section className="start-hero">
         <div>
           <small>Niedziela, 27 września</small>
-
-          <h1>Dzień dobry, {name}!</h1>
-
-          <p>
-            Oto co dzieje się dziś w Waszej rodzinie.
-          </p>
+          <h1>Dzień dobry, {name}! 👋</h1>
+          <p>Oto co dzieje się dziś w Waszej rodzinie.</p>
         </div>
 
-        <div className="weather">
-          <span>☀️</span>
-
+        <div className="weather-card">
+          <span className="weather-icon">☀️</span>
           <div>
             <strong>Kołobrzeg</strong>
             <b>18°C</b>
@@ -377,101 +360,104 @@ function StartPage({ name }: { name: string }) {
         </div>
       </section>
 
-      <section className="cards-grid">
-        <DashboardCard title="📅 Dzisiaj w rodzinie">
-          <p>08:00 • Paweł — szkoła</p>
-          <p>08:00 • Nikodem — szkoła</p>
-          <p>13:00 • Sebastian — dyżur</p>
-        </DashboardCard>
+      <div className="dashboard-grid">
+        <Card title="📅 Dzisiaj w rodzinie">
+          <Rows
+            rows={[
+              '08:00 • Paweł — szkoła',
+              '08:00 • Nikodem — szkoła',
+              '13:00 • Sebastian — dyżur',
+            ]}
+          />
+        </Card>
 
-        <DashboardCard title="✅ Zadania na dziś">
-          <p>☑ Strój na WF — Paweł</p>
-          <p>☐ Zeszyt do matematyki</p>
-          <p>☐ Przygotować drugie śniadanie</p>
-        </DashboardCard>
+        <Card title="✅ Zadania na dziś">
+          <Rows
+            rows={[
+              '☑ Strój na WF — Paweł',
+              '☐ Zeszyt do matematyki',
+              '☐ Przygotować drugie śniadanie',
+            ]}
+          />
+        </Card>
 
-        <DashboardCard title="🛒 Lista zakupów">
-          <p>☐ Mleko</p>
-          <p>☑ Chleb</p>
-          <p>☐ Banany</p>
-        </DashboardCard>
+        <Card title="🛒 Lista zakupów">
+          <Rows rows={['☐ Mleko', '☑ Chleb', '☐ Banany']} />
+        </Card>
 
-        <DashboardCard title="🎒 Szkoła — Paweł">
-          <div className="vulcan">
+        <Card title="🎒 Szkoła — Paweł">
+          <div className="vulcan-status">
             <strong>VULCAN ●</strong>
             <span>Połączono</span>
           </div>
 
-          <p>🔔 Zmiana planu lekcji</p>
-          <p>✉️ Nowa wiadomość od wychowawcy</p>
-        </DashboardCard>
+          <Rows
+            rows={[
+              '🔔 Zmiana planu lekcji',
+              '✉️ Nowa wiadomość od wychowawcy',
+            ]}
+          />
+        </Card>
 
-        <DashboardCard title="❤️ Zdrowie">
-          <p>Layla — szczepienie • za 2 dni</p>
-          <p>Dominika — wizyta kontrolna • za 7 dni</p>
-        </DashboardCard>
+        <Card title="❤️ Zdrowie">
+          <Rows
+            rows={[
+              'Layla — szczepienie • za 2 dni',
+              'Paweł — kontrola • 3 października',
+            ]}
+          />
+        </Card>
 
-        <DashboardCard title="👨‍👩‍👧‍👦 Rodzina">
-          <p>🎂 Roczek Layli — 10.10</p>
-          <p>❤️ Rocznica ślubu — 06.09</p>
-        </DashboardCard>
-      </section>
+        <Card title="👨‍👩‍👧‍👦 Rodzina">
+          <Rows
+            rows={[
+              '🎂 Roczek Layli — 10.10',
+              '📌 Rodzinny wyjazd — sobota',
+            ]}
+          />
+        </Card>
+      </div>
     </div>
   );
 }
 
+/* KALENDARZ */
+
+const calendarDays = [
+  { day: 'Pon', date: '28' },
+  { day: 'Wt', date: '29' },
+  { day: 'Śr', date: '30' },
+  { day: 'Czw', date: '1' },
+  { day: 'Pt', date: '2' },
+  { day: 'Sob', date: '3' },
+  { day: 'Niedz', date: '4' },
+];
+
 function CalendarPage() {
-  const days = [
-    { day: 'Pon', date: '28' },
-    { day: 'Wt', date: '29' },
-    { day: 'Śr', date: '30' },
-    { day: 'Czw', date: '1' },
-    { day: 'Pt', date: '2' },
-    { day: 'Sob', date: '3' },
-    { day: 'Niedz', date: '4' },
-  ];
-
   return (
-    <div className="dashboard calendar-dashboard">
-      <section className="calendar-heading">
-        <div>
-          <small>Nasza Rodzina</small>
-          <h1>📅 Kalendarz</h1>
-          <p>
-            Wszystkie rodzinne wydarzenia w jednym miejscu.
-          </p>
-        </div>
-
-        <button className="calendar-add">
-          ＋ Dodaj wydarzenie
-        </button>
-      </section>
+    <div className="page-content">
+      <PageHeader
+        title="📅 Kalendarz"
+        description="Wszystkie rodzinne wydarzenia w jednym miejscu."
+        action="Dodaj wydarzenie"
+      />
 
       <section className="calendar-toolbar">
         <div className="calendar-navigation">
           <button>‹</button>
-
-          <strong>
-            28 września – 4 października
-          </strong>
-
+          <strong>28 września – 4 października</strong>
           <button>›</button>
         </div>
 
-        <div className="calendar-views">
+        <div className="view-switch">
           <button>Dzień</button>
-          <button className="calendar-view-active">
-            Tydzień
-          </button>
+          <button className="selected">Tydzień</button>
           <button>Miesiąc</button>
         </div>
       </section>
 
-      <section className="calendar-filters">
-        <button className="filter-all">
-          ● Cała rodzina
-        </button>
-
+      <section className="family-filters">
+        <button className="filter-selected">● Cała rodzina</button>
         <button>🔵 Sebastian</button>
         <button>🟣 Dominika</button>
         <button>🟢 Paweł</button>
@@ -479,99 +465,96 @@ function CalendarPage() {
         <button>🩷 Layla</button>
       </section>
 
-      <section className="calendar-layout">
-        <div className="calendar-main">
+      <div className="calendar-layout">
+        <section className="calendar-box">
           <div className="week-grid">
-            {days.map((item) => (
-              <div className="day-column" key={item.day}>
-                <div className="day-header">
+            {calendarDays.map((item, index) => (
+              <div className="calendar-day" key={item.day}>
+                <div className="calendar-day-header">
                   <small>{item.day}</small>
                   <strong>{item.date}</strong>
                 </div>
 
-                {item.day === 'Pon' && (
+                {index === 0 && (
                   <>
                     <CalendarEvent
                       time="08:00"
                       title="Paweł — szkoła"
-                      className="event-pawel"
+                      color="green"
                     />
-
                     <CalendarEvent
                       time="08:00"
                       title="Nikodem — szkoła"
-                      className="event-nikodem"
+                      color="orange"
                     />
                   </>
                 )}
 
-                {item.day === 'Wt' && (
+                {index === 1 && (
                   <CalendarEvent
                     time="10:30"
                     title="Layla — szczepienie"
-                    className="event-layla"
+                    color="pink"
                   />
                 )}
 
-                {item.day === 'Śr' && (
+                {index === 2 && (
                   <CalendarEvent
                     time="13:00"
                     title="Sebastian — dyżur"
-                    className="event-sebastian"
+                    color="blue"
                   />
                 )}
 
-                {item.day === 'Czw' && (
+                {index === 3 && (
                   <CalendarEvent
                     time="16:30"
                     title="Nikodem — zajęcia"
-                    className="event-nikodem"
+                    color="orange"
                   />
                 )}
 
-                {item.day === 'Pt' && (
+                {index === 4 && (
                   <CalendarEvent
                     time="14:00"
                     title="Dominika — wizyta"
-                    className="event-dominika"
+                    color="purple"
                   />
                 )}
 
-                {item.day === 'Sob' && (
+                {index === 5 && (
                   <CalendarEvent
                     time="11:00"
                     title="Rodzinny wyjazd"
-                    className="event-family"
+                    color="family"
                   />
                 )}
               </div>
             ))}
           </div>
-        </div>
+        </section>
 
         <aside className="calendar-side">
           <h2>Dzisiaj</h2>
 
-          <div className="side-event">
+          <div className="today-event">
             <b>08:00</b>
             <span>Paweł — szkoła</span>
           </div>
 
-          <div className="side-event">
+          <div className="today-event">
             <b>08:00</b>
             <span>Nikodem — szkoła</span>
           </div>
 
-          <div className="side-event">
+          <div className="today-event">
             <b>13:00</b>
             <span>Sebastian — dyżur</span>
           </div>
 
-          <h2 className="upcoming-title">
-            Nadchodzące
-          </h2>
+          <h2 className="side-heading">Nadchodzące</h2>
 
-          <div className="upcoming-event">
+          <div className="upcoming">
             <span>❤️</span>
             <div>
               <strong>Szczepienie Layli</strong>
@@ -579,7 +562,7 @@ function CalendarPage() {
             </div>
           </div>
 
-          <div className="upcoming-event">
+          <div className="upcoming">
             <span>🎂</span>
             <div>
               <strong>Roczek Layli</strong>
@@ -587,7 +570,7 @@ function CalendarPage() {
             </div>
           </div>
         </aside>
-      </section>
+      </div>
     </div>
   );
 }
@@ -595,64 +578,402 @@ function CalendarPage() {
 function CalendarEvent({
   time,
   title,
-  className,
+  color,
 }: {
   time: string;
   title: string;
-  className: string;
+  color: string;
 }) {
   return (
-    <div className={`calendar-event ${className}`}>
+    <div className={`calendar-event event-${color}`}>
       <small>{time}</small>
       <strong>{title}</strong>
     </div>
   );
 }
 
-function ComingSoonPage({
-  page,
-}: {
-  page: Page;
-}) {
-  return (
-    <div className="dashboard">
-      <section className="welcome">
-        <div>
-          <small>Nasza Rodzina</small>
-          <h1>{page}</h1>
-          <p>
-            Ten moduł przygotujemy w kolejnym kroku.
-          </p>
-        </div>
-      </section>
+/* ZADANIA */
 
-      <DashboardCard title={`🚧 ${page}`}>
-        <p>
-          Moduł jest już podłączony do nawigacji.
-        </p>
-        <p>
-          Za chwilę dodamy tutaj jego właściwą zawartość.
-        </p>
-      </DashboardCard>
+function TasksPage() {
+  const [tasks, setTasks] = useState([
+    { text: 'Strój na WF — Paweł', done: true },
+    { text: 'Zeszyt do matematyki', done: false },
+    { text: 'Przygotować drugie śniadanie', done: false },
+    { text: 'Umówić wizytę kontrolną', done: false },
+    { text: 'Spakować rzeczy na wyjazd', done: false },
+  ]);
+
+  function toggleTask(index: number) {
+    setTasks((current) =>
+      current.map((task, i) =>
+        i === index ? { ...task, done: !task.done } : task
+      )
+    );
+  }
+
+  const completed = tasks.filter((task) => task.done).length;
+
+  return (
+    <div className="page-content">
+      <PageHeader
+        title="✅ Zadania"
+        description="Rodzinne obowiązki i rzeczy do zrobienia."
+        action="Dodaj zadanie"
+      />
+
+      <div className="module-grid module-grid-wide">
+        <Card title="Na dziś">
+          <div className="task-list">
+            {tasks.map((task, index) => (
+              <label className="task-row" key={task.text}>
+                <input
+                  type="checkbox"
+                  checked={task.done}
+                  onChange={() => toggleTask(index)}
+                />
+
+                <span className={task.done ? 'completed' : ''}>
+                  {task.text}
+                </span>
+              </label>
+            ))}
+          </div>
+        </Card>
+
+        <Card title="Postęp">
+          <div className="progress-number">
+            {completed}/{tasks.length}
+          </div>
+
+          <p className="muted">wykonanych zadań</p>
+
+          <div className="progress-bar">
+            <span
+              style={{
+                width: `${(completed / tasks.length) * 100}%`,
+              }}
+            />
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }
 
-function DashboardCard({
-  title,
-  children,
+/* ZAKUPY */
+
+function ShoppingPage() {
+  const [products, setProducts] = useState([
+    { text: 'Mleko', done: false },
+    { text: 'Chleb', done: true },
+    { text: 'Banany', done: false },
+    { text: 'Pieluchy', done: false },
+    { text: 'Woda', done: false },
+  ]);
+
+  function toggleProduct(index: number) {
+    setProducts((current) =>
+      current.map((product, i) =>
+        i === index
+          ? { ...product, done: !product.done }
+          : product
+      )
+    );
+  }
+
+  return (
+    <div className="page-content">
+      <PageHeader
+        title="🛒 Zakupy"
+        description="Wspólne listy zakupów dostępne dla całej rodziny."
+        action="Dodaj produkt"
+      />
+
+      <div className="module-grid module-grid-wide">
+        <Card title="🛒 Bieżące zakupy">
+          <div className="task-list">
+            {products.map((product, index) => (
+              <label className="task-row" key={product.text}>
+                <input
+                  type="checkbox"
+                  checked={product.done}
+                  onChange={() => toggleProduct(index)}
+                />
+
+                <span className={product.done ? 'completed' : ''}>
+                  {product.text}
+                </span>
+              </label>
+            ))}
+          </div>
+        </Card>
+
+        <Card title="Moje listy">
+          <Rows
+            rows={[
+              '🛒 Bieżące zakupy',
+              '🎂 Roczek Layli',
+              '🚗 Rodzinny wyjazd',
+              '🎄 Święta',
+            ]}
+          />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+/* CZAT */
+
+function ChatPage() {
+  const [message, setMessage] = useState('');
+  const [messages, setMessages] = useState([
+    { author: 'Dominika', text: 'Kto kupi dzisiaj mleko?' },
+    { author: 'Sebastian', text: 'Ja wezmę po pracy 👍' },
+    { author: 'Paweł', text: 'Potrzebuję też zeszyt do matematyki.' },
+  ]);
+
+  function sendMessage(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!message.trim()) return;
+
+    setMessages((current) => [
+      ...current,
+      { author: 'Ja', text: message.trim() },
+    ]);
+
+    setMessage('');
+  }
+
+  return (
+    <div className="page-content">
+      <PageHeader
+        title="💬 Czat rodzinny"
+        description="Jedno miejsce do rozmów całej rodziny."
+      />
+
+      <section className="chat-card">
+        <div className="chat-title">
+          <div>
+            <strong>Nasza Rodzina</strong>
+            <small>5 członków</small>
+          </div>
+        </div>
+
+        <div className="messages">
+          {messages.map((item, index) => (
+            <div
+              className={`message ${
+                item.author === 'Ja' ? 'message-me' : ''
+              }`}
+              key={index}
+            >
+              <small>{item.author}</small>
+              <p>{item.text}</p>
+            </div>
+          ))}
+        </div>
+
+        <form className="message-form" onSubmit={sendMessage}>
+          <input
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="Napisz wiadomość…"
+          />
+          <button>Wyślij</button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+/* ZDROWIE */
+
+function HealthPage() {
+  return (
+    <div className="page-content">
+      <PageHeader
+        title="❤️ Zdrowie"
+        description="Wizyty, historia leczenia, wyniki i dokumenty całej rodziny."
+        action="Dodaj wizytę"
+      />
+
+      <section className="family-filters">
+        {family.map((person) => (
+          <button key={person.name}>{person.name}</button>
+        ))}
+      </section>
+
+      <div className="dashboard-grid">
+        <Card title="🩺 Nadchodzące wizyty">
+          <Rows
+            rows={[
+              'Layla • szczepienie • 29.09 • 10:30',
+              'Paweł • kontrola • 03.10 • 12:00',
+              'Dominika • wizyta • 04.10 • 14:00',
+            ]}
+          />
+        </Card>
+
+        <Card title="📋 Historia wizyt">
+          <Rows
+            rows={[
+              'Paweł • Neurolog • 12.09',
+              'Paweł • Ortopeda • 18.08',
+              'Layla • Pediatra • 05.08',
+            ]}
+          />
+        </Card>
+
+        <Card title="📄 Wyniki i dokumenty">
+          <Rows
+            rows={[
+              '📄 Wyniki badań',
+              '🖼️ Zdjęcia z wizyt',
+              '📎 Zalecenia lekarzy',
+              '💊 Leki i dawkowanie',
+            ]}
+          />
+        </Card>
+
+        <Card title="💉 Szczepienia">
+          <Rows
+            rows={[
+              'Layla • następne za 2 dni',
+              'Nikodem • aktualne',
+              'Paweł • aktualne',
+            ]}
+          />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+/* SZKOŁA */
+
+function SchoolPage() {
+  return (
+    <div className="page-content">
+      <PageHeader
+        title="🎒 Szkoła"
+        description="Plan lekcji, zadania, oceny i informacje szkolne."
+      />
+
+      <div className="module-grid module-grid-wide">
+        <Card title="Paweł — VULCAN">
+          <div className="vulcan-status">
+            <strong>VULCAN ●</strong>
+            <span>Połączono</span>
+          </div>
+
+          <Rows
+            rows={[
+              '🔔 Zmiana planu lekcji',
+              '✉️ Nowa wiadomość od wychowawcy',
+              '📝 Zadanie — matematyka',
+              '⭐ Ostatnia ocena — 5',
+            ]}
+          />
+
+          <button className="secondary-button">
+            Otwórz VULCAN
+          </button>
+        </Card>
+
+        <Card title="📚 Dzisiejszy plan">
+          <Rows
+            rows={[
+              '08:00 • Matematyka',
+              '08:55 • Język polski',
+              '09:50 • Fizyka',
+              '10:45 • WF',
+              '11:40 • Język angielski',
+            ]}
+          />
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+/* RODZINA */
+
+function FamilyPage() {
+  return (
+    <div className="page-content">
+      <PageHeader
+        title="👨‍👩‍👧‍👦 Rodzina"
+        description="Profile wszystkich członków Waszej rodziny."
+      />
+
+      <div className="family-profile-grid">
+        {family.map((person) => (
+          <section className="family-profile" key={person.name}>
+            <div className={`profile-avatar avatar-${person.color}`}>
+              {person.letter}
+            </div>
+
+            <h2>{person.name}</h2>
+            <p>{person.role}</p>
+
+            <button className="secondary-button">
+              Otwórz profil
+            </button>
+          </section>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* USTAWIENIA */
+
+function SettingsPage({
+  user,
+  member,
 }: {
-  title: string;
-  children: React.ReactNode;
+  user: User;
+  member: Member | null;
 }) {
   return (
-    <section className="dashboard-card">
-      <h2>{title}</h2>
+    <div className="page-content">
+      <PageHeader
+        title="⚙️ Ustawienia"
+        description="Konto i ustawienia Naszej Rodziny."
+      />
 
-      <div className="card-content">
-        {children}
+      <div className="module-grid module-grid-wide">
+        <Card title="👤 Moje konto">
+          <Rows
+            rows={[
+              `Imię: ${member?.name || '—'}`,
+              `Rola: ${member?.role || '—'}`,
+              `E-mail: ${user.email || '—'}`,
+            ]}
+          />
+        </Card>
+
+        <Card title="⚙️ Aplikacja">
+          <Rows
+            rows={[
+              '🔔 Powiadomienia',
+              '🎨 Wygląd aplikacji',
+              '🔒 Prywatność',
+              '📱 Instalacja na urządzeniu',
+            ]}
+          />
+
+          <button
+            className="danger-button"
+            onClick={() => signOut(auth)}
+          >
+            Wyloguj się
+          </button>
+        </Card>
       </div>
-    </section>
+    </div>
   );
 }
 
