@@ -13,7 +13,7 @@ body,
 body {
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: #f3f7fc;
-  color: #102f5b;
+  color: #12345e;
 }
 
 button,
@@ -21,488 +21,1004 @@ input {
   font: inherit;
 }
 
-/* =========================
-   LOGOWANIE
-========================= */
+button {
+  cursor: pointer;
+}
 
-.login-page,
 .loading {
   min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+/* LOGOWANIE */
+
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
   padding: 24px;
-  background:
-    radial-gradient(circle at 20% 20%, #dcecff 0, transparent 35%),
-    linear-gradient(135deg, #eef6ff, #f8fbff);
+  background: linear-gradient(135deg, #eaf4ff, #f8fbff);
 }
 
 .login-card {
-  width: 100%;
-  max-width: 430px;
-  padding: 38px;
+  width: min(430px, 100%);
   background: white;
+  padding: 38px;
   border-radius: 28px;
-  box-shadow: 0 20px 60px rgba(23, 55, 94, 0.13);
+  box-shadow: 0 20px 60px rgba(22, 55, 94, 0.14);
 }
 
 .login-logo {
-  font-size: 42px;
-  margin-bottom: 12px;
+  font-size: 44px;
 }
 
 .login-card h1 {
-  margin: 0;
+  margin: 10px 0 5px;
   font-size: 34px;
-  color: #102f5b;
 }
 
 .login-card > p {
-  margin: 10px 0 30px;
-  color: #718198;
+  margin: 0 0 26px;
+  color: #7b8ca0;
 }
 
 .login-card form {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 17px;
 }
 
 .login-card label {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .login-card input {
   width: 100%;
-  border: 1px solid #dce4ef;
+  border: 1px solid #dbe5ef;
+  background: #f9fbfe;
   border-radius: 12px;
-  padding: 14px 15px;
+  padding: 14px;
   outline: none;
-  background: #f8fafd;
 }
 
 .login-card input:focus {
   border-color: #1685ff;
-  box-shadow: 0 0 0 3px rgba(22, 133, 255, 0.1);
 }
 
-.login-card button {
+.login-card form button {
   border: 0;
-  padding: 14px;
   border-radius: 12px;
   background: #1685ff;
   color: white;
-  font-weight: 700;
-  cursor: pointer;
+  padding: 14px;
+  font-weight: 800;
 }
 
 .login-error {
   background: #fff0f0;
-  color: #c73535;
+  color: #b12626;
+  padding: 11px 13px;
   border-radius: 10px;
-  padding: 11px;
 }
 
-/* =========================
-   GŁÓWNA APLIKACJA
-========================= */
+/* GŁÓWNY UKŁAD */
 
 .app-shell {
   min-height: 100vh;
   display: flex;
-  background: #f3f7fc;
 }
 
-/* MENU */
-
 .sidebar {
-  width: 255px;
+  width: 250px;
   min-height: 100vh;
-  background: linear-gradient(180deg, #123f61 0%, #082d49 100%);
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 50;
+  padding: 30px 15px 22px;
+  background: linear-gradient(180deg, #164f74 0%, #0b3857 100%);
   color: white;
-  padding: 30px 15px 24px;
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 13px;
-  padding: 0 17px 28px;
-  font-size: 24px;
-  font-weight: 800;
-  line-height: 1.15;
+  gap: 14px;
+  padding: 8px 18px 30px;
 }
 
-.brand > span {
-  font-size: 25px;
+.brand-icon {
+  font-size: 29px;
 }
 
-.sidebar nav {
+.brand strong {
+  font-size: 26px;
+  line-height: 1.05;
+}
+
+.sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
-.sidebar nav button,
-.logout-button {
+.sidebar-nav button {
   width: 100%;
   border: 0;
   background: transparent;
-  color: #c5d5e3;
+  color: #cbdbe7;
+  border-radius: 12px;
   padding: 13px 17px;
-  border-radius: 11px;
-  text-align: left;
-  font-size: 16px;
-  cursor: pointer;
   display: flex;
-  gap: 14px;
   align-items: center;
+  gap: 14px;
+  text-align: left;
+  font-size: 17px;
 }
 
-.sidebar nav button:hover {
+.sidebar-nav button:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.sidebar nav .nav-active {
-  background: #1685ff;
+.sidebar-nav button.nav-active {
+  background: rgba(63, 143, 201, 0.28);
   color: white;
+}
+
+.sidebar-nav button span {
+  width: 22px;
+  text-align: center;
 }
 
 .logout-button {
   margin-top: auto;
+  border: 0;
+  background: transparent;
+  color: #cbdbe7;
+  padding: 13px 17px;
+  text-align: left;
+  border-radius: 12px;
 }
 
-/* PRAWA CZĘŚĆ */
-
 .main-area {
-  flex: 1;
-  min-width: 0;
-  position: relative;
+  margin-left: 250px;
+  width: calc(100% - 250px);
   min-height: 100vh;
 }
 
-/* PROFILE */
+/* GÓRNY PASEK RODZINY */
 
 .family-header {
-  min-height: 96px;
+  min-height: 94px;
   background: white;
+  border-bottom: 1px solid #e4ebf3;
   display: flex;
   align-items: center;
-  gap: 32px;
-  padding: 15px 36px;
-  border-bottom: 1px solid #e7edf5;
+  gap: 29px;
+  padding: 12px 32px;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.family-header::-webkit-scrollbar {
+  display: none;
 }
 
 .family-person {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-shrink: 0;
+}
+
+.family-person strong,
+.family-person small {
+  display: block;
+}
+
+.family-person strong {
+  font-size: 16px;
+}
+
+.family-person small {
+  color: #8494a8;
+  margin-top: 2px;
 }
 
 .avatar {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: #edf4ff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #12345e;
-  font-weight: 800;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
   font-size: 18px;
 }
 
-.family-person strong {
-  display: block;
-  font-size: 15px;
+.avatar-blue {
+  background: #e5f1ff;
+  color: #1574d4;
 }
 
-.family-person small {
-  display: block;
-  color: #7a899c;
-  margin-top: 2px;
+.avatar-purple {
+  background: #f1e9ff;
+  color: #8a42d5;
 }
 
-/* DASHBOARD */
+.avatar-green {
+  background: #e7f7ec;
+  color: #218c47;
+}
 
-.dashboard {
-  max-width: 1200px;
+.avatar-orange {
+  background: #fff0df;
+  color: #dc7a0a;
+}
+
+.avatar-pink {
+  background: #ffe8f2;
+  color: #d94f8b;
+}
+
+/* WSPÓLNA ZAWARTOŚĆ */
+
+.page-content {
+  width: min(1220px, 100%);
   margin: 0 auto;
-  padding: 34px 38px 110px;
+  padding: 38px 34px 115px;
 }
 
-.welcome {
+.page-header,
+.start-hero {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   gap: 25px;
   margin-bottom: 30px;
 }
 
-.welcome small {
-  font-size: 14px;
-  color: #334f70;
+.page-header small,
+.start-hero small {
+  color: #496b91;
 }
 
-.welcome h1 {
-  font-size: clamp(30px, 4vw, 46px);
-  margin: 8px 0 9px;
+.page-header h1,
+.start-hero h1 {
+  margin: 7px 0;
   color: #102f5b;
+  font-size: clamp(32px, 4vw, 46px);
   line-height: 1.05;
 }
 
-.welcome p {
-  color: #77879b;
-  font-size: 17px;
+.page-header p,
+.start-hero p {
   margin: 0;
+  color: #7a8ca1;
+  font-size: 17px;
 }
 
-.weather {
-  min-width: 205px;
+.primary-button,
+.secondary-button,
+.danger-button {
+  border: 0;
+  border-radius: 12px;
+  padding: 12px 17px;
+  font-weight: 800;
+}
+
+.primary-button {
+  background: #1685ff;
+  color: white;
+  white-space: nowrap;
+}
+
+.secondary-button {
+  margin-top: 17px;
+  background: #e9f3ff;
+  color: #176fc5;
+}
+
+.danger-button {
+  margin-top: 20px;
+  background: #ffe8e8;
+  color: #ad2929;
+}
+
+/* START */
+
+.weather-card {
+  min-width: 230px;
   background: white;
-  border-radius: 23px;
-  padding: 19px 24px;
+  border-radius: 24px;
+  padding: 18px 25px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 13px;
-  box-shadow: 0 8px 25px rgba(26, 60, 100, 0.05);
+  gap: 14px;
+  box-shadow: 0 8px 30px rgba(30, 66, 104, 0.08);
 }
 
-.weather > span {
-  font-size: 28px;
+.weather-icon {
+  font-size: 35px;
 }
 
-.weather strong {
+.weather-card strong,
+.weather-card b {
   display: block;
-  font-size: 15px;
 }
 
-.weather b {
-  display: block;
-  font-size: 28px;
+.weather-card b {
   margin-top: 2px;
+  font-size: 30px;
 }
 
-/* KARTY */
-
-.cards-grid {
+.dashboard-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 22px;
+  gap: 21px;
 }
 
-.dashboard-card {
+.app-card {
+  min-width: 0;
   background: white;
-  border-radius: 22px;
+  border: 1px solid #e2eaf3;
+  border-radius: 23px;
   padding: 24px;
-  min-height: 225px;
-  box-shadow: 0 7px 25px rgba(31, 63, 101, 0.055);
-  border: 1px solid rgba(220, 230, 241, 0.65);
+  box-shadow: 0 7px 25px rgba(31, 63, 101, 0.06);
 }
 
-.dashboard-card h2 {
-  margin: 0 0 18px;
-  color: #14365f;
+.app-card h2 {
+  margin: 0 0 17px;
+  color: #12345e;
   font-size: 21px;
 }
 
-.card-content p {
+.rows p {
   margin: 0;
   padding: 12px 0;
-  border-bottom: 1px solid #e8eef5;
-  line-height: 1.35;
-  font-size: 16px;
+  border-bottom: 1px solid #e7edf4;
+  line-height: 1.4;
 }
 
-.card-content p:last-child {
+.rows p:last-child {
   border-bottom: 0;
 }
 
-.vulcan {
-  background: #d8f7e7;
-  color: #13865c;
-  padding: 16px;
-  border-radius: 14px;
+.vulcan-status {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 4px;
+  background: #d9f7e8;
+  color: #15845d;
+  border-radius: 14px;
+  padding: 15px 17px;
+  margin-bottom: 5px;
 }
 
-/* DODAJ */
+/* KALENDARZ */
 
-.add-button {
-  position: fixed;
-  right: 30px;
-  bottom: 28px;
+.calendar-toolbar {
+  background: white;
+  border: 1px solid #e1e9f2;
+  border-radius: 18px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+}
+
+.calendar-navigation,
+.view-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.calendar-navigation button,
+.view-switch button {
   border: 0;
+  border-radius: 10px;
+  background: #eef3f8;
+  color: #244769;
+  padding: 9px 13px;
+}
+
+.calendar-navigation strong {
+  white-space: nowrap;
+}
+
+.view-switch .selected {
   background: #1685ff;
   color: white;
-  padding: 15px 22px;
-  border-radius: 15px;
-  font-weight: 700;
-  box-shadow: 0 10px 28px rgba(22, 133, 255, 0.3);
-  cursor: pointer;
-  z-index: 20;
 }
 
-.add-button span {
+.family-filters {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 0 17px;
+  scrollbar-width: none;
+}
+
+.family-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.family-filters button {
+  flex: 0 0 auto;
+  border: 1px solid #dce6f0;
+  background: white;
+  color: #365674;
+  padding: 9px 14px;
+  border-radius: 999px;
+}
+
+.family-filters .filter-selected {
+  background: #153e62;
+  color: white;
+  border-color: #153e62;
+}
+
+.calendar-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 20px;
+  align-items: start;
+}
+
+.calendar-box {
+  background: white;
+  border: 1px solid #e0e8f1;
+  border-radius: 21px;
+  overflow-x: auto;
+}
+
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(125px, 1fr));
+  min-width: 875px;
+}
+
+.calendar-day {
+  min-height: 470px;
+  padding: 12px 10px;
+  border-right: 1px solid #e6edf4;
+}
+
+.calendar-day:last-child {
+  border-right: 0;
+}
+
+.calendar-day-header {
+  text-align: center;
+  border-bottom: 1px solid #e7edf4;
+  padding: 4px 0 12px;
+  margin-bottom: 12px;
+}
+
+.calendar-day-header small,
+.calendar-day-header strong {
+  display: block;
+}
+
+.calendar-day-header small {
+  color: #8392a3;
+}
+
+.calendar-day-header strong {
+  font-size: 24px;
+  margin-top: 3px;
+}
+
+.calendar-event {
+  padding: 10px;
+  border-radius: 10px;
+  margin-bottom: 8px;
+  border-left: 4px solid;
+}
+
+.calendar-event small,
+.calendar-event strong {
+  display: block;
+}
+
+.calendar-event small {
+  margin-bottom: 4px;
+  opacity: 0.72;
+}
+
+.calendar-event strong {
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.event-blue {
+  background: #e7f2ff;
+  border-color: #1685ff;
+}
+
+.event-purple {
+  background: #f2eaff;
+  border-color: #984ce5;
+}
+
+.event-green {
+  background: #e7f8eb;
+  border-color: #29a44d;
+}
+
+.event-orange {
+  background: #fff0df;
+  border-color: #ef8a16;
+}
+
+.event-pink {
+  background: #ffe8f2;
+  border-color: #e45593;
+}
+
+.event-family {
+  background: #e5f5f5;
+  border-color: #229797;
+}
+
+.calendar-side {
+  background: white;
+  border: 1px solid #e0e8f1;
+  border-radius: 21px;
+  padding: 21px;
+}
+
+.calendar-side h2 {
+  margin: 0 0 12px;
+}
+
+.today-event {
+  display: grid;
+  grid-template-columns: 55px 1fr;
+  gap: 8px;
+  padding: 11px 0;
+  border-bottom: 1px solid #e8eef4;
+}
+
+.side-heading {
+  margin-top: 27px !important;
+}
+
+.upcoming {
+  display: flex;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.upcoming > span {
   font-size: 22px;
-  margin-right: 5px;
+}
+
+.upcoming strong,
+.upcoming small {
+  display: block;
+}
+
+.upcoming small {
+  margin-top: 3px;
+  color: #7e8ea0;
+}
+
+/* ZADANIA + ZAKUPY */
+
+.module-grid {
+  display: grid;
+  gap: 20px;
+}
+
+.module-grid-wide {
+  grid-template-columns: minmax(0, 2fr) minmax(250px, 1fr);
+}
+
+.task-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 15px 2px;
+  border-bottom: 1px solid #e7edf4;
+}
+
+.task-row:last-child {
+  border-bottom: 0;
+}
+
+.task-row input {
+  width: 19px;
+  height: 19px;
+  accent-color: #1685ff;
+}
+
+.completed {
+  color: #8795a5;
+  text-decoration: line-through;
+}
+
+.progress-number {
+  font-size: 58px;
+  font-weight: 900;
+  color: #1685ff;
+}
+
+.muted {
+  color: #7c8c9e;
+}
+
+.progress-bar {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8eef5;
+  margin-top: 20px;
+}
+
+.progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #1685ff;
+}
+
+/* CZAT */
+
+.chat-card {
+  background: white;
+  border: 1px solid #e0e8f1;
+  border-radius: 23px;
+  overflow: hidden;
+}
+
+.chat-title {
+  padding: 18px 22px;
+  border-bottom: 1px solid #e6edf4;
+}
+
+.chat-title strong,
+.chat-title small {
+  display: block;
+}
+
+.chat-title small {
+  color: #8593a4;
+  margin-top: 3px;
+}
+
+.messages {
+  min-height: 390px;
+  padding: 23px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.message {
+  align-self: flex-start;
+  max-width: min(520px, 78%);
+}
+
+.message small {
+  color: #7f8fa1;
+}
+
+.message p {
+  margin: 4px 0 0;
+  background: #eef4fa;
+  border-radius: 6px 16px 16px 16px;
+  padding: 12px 15px;
+}
+
+.message-me {
+  align-self: flex-end;
+}
+
+.message-me small {
+  display: block;
+  text-align: right;
+}
+
+.message-me p {
+  background: #1685ff;
+  color: white;
+  border-radius: 16px 6px 16px 16px;
+}
+
+.message-form {
+  display: flex;
+  gap: 10px;
+  border-top: 1px solid #e6edf4;
+  padding: 15px;
+}
+
+.message-form input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #dce5ee;
+  background: #f7fafe;
+  border-radius: 12px;
+  padding: 13px;
+  outline: none;
+}
+
+.message-form button {
+  border: 0;
+  border-radius: 12px;
+  padding: 0 19px;
+  background: #1685ff;
+  color: white;
+  font-weight: 800;
+}
+
+/* RODZINA */
+
+.family-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.family-profile {
+  background: white;
+  border: 1px solid #e1e9f2;
+  border-radius: 22px;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.profile-avatar {
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 13px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  font-weight: 900;
+}
+
+.family-profile h2 {
+  margin: 0;
+}
+
+.family-profile p {
+  margin: 5px 0;
+  color: #8190a1;
+}
+
+/* PŁYWAJĄCY PRZYCISK */
+
+.floating-add {
+  position: fixed;
+  z-index: 40;
+  right: 28px;
+  bottom: 25px;
+  border: 0;
+  border-radius: 15px;
+  padding: 14px 20px;
+  background: #1685ff;
+  color: white;
+  font-weight: 900;
+  font-size: 16px;
+  box-shadow: 0 12px 28px rgba(22, 133, 255, 0.3);
 }
 
 .mobile-nav {
   display: none;
 }
 
-/* =========================
-   TABLET
-========================= */
+/* TABLET */
+
+@media (max-width: 1180px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .calendar-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .calendar-side {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px 20px;
+  }
+
+  .calendar-side h2,
+  .side-heading {
+    grid-column: 1 / -1;
+  }
+
+  .side-heading {
+    margin-top: 10px !important;
+  }
+
+  .family-profile-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
 
 @media (max-width: 1000px) {
   .sidebar {
     width: 205px;
   }
 
+  .main-area {
+    margin-left: 205px;
+    width: calc(100% - 205px);
+  }
+
+  .brand {
+    padding-left: 11px;
+  }
+
+  .brand strong {
+    font-size: 23px;
+  }
+
+  .page-content {
+    padding: 30px 25px 110px;
+  }
+
   .family-header {
-    gap: 22px;
     padding-left: 25px;
-    padding-right: 25px;
+    gap: 22px;
   }
 
-  .dashboard {
-    padding: 30px 25px 100px;
-  }
-
-  .cards-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .module-grid-wide {
+    grid-template-columns: minmax(0, 1.7fr) minmax(220px, 1fr);
   }
 }
 
-/* =========================
-   TELEFON
-========================= */
+/* TELEFON */
 
 @media (max-width: 700px) {
-  .app-shell {
-    display: block;
-  }
-
   .sidebar {
     display: none;
   }
 
   .main-area {
+    margin-left: 0;
     width: 100%;
   }
 
   .family-header {
-    min-height: 76px;
-    gap: 17px;
-    padding: 11px 15px;
+    min-height: 72px;
+    padding: 9px 14px;
+    gap: 14px;
   }
 
-  .avatar {
-    width: 40px;
-    height: 40px;
-    font-size: 15px;
-  }
-
-  .family-person {
-    gap: 7px;
-  }
-
-  .family-person strong {
-    font-size: 13px;
-  }
-
-  .family-person small {
-    font-size: 11px;
-  }
-
-  .dashboard {
-    padding: 24px 16px 120px;
-  }
-
-  .welcome {
-    align-items: flex-start;
-    gap: 15px;
-  }
-
-  .welcome h1 {
-    font-size: 30px;
-  }
-
-  .welcome p {
-    font-size: 15px;
-  }
-
-  .weather {
-    min-width: auto;
-    padding: 13px;
-    border-radius: 17px;
-  }
-
-  .weather > span {
+  .family-person > div:last-child {
     display: none;
   }
 
-  .weather strong {
-    font-size: 11px;
+  .avatar {
+    width: 41px;
+    height: 41px;
   }
 
-  .weather b {
-    font-size: 20px;
+  .page-content {
+    padding: 23px 15px 110px;
   }
 
-  .cards-grid {
+  .page-header,
+  .start-hero {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-bottom: 23px;
+  }
+
+  .page-header h1,
+  .start-hero h1 {
+    font-size: 31px;
+  }
+
+  .page-header p,
+  .start-hero p {
+    font-size: 15px;
+  }
+
+  .weather-card {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .dashboard-grid,
+  .module-grid-wide,
+  .family-profile-grid {
     grid-template-columns: 1fr;
-    gap: 15px;
   }
 
-  .dashboard-card {
-    min-height: auto;
+  .app-card {
+    border-radius: 19px;
     padding: 19px;
-    border-radius: 18px;
   }
 
-  .dashboard-card h2 {
-    font-size: 19px;
+  .calendar-toolbar {
+    align-items: stretch;
+    flex-direction: column;
   }
 
-  .add-button {
-    right: 17px;
+  .calendar-navigation {
+    justify-content: space-between;
+  }
+
+  .calendar-navigation strong {
+    white-space: normal;
+    text-align: center;
+  }
+
+  .view-switch button {
+    flex: 1;
+  }
+
+  .week-grid {
+    grid-template-columns: repeat(7, 125px);
+    min-width: 875px;
+  }
+
+  .calendar-day {
+    min-height: 390px;
+  }
+
+  .calendar-side {
+    display: block;
+  }
+
+  .messages {
+    min-height: 330px;
+    padding: 15px;
+  }
+
+  .message {
+    max-width: 88%;
+  }
+
+  .message-form {
+    align-items: stretch;
+  }
+
+  .floating-add {
+    right: 16px;
     bottom: 82px;
-    padding: 13px 18px;
   }
 
   .mobile-nav {
     position: fixed;
+    z-index: 45;
     display: grid;
     grid-template-columns: repeat(5, 1fr);
-    bottom: 0;
     left: 0;
     right: 0;
+    bottom: 0;
     height: 68px;
     background: white;
-    border-top: 1px solid #e3eaf2;
-    z-index: 15;
+    border-top: 1px solid #dfe7ef;
   }
 
   .mobile-nav button {
     border: 0;
     background: white;
-    color: #47617d;
-    font-size: 19px;
+    color: #64798f;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -510,33 +1026,15 @@ input {
     gap: 3px;
   }
 
-  .mobile-nav button:first-child {
-    color: #1685ff;
+  .mobile-nav button span {
+    font-size: 18px;
   }
 
-  .mobile-nav small {
+  .mobile-nav button small {
     font-size: 10px;
   }
-}
 
-/* =========================
-   MAŁY TELEFON
-========================= */
-
-@media (max-width: 430px) {
-  .welcome {
-    flex-direction: column;
-  }
-
-  .weather {
-    align-self: flex-start;
-  }
-
-  .family-person div:not(.avatar) {
-    display: none;
-  }
-
-  .family-header {
-    justify-content: space-around;
+  .mobile-nav .mobile-active {
+    color: #1685ff;
   }
 }
