@@ -1,0 +1,10 @@
+v1.2.3
+- finalny pakiet projektu
+- login z neonowym logo jako oddzielny asset
+- zachowany dashboard startowy w stylu zaakceptowanym przez użytkownika
+
+v1.2.2
+- niższy pasek powitalny
+- data usunięta z banera powitalnego
+- data przeniesiona obok pogody
+- tekst powitalny przesunięty maksymalnie w prawo
