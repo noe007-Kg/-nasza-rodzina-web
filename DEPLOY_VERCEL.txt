@@ -1,16 +1,19 @@
-SZYBKIE WDROŻENIE — GITHUB + VERCEL
+NASZA RODZINA v1.3.1 — WDROŻENIE
 
-1. Otwórz repozytorium aplikacji na GitHub.
-2. Wgraj wszystkie pliki z tego folderu do katalogu głównego repozytorium.
-3. Zastąp stare pliki src/, public/, index.html, package.json i tsconfig*.json.
-4. Zapisz commit, np.: Nasza Rodzina v1.3.0.
-5. Otwórz Vercel -> projekt Nasza Rodzina -> Deployments.
-6. Vercel powinien sam uruchomić nowy deployment po commicie.
+1. Rozpakuj Nasza_Rodzina_v1.3.1.zip.
+2. Otwórz repozytorium GitHub używane przez Vercel.
+3. Podmień pliki z paczki v1.3.1 w tych samych miejscach.
+4. Najważniejsze pliki do podmiany:
+   src/main.tsx
+   src/style.css
+   package.json
+5. Folder public pozostaje zgodny z v1.3.0 i zawiera obrazki produktów.
+6. Zrób commit do gałęzi main.
+7. Vercel uruchomi automatyczny deployment.
 
-Jeśli Vercel pyta o ustawienia:
-- Framework: Vite
-- Install command: npm install
-- Build command: npm run build
-- Output directory: dist
+Framework Preset: Vite
+Build Command: npm run build
+Output Directory: dist
+Install Command: npm install
 
-Po wdrożeniu odśwież stronę z pominięciem pamięci podręcznej, jeśli nadal widzisz starą wersję.
+Firebase pozostaje tym samym projektem. Tryb DEMO nie zapisuje przykładowych danych do Firebase.

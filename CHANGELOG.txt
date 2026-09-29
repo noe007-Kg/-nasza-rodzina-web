@@ -1,18 +1,10 @@
-v1.3.0 — 29.09.2026
-- duży pakiet po audycie wszystkich głównych zakładek
-- nowy wspólny Start z rodzinnym planem dnia i „Wszyscy wolni od…”
-- wydarzenia zakończone dziś pozostają widoczne jako zakończone
-- Zadania: szybkie szablony, punkty, zatwierdzanie rodzica, nagrody
-- Zakupy: małe kafelki, nowe produkty, Wojanek napój i mus, OXY, własne ikonki/zdjęcia, notatka wielu produktów, kategorie, produkty 18+
-- Czat: rodzinny + prywatne rozmowy 1:1
-- Zdrowie: profile, chronologia, specjalizacje, leki, potwierdzanie, kontrole, dokumenty, kontakty medyczne
-- Szkoła: ręczny plan, zajęcia dodatkowe, oceny, zadania, sprawdziany, wiadomości, widok rodzica i ucznia
-- Rodzina: centrum profili i aktywności
-- Ustawienia: motyw Jasny/Ciemny, powiadomienia, integracje, uprawnienia, stałe „Co nowego?”
-- ekran ładowania z właściwym logo aplikacji
-- wersja aplikacji: 1.3.0
+NASZA RODZINA — CHANGELOG
 
-v1.2.3
-- finalny pakiet poprzedniej wersji
-- login z neonowym logo jako oddzielny asset
-- zachowany dashboard startowy
+v1.3.1 — 29.09.2026
+- Dodano Tryb DEMO w Ustawieniach.
+- Tryb DEMO pokazuje 2–3 przykładowe wpisy w każdym module i nie zapisuje ich do Firebase.
+- Dodano wyraźne oznaczenie DEMO nad modułami.
+- Zmniejszono zdjęcia produktów Wojanek / OXY do małych, czytelnych miniaturek w kafelkach.
+- Dopracowano wygląd rodzinnego Startu: Rodzinny czas, plan dnia i karty osób.
+- Dopracowano wizualnie Zadania, Zakupy, Czat, Zdrowie, Szkołę, Rodzinę i Ustawienia.
+- Zachowano ten sam projekt Firebase i dane z v1.3.0.
