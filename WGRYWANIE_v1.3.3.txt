@@ -1,8 +1,0 @@
-NASZA RODZINA v1.3.3 — CO WGRYWAĆ
-
-Najprościej: wgraj CAŁĄ zawartość tego folderu do istniejącego repozytorium GitHub połączonego z Vercel i zatwierdź commit do main.
-
-Nie wgrywaj folderu node_modules. Nie jest potrzebny.
-Vercel sam wykona npm install i npm run build.
-
-Ta paczka nie zawiera Trybu DEMO.
