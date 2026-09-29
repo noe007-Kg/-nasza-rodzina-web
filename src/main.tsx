@@ -22,7 +22,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.2';
+const APP_VERSION = '1.3.3';
 const APP_UPDATED = '30.09.2026';
 
 /* =========================================================
@@ -2067,6 +2067,7 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
   const [categoryChoice, setCategoryChoice] = useState<'auto' | ShoppingCategory>('auto');
   const [quickNote, setQuickNote] = useState('');
   const [quickCategory, setQuickCategory] = useState<ShoppingCategory | 'all'>('all');
+  const [quickSort, setQuickSort] = useState<'default' | 'az'>('default');
   const [editingQuick, setEditingQuick] = useState<QuickProduct | null>(null);
   const [quickMenu, setQuickMenu] = useState<QuickProduct | null>(null);
   const [quickForm, setQuickForm] = useState({ title:'', category:'inne' as ShoppingCategory, quantity:'1', unit:'szt.', imageURL:'', icon:'📦' });
@@ -2094,8 +2095,10 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
     const overrides = new Map(customQuick.map((x) => [x.id, x]));
     const merged = DEFAULT_QUICK_PRODUCTS.map((base) => overrides.has(base.id) ? { ...base, ...overrides.get(base.id) } as QuickProduct : base);
     for (const custom of customQuick) if (!DEFAULT_QUICK_PRODUCTS.some((b) => b.id === custom.id)) merged.push(custom);
-    return merged.filter((p) => !p.hidden && (!p.adultOnly || adult) && (quickCategory === 'all' || p.category === quickCategory));
-  }, [customQuick, adult, quickCategory]);
+    const filtered = merged.filter((p) => !p.hidden && (!p.adultOnly || adult) && (quickCategory === 'all' || p.category === quickCategory));
+    if (quickSort === 'az') return [...filtered].sort((a, b) => a.title.localeCompare(b.title, 'pl'));
+    return filtered;
+  }, [customQuick, adult, quickCategory, quickSort]);
 
   async function addItem(productTitle: string, qty = '1', productUnit = 'szt.', category?: ShoppingCategory) {
     const clean = productTitle.trim(); if (!clean) return;
@@ -2158,10 +2161,40 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
     setQuickMenu(null);
   }
 
+  async function normalizeQuickImage(file: File) {
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error('Nie można odczytać zdjęcia.'));
+        element.src = objectUrl;
+      });
+      const size = 900;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Brak obsługi obrazu.');
+      const scale = Math.max(size / img.naturalWidth, size / img.naturalHeight);
+      const width = img.naturalWidth * scale;
+      const height = img.naturalHeight * scale;
+      const x = (size - width) / 2;
+      const y = (size - height) / 2;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, size, size);
+      ctx.drawImage(img, x, y, width, height);
+      return await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Nie udało się przygotować zdjęcia.')), 'image/jpeg', 0.9));
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
   async function uploadQuickImage(file: File) {
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-');
-    const target = storageRef(storage, `quick-products/${user.uid}/${Date.now()}-${safeName}`);
-    await uploadBytes(target, file);
+    const normalized = await normalizeQuickImage(file);
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/\.[^.]+$/, '') || 'produkt';
+    const target = storageRef(storage, `quick-products/${user.uid}/${Date.now()}-${safeName}.jpg`);
+    await uploadBytes(target, normalized, { contentType: 'image/jpeg' });
     const url = await getDownloadURL(target);
     setQuickForm((f) => ({ ...f, imageURL:url }));
   }
@@ -2184,7 +2217,12 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
 
   return (
     <div className="page-content compact-page shopping-v130">
-      <ModuleHeader icon="🛒" title="Zakupy" text="Szybkie kafelki, notatka wielu produktów i jedna wspólna lista." action={items.some((i) => i.done) ? <button className="secondary-button" onClick={clearDone}>🧹 Usuń kupione</button> : undefined} />
+      <section className="shopping-hero">
+        <div className="shopping-hero-icon">🛒</div>
+        <div className="shopping-hero-copy"><small>Nasza Rodzina</small><h1>Zakupy</h1><p>Szybkie kafelki, notatka wielu produktów i jedna wspólna lista.</p></div>
+        <div className="shopping-hero-basket" aria-hidden="true">🧺</div>
+        {items.some((i) => i.done) ? <button className="secondary-button shopping-clear-button" onClick={clearDone}>🧹 Usuń kupione</button> : null}
+      </section>
 
       <form className="shopping-bar" onSubmit={add}>
         <input className="shopping-product" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Np. jabłka, mleko, bułki…" />
@@ -2196,10 +2234,18 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
 
       <section className="quick-note-card"><header><strong>📝 Szybka notatka zakupowa</strong><small>Wpisz kilka rzeczy naraz — rozdzielimy je i dodamy do jednej listy.</small></header><div><textarea rows={2} value={quickNote} onChange={(e) => setQuickNote(e.target.value)} placeholder="Np. długopis, gumka, zeszyt, lampka, zegarek…" /><button className="primary-button" onClick={() => void addQuickNote()}>✨ Dodaj wszystkie</button></div></section>
 
+      <div className="shopping-category-chips"><button className={quickCategory === 'all' ? 'active' : ''} onClick={() => setQuickCategory('all')}>▦ Wszystkie</button>{(Object.keys(SHOPPING_META) as ShoppingCategory[]).map((cat) => <button key={cat} className={quickCategory === cat ? 'active' : ''} onClick={() => setQuickCategory(cat)}>{SHOPPING_META[cat].icon} {SHOPPING_META[cat].label}</button>)}</div>
+
       <section className="quick-products-card">
-        <header><div><strong>⭐ Szybkie zakupy</strong><small>Długie przytrzymanie: zmień ikonkę lub edytuj produkt.</small></div><button onClick={() => openQuickEditor()}>＋ Własny produkt</button></header>
-        <div className="shopping-category-chips"><button className={quickCategory === 'all' ? 'active' : ''} onClick={() => setQuickCategory('all')}>Wszystkie</button>{(Object.keys(SHOPPING_META) as ShoppingCategory[]).map((cat) => <button key={cat} className={quickCategory === cat ? 'active' : ''} onClick={() => setQuickCategory(cat)}>{SHOPPING_META[cat].icon} {SHOPPING_META[cat].label}</button>)}</div>
-        <div className="quick-products-grid">{quickProducts.map((product) => <button key={product.id} className="quick-product-tile" onClick={() => void addQuick(product)} onPointerDown={() => startHold(product)} onPointerUp={cancelHold} onPointerCancel={cancelHold} onContextMenu={(e) => { e.preventDefault(); setQuickMenu(product); }}><span className="quick-product-visual">{product.imageURL ? <img src={product.imageURL} alt="" /> : product.icon}</span><strong>{product.title}</strong>{product.adultOnly && <em>18+</em>}<i onClick={(e) => { e.stopPropagation(); setQuickMenu(product); }}>⋯</i></button>)}</div>
+        <header>
+          <div><strong>⭐ Szybkie zakupy</strong><small>Długie przytrzymanie: zmień zdjęcie lub edytuj produkt.</small></div>
+          <div className="quick-products-tools">
+            <select aria-label="Sortowanie szybkich zakupów" value={quickSort} onChange={(e) => setQuickSort(e.target.value as 'default' | 'az')}><option value="default">Sortuj: Najczęściej</option><option value="az">Sortuj: A–Z</option></select>
+            <button className="quick-view-button active" type="button" aria-label="Widok kafelków">▦</button>
+            <button className="quick-custom-button" type="button" onClick={() => openQuickEditor()}>＋ Własny produkt</button>
+          </div>
+        </header>
+        <div className="quick-products-grid">{quickProducts.map((product) => <button key={product.id} className={`quick-product-tile category-${product.category}`} onClick={() => void addQuick(product)} onPointerDown={() => startHold(product)} onPointerUp={cancelHold} onPointerCancel={cancelHold} onContextMenu={(e) => { e.preventDefault(); setQuickMenu(product); }}><span className="quick-product-visual">{product.imageURL ? <img src={product.imageURL} alt={product.title} /> : <span className="quick-product-emoji">{product.icon}</span>}</span><strong className="quick-product-title">{product.title}</strong><span className="quick-product-plus" aria-hidden="true">＋</span>{product.adultOnly && <em>18+</em>}<i onClick={(e) => { e.stopPropagation(); setQuickMenu(product); }}>⋯</i></button>)}</div>
       </section>
 
       <section className="shopping-list-title"><div><strong>🛒 Lista zakupów</strong><small>{items.filter((i) => !i.done).length} do kupienia</small></div></section>
@@ -2227,7 +2273,7 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
           <label className="field"><span>Emoji awaryjne</span><input value={quickForm.icon} onChange={(e) => setQuickForm((f) => ({ ...f, icon:e.target.value }))} /></label>
           <label className="field"><span>Domyślna ilość</span><input value={quickForm.quantity} onChange={(e) => setQuickForm((f) => ({ ...f, quantity:e.target.value }))} /></label>
           <label className="field"><span>Jednostka</span><select value={quickForm.unit} onChange={(e) => setQuickForm((f) => ({ ...f, unit:e.target.value }))}><option>szt.</option><option>kg</option><option>g</option><option>l</option><option>ml</option><option>opak.</option><option>pęczek</option></select></label>
-          <label className="field field-wide"><span>Własne zdjęcie / ikonka</span><input type="file" accept="image/*" onChange={(e) => { const file=e.target.files?.[0]; if (file) void uploadQuickImage(file).catch(() => alert('Nie udało się wysłać zdjęcia. Sprawdź Firebase Storage.')); }} />{quickForm.imageURL && <img className="quick-image-preview" src={quickForm.imageURL} alt="Podgląd" />}</label>
+          <label className="field field-wide"><span>Własne zdjęcie / ikonka</span><small className="image-normalize-hint">Zdjęcie zostanie automatycznie wykadrowane do kwadratu i dopasowane do wszystkich kafelków.</small><input type="file" accept="image/*" onChange={(e) => { const file=e.target.files?.[0]; if (file) void uploadQuickImage(file).catch(() => alert('Nie udało się wysłać zdjęcia. Sprawdź Firebase Storage.')); }} />{quickForm.imageURL && <img className="quick-image-preview" src={quickForm.imageURL} alt="Podgląd" />}</label>
           <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={() => setEditingQuick(null)}>Anuluj</button><button className="primary-button">✓ Zapisz</button></div>
         </form>
       </Modal>}
