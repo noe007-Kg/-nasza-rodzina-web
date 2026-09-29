@@ -1,9 +1,0 @@
-Nasza Rodzina v1.3.3 — Production Clean
-Data: 29.09.2026
-
-Cel wersji: usunięcie Trybu DEMO i przygotowanie czystej paczki produkcyjnej do wdrożenia na Vercel.
-
-- Brak przełącznika DEMO w Ustawieniach.
-- Brak przykładowych danych DEMO w modułach.
-- Firebase i istniejące dane pozostają bez zmian.
-- Zachowano wygląd Visual Restore oraz funkcje v1.3.2.
