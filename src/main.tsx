@@ -22,7 +22,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.3.3';
 const APP_UPDATED = '29.09.2026';
 
 /* =========================================================
@@ -612,19 +612,12 @@ function FamilyApp({ user }: { user: User }) {
     try { return localStorage.getItem('nr-theme') === 'dark' ? 'dark' : 'light'; }
     catch { return 'light'; }
   });
-  const [demoMode, setDemoMode] = useState<boolean>(() => {
-    try { return localStorage.getItem('nr-demo-mode') === '1'; }
-    catch { return false; }
-  });
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try { localStorage.setItem('nr-theme', theme); } catch { /* ignore */ }
   }, [theme]);
 
-  useEffect(() => {
-    try { localStorage.setItem('nr-demo-mode', demoMode ? '1' : '0'); } catch { /* ignore */ }
-  }, [demoMode]);
 
   useEffect(() => {
     async function loadMember() {
@@ -654,17 +647,16 @@ function FamilyApp({ user }: { user: User }) {
       case 'Zdrowie': return <HealthPage user={user} member={member} />;
       case 'Szkoła': return <SchoolPage user={user} member={member} />;
       case 'Rodzina': return <FamilyPage member={member} goTo={goTo} />;
-      case 'Ustawienia': return <SettingsPage member={member} theme={theme} setTheme={setTheme} demoMode={demoMode} setDemoMode={setDemoMode} />;
+      case 'Ustawienia': return <SettingsPage member={member} theme={theme} setTheme={setTheme} />;
       default: return <StartPage member={member} goTo={goTo} />;
     }
   }
 
   return (
-    <div className={`app-shell theme-${theme} ${demoMode ? 'demo-mode' : ''}`}>
+    <div className={`app-shell theme-${theme}`}>
       <Sidebar page={page} goTo={goTo} member={member} />
       <main className="main-area">
         {page !== 'Start' && <FamilyHeader member={member} onLogout={() => signOut(auth)} />}
-        {demoMode && page !== 'Ustawienia' && <DemoShowcase page={page} />}
         {renderPage()}
       </main>
       <MobileNavigation page={page} goTo={goTo} onMore={() => setMobileMoreOpen(true)} />
@@ -675,11 +667,23 @@ function FamilyApp({ user }: { user: User }) {
   );
 }
 
+function AppIcon({ page, size = 20 }: { page: Page; size?: number }) {
+  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true };
+  switch (page) {
+    case 'Start': return <svg {...common}><path d="M3.5 10.5 12 3.5l8.5 7"/><path d="M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-6h5v6"/></svg>;
+    case 'Kalendarz': return <svg {...common}><rect x="3.5" y="5.5" width="17" height="15" rx="2.5"/><path d="M7 3.5v4M17 3.5v4M3.5 10h17"/><path d="M7.5 13.5h2M12 13.5h2M16.5 13.5h.1M7.5 17h2M12 17h2"/></svg>;
+    case 'Zadania': return <svg {...common}><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 2.2 2.2L16.5 8"/></svg>;
+    case 'Zakupy': return <svg {...common}><path d="M3 4h2l2.1 10.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.6L20.5 8H6"/><circle cx="9.5" cy="19" r="1"/><circle cx="17" cy="19" r="1"/></svg>;
+    case 'Czat': return <svg {...common}><path d="M4 5.5h16v11H9l-5 4v-15Z"/><path d="M8 10h8M8 13h5"/></svg>;
+    case 'Zdrowie': return <svg {...common}><path d="M12 20s-7.5-4.7-7.5-10.2A4.3 4.3 0 0 1 12 6.9a4.3 4.3 0 0 1 7.5 2.9C19.5 15.3 12 20 12 20Z"/></svg>;
+    case 'Szkoła': return <svg {...common}><path d="m3 9 9-5 9 5-9 5-9-5Z"/><path d="M7 12.2V16c3 2 7 2 10 0v-3.8M21 9v6"/></svg>;
+    case 'Rodzina': return <svg {...common}><circle cx="8" cy="8" r="2.5"/><circle cx="16.2" cy="8.8" r="2.1"/><path d="M3.8 19v-1.8A4.2 4.2 0 0 1 8 13h0a4.2 4.2 0 0 1 4.2 4.2V19M13.2 14.2a3.5 3.5 0 0 1 6.3 2.1V19"/></svg>;
+    case 'Ustawienia': return <svg {...common}><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.1M12 19.1v2.1M21.2 12h-2.1M4.9 12H2.8M18.5 5.5 17 7M7 17l-1.5 1.5M18.5 18.5 17 17M7 7 5.5 5.5"/><circle cx="12" cy="12" r="7.1"/></svg>;
+  }
+}
+
 function Sidebar({ page, goTo, member }: { page: Page; goTo: (page: Page) => void; member: Member | null }) {
-  const items: Array<[Page, string]> = [
-    ['Start', '⌂'], ['Kalendarz', '▣'], ['Zadania', '✓'], ['Zakupy', '🛒'], ['Czat', '◌'],
-    ['Zdrowie', '♡'], ['Szkoła', '🎓'], ['Rodzina', '👥'], ['Ustawienia', '⚙'],
-  ];
+  const items: Page[] = ['Start', 'Kalendarz', 'Zadania', 'Zakupy', 'Czat', 'Zdrowie', 'Szkoła', 'Rodzina', 'Ustawienia'];
 
   return (
     <aside className="sidebar">
@@ -688,14 +692,14 @@ function Sidebar({ page, goTo, member }: { page: Page; goTo: (page: Page) => voi
         <div className="brand-copy"><strong>Nasza<br />Rodzina</strong><small>v{APP_VERSION}</small></div>
       </div>
       <nav className="sidebar-nav">
-        {items.map(([label, icon]) => (
+        {items.map((label) => (
           <button key={label} type="button" className={`nav-button ${page === label ? 'active' : ''}`} onClick={() => goTo(label)}>
-            <span>{icon}</span>{label}
+            <span className="nav-icon"><AppIcon page={label} size={18} /></span><span className="nav-label">{label}</span>
           </button>
         ))}
       </nav>
       <div className="sidebar-bottom-art">
-        <strong>Razem<br />zawsze lepiej ♡</strong>
+        <strong>Razem<br />zawsze lepiej</strong>
         <small>{member?.name || 'Nasza Rodzina'}</small>
       </div>
     </aside>
@@ -997,72 +1001,14 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
 }
 
 /* =========================================================
-   DEMO MODE — przykładowe dane tylko do podglądu
-   ========================================================= */
-
-function DemoShowcase({ page }: { page: Page }) {
-  const cards: Record<Page, React.ReactNode> = {
-    Start: <>
-      <article className="demo-card"><span className="demo-icon">💼</span><div><strong>Sebastian · Praca</strong><small>08:00–16:00 · Kołobrzeg</small></div><b className="demo-status green">Dzisiaj</b></article>
-      <article className="demo-card"><span className="demo-icon">🎹</span><div><strong>Nikodem · Fortepian</strong><small>17:00–18:00 · zajęcia dodatkowe</small></div><b className="demo-status purple">17:00</b></article>
-      <article className="demo-card"><span className="demo-icon">🛒</span><div><strong>Zakupy rodzinne</strong><small>Mleko · Wojanek mus · chusteczki</small></div><b className="demo-status orange">3 rzeczy</b></article>
-    </>,
-    Kalendarz: <>
-      <article className="demo-card calendar"><time>09:00</time><div><strong>🩺 Wizyta u dentysty</strong><small>Sebastian · 09:00–10:00</small></div><b className="demo-status blue">Dziś</b></article>
-      <article className="demo-card calendar"><time>15:30</time><div><strong>🎒 Zebranie szkolne</strong><small>Nikodem · szkoła</small></div><b className="demo-status green">Szkoła</b></article>
-      <article className="demo-card calendar"><time>Cały dzień</time><div><strong>🎂 Urodziny</strong><small>Cała rodzina · wydarzenie całodniowe</small></div><b className="demo-status pink">Rodzina</b></article>
-    </>,
-    Zadania: <>
-      <article className="demo-card task"><span className="demo-check">○</span><div><strong>Wynieść śmieci</strong><small>Nikodem · dziś · +5 pkt</small></div><b className="demo-status orange">Ważne</b></article>
-      <article className="demo-card task"><span className="demo-check">○</span><div><strong>Posprzątać pokój</strong><small>Paweł · jutro · +10 pkt</small></div><b className="demo-status blue">Normalne</b></article>
-      <article className="demo-card task"><span className="demo-check done">✓</span><div><strong>Rozładować zmywarkę</strong><small>Nikodem · zatwierdzone przez rodzica</small></div><b className="demo-status green">Gotowe</b></article>
-    </>,
-    Zakupy: <>
-      <article className="demo-card product"><img className="demo-product-icon" src="/wojanek-napoj.png" alt="" /><div><strong>Wojanek napój</strong><small>1 szt. · Napoje</small></div><b className="demo-status blue">Do kupienia</b></article>
-      <article className="demo-card product"><img className="demo-product-icon" src="/wojanek-mus.png" alt="" /><div><strong>Wojanek mus</strong><small>2 szt. · Dzieci</small></div><b className="demo-status purple">Do kupienia</b></article>
-      <article className="demo-card product"><img className="demo-product-icon" src="/oxy-chusteczki.png" alt="" /><div><strong>Chusteczki do prania</strong><small>1 opak. · Chemia</small></div><b className="demo-status green">Przykład</b></article>
-    </>,
-    Czat: <>
-      <article className="demo-chat-row"><span className="demo-avatar">👩</span><div className="demo-bubble"><strong>Dominika</strong><p>Kupisz po drodze mleko? 😊</p><small>17:42</small></div></article>
-      <article className="demo-chat-row mine"><div className="demo-bubble mine"><p>Jasne, dopisałem do listy 👍</p><small>17:43 ✓✓</small></div></article>
-      <article className="demo-chat-row"><span className="demo-avatar">👦</span><div className="demo-bubble"><strong>Nikodem</strong><p>Ja chcę Wojanka 😄</p><small>17:44</small></div></article>
-    </>,
-    Zdrowie: <>
-      <article className="demo-card health"><span className="demo-icon">🩺</span><div><strong>Kontrola stomatologiczna</strong><small>Sebastian · 5 paź · 10:30</small></div><b className="demo-status blue">Umówiona</b></article>
-      <article className="demo-card health"><span className="demo-icon">💊</span><div><strong>Witamina D</strong><small>Layla · 08:00 · potwierdź podanie</small></div><b className="demo-status orange">Lek</b></article>
-      <article className="demo-card health"><span className="demo-icon">📄</span><div><strong>Wynik badania</strong><small>Paweł · dokument przykładowy</small></div><b className="demo-status purple">Dokument</b></article>
-    </>,
-    Szkoła: <>
-      <article className="demo-card school"><time>08:00</time><span className="demo-icon">π</span><div><strong>Matematyka</strong><small>Nikodem · sala 12</small></div></article>
-      <article className="demo-card school"><time>10:45</time><span className="demo-icon">🇬🇧</span><div><strong>Język angielski</strong><small>Nikodem · lekcja</small></div></article>
-      <article className="demo-card school"><time>Pt.</time><span className="demo-icon">📝</span><div><strong>Sprawdzian z przyrody</strong><small>Paweł · przypomnienie</small></div><b className="demo-status pink">Sprawdzian</b></article>
-    </>,
-    Rodzina: <>
-      <article className="demo-card family"><span className="demo-avatar big">👨</span><div><strong>Sebastian</strong><small>💼 Praca do 16:00 · 1 zadanie</small></div><b className="demo-status blue">Tata</b></article>
-      <article className="demo-card family"><span className="demo-avatar big">👩</span><div><strong>Dominika</strong><small>🟢 Wolna · 1 wydarzenie</small></div><b className="demo-status purple">Mama</b></article>
-      <article className="demo-card family"><span className="demo-avatar big">👦</span><div><strong>Nikodem</strong><small>🎒 Szkoła · 🎹 fortepian 17:00</small></div><b className="demo-status green">Syn</b></article>
-    </>,
-    Ustawienia: null,
-  };
-
-  return (
-    <section className="demo-showcase-wrap" aria-label="Tryb demo">
-      <header className="demo-showcase-header">
-        <div><span className="demo-pill">DEMO</span><strong>Przykładowe dane — {page}</strong><small>To tylko podgląd. Nic z tej sekcji nie jest zapisywane w Firebase.</small></div>
-      </header>
-      <div className={`demo-showcase-grid demo-${page.toLowerCase()}`}>{cards[page]}</div>
-    </section>
-  );
-}
-
-/* =========================================================
    SHARED UI
    ========================================================= */
 
-function ModuleHeader({ icon, title, text, action }: { icon: string; title: string; text: string; action?: React.ReactNode }) {
+function ModuleHeader({ icon: _icon, title, text, action }: { icon: string; title: string; text: string; action?: React.ReactNode }) {
+  const pageIcon = (['Kalendarz','Zadania','Zakupy','Czat','Zdrowie','Szkoła','Rodzina','Ustawienia'] as Page[]).includes(title as Page) ? title as Page : 'Start';
   return (
     <section className="page-header compact-header">
-      <div><small>Nasza Rodzina</small><h1>{icon} {title}</h1><p>{text}</p></div>
+      <div className="module-heading"><span className="module-title-icon"><AppIcon page={pageIcon} size={20} /></span><div><small>Nasza Rodzina</small><h1>{title}</h1><p>{text}</p></div></div>
       {action}
     </section>
   );
@@ -2353,7 +2299,7 @@ function FamilyPage({ member, goTo }: { member: Member | null; goTo: (page: Page
    SETTINGS
    ========================================================= */
 
-function SettingsPage({ member, theme, setTheme, demoMode, setDemoMode }: { member: Member | null; theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void; demoMode: boolean; setDemoMode: (value: boolean) => void }) {
+function SettingsPage({ member, theme, setTheme }: { member: Member | null; theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void }) {
   const defaultPrefs = { medicines:true, visits:true, tasks:true, school:true, chat:true };
   const [prefs, setPrefs] = useState<Record<keyof typeof defaultPrefs, boolean>>(() => {
     try { return { ...defaultPrefs, ...JSON.parse(localStorage.getItem('nr-notifications') || '{}') }; }
@@ -2381,7 +2327,6 @@ function SettingsPage({ member, theme, setTheme, demoMode, setDemoMode }: { memb
         <article className="settings-section account-settings"><header><span>👤</span><div><strong>Twoje konto</strong><small>Profil zalogowanej osoby</small></div></header><div className="settings-profile"><span className="family-profile-avatar">{member?.photoURL ? <img src={member.photoURL} alt="" /> : memberEmoji(member?.name || '')}</span><div><strong>{member?.name || 'Użytkownik'}</strong><small>{personRole(member?.name || '',member?.role)}</small></div><span className="setting-badge green">Aktywne</span></div></article>
 
         <article className="settings-section"><header><span>🎨</span><div><strong>Motyw aplikacji</strong><small>Wygląd zapisuje się na tym urządzeniu</small></div></header><div className="theme-choice big"><button className={theme === 'light' ? 'active' : ''} onClick={()=>setTheme('light')}>☀️ <span><b>Jasny</b><small>Kolorowy i czytelny</small></span></button><button className={theme === 'dark' ? 'active' : ''} onClick={()=>setTheme('dark')}>🌙 <span><b>Ciemny</b><small>Delikatny dla oczu</small></span></button></div></article>
-        <article className="settings-section demo-settings"><header><span>🧪</span><div><strong>Tryb DEMO</strong><small>Przykładowe dane do sprawdzania wyglądu pustych modułów</small></div><i className={demoMode ? 'toggle-on' : 'toggle-off'}>{demoMode ? 'Wł.' : 'Wył.'}</i></header><p className="demo-settings-copy">Po włączeniu zobaczysz po 2–3 przykładowe wpisy w każdym module. Dane DEMO są tylko podglądem i nie zapisują się do Firebase.</p><button type="button" className={`demo-toggle-button ${demoMode ? 'active' : ''}`} onClick={()=>setDemoMode(!demoMode)}>{demoMode ? '✓ Wyłącz tryb DEMO' : '▶ Włącz tryb DEMO'}</button></article>
 
         <article className="settings-section notifications-settings"><header><span>🔔</span><div><strong>Powiadomienia</strong><small>Wybierz, o czym aplikacja ma przypominać</small></div></header>{([['medicines','💊','Leki'],['visits','🩺','Wizyty'],['tasks','✅','Zadania'],['school','🎒','Szkoła'],['chat','💬','Czat']] as Array<[keyof typeof defaultPrefs,string,string]>).map(([key,icon,label])=><button className="settings-toggle-row" key={key} onClick={()=>void togglePref(key)}><span>{icon}</span><strong>{label}</strong><i className={prefs[key] ? 'toggle-on' : 'toggle-off'}>{prefs[key] ? 'Wł.' : 'Wył.'}</i></button>)}<p className="settings-footnote">Powiadomienia działające po zamknięciu strony wymagają późniejszej konfiguracji Web Push.</p></article>
 
@@ -2393,7 +2338,7 @@ function SettingsPage({ member, theme, setTheme, demoMode, setDemoMode }: { memb
 
         <article className="settings-section"><header><span>📁</span><div><strong>Dane i pliki</strong><small>Zdjęcia, dokumenty i własne ikonki</small></div></header><div className="settings-info-list"><span>🖼️ Własne zdjęcia produktów — Firebase Storage</span><span>📄 Dokumenty zdrowotne — Firebase Storage</span><span>☁️ Dane modułów — Firestore</span></div></article>
 
-        <article className="settings-section whats-new-v130"><header><span>✨</span><div><strong>Co nowego?</strong><small>Ta sekcja będzie przy każdej wersji</small></div><b className="version-pill">v{APP_VERSION}</b></header><ul><li>Tryb DEMO w Ustawieniach — przykładowe dane bez zapisu do Firebase</li><li>Małe, czytelne miniatury produktów Wojanek i OXY</li><li>Dopracowany wygląd rodzinnego Startu i planu dnia</li><li>Ujednolicone karty, listy i odstępy w nowych modułach</li><li>Zachowana pełna funkcjonalność wersji 1.3.0</li></ul></article>
+        <article className="settings-section whats-new-v130"><header><span>✨</span><div><strong>Co nowego?</strong><small>Ta sekcja będzie przy każdej wersji</small></div><b className="version-pill">v{APP_VERSION}</b></header><ul><li>Visual Restore — powrót do granatowego interfejsu zaakceptowanych makiet</li><li>Stały kompaktowy sidebar z jednolitymi ikonami SVG</li><li>Widoki desktop/iPad mieszczą się w jednym ekranie — przewijają się tylko długie listy wewnątrz kart</li><li>Usunięto Tryb DEMO — aplikacja pokazuje wyłącznie prawdziwe dane użytkowników</li><li>Zachowana pełna funkcjonalność wersji 1.3.1</li></ul></article>
 
         <article className="settings-section app-about"><header><span>ℹ️</span><div><strong>O aplikacji</strong><small>Nasza Rodzina</small></div></header><div className="about-version"><img src="/nasza-rodzina-logo.svg" alt="" /><div><strong>Nasza Rodzina v{APP_VERSION}</strong><small>Aktualizacja: {APP_UPDATED}</small></div></div></article>
       </section>
