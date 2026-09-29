@@ -620,3 +620,212 @@ img { max-width: 100%; }
   .welcome-illustration { display: none; }
   .login-v11-title h1 { font-size: 25px; }
 }
+
+/* =========================================================
+   LOGIN 1.1.1 — ADAPTACYJNY UKŁAD PION / POZIOM
+   Jedno czyste zdjęcie, dwa różne układy.
+   - poziomo: zdjęcie na cały ekran + panel po prawej
+   - pionowo: pełne zdjęcie jako baner u góry + panel pod nim
+   Dzięki temu obrót telefonu/tabletu nie zasłania dzieci.
+   ========================================================= */
+
+@media (orientation: landscape) {
+  .login-v11 {
+    min-height: 100dvh;
+    display: grid;
+    align-items: center;
+    justify-items: end;
+    padding: clamp(18px, 3vw, 48px);
+    background-image: url('/login-family.png');
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-position: center center;
+    background-color: #10142f;
+  }
+
+  .login-v11-overlay {
+    background:
+      linear-gradient(90deg,
+        rgba(5, 10, 28, 0.08) 0%,
+        rgba(5, 10, 28, 0.02) 46%,
+        rgba(5, 10, 28, 0.44) 100%),
+      linear-gradient(180deg,
+        rgba(5, 10, 28, 0.03),
+        rgba(5, 10, 28, 0.18));
+  }
+
+  .login-v11-panel {
+    width: min(470px, 42vw);
+  }
+}
+
+@media (orientation: portrait) {
+  .login-v11 {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: calc(56.3vw + 14px) 16px 18px;
+    background-image: url('/login-family.png');
+    background-repeat: no-repeat;
+    background-size: 100% auto;
+    background-position: top center;
+    background-color: #f4f7fb;
+  }
+
+  .login-v11-overlay {
+    background: linear-gradient(
+      180deg,
+      rgba(4, 9, 28, 0.06) 0%,
+      rgba(4, 9, 28, 0.08) 45vw,
+      rgba(244, 247, 251, 0.30) 51vw,
+      rgba(244, 247, 251, 0.92) 57vw,
+      #f4f7fb 62vw,
+      #f4f7fb 100%
+    );
+  }
+
+  .login-v11-brand {
+    top: 14px;
+    left: 14px;
+  }
+
+  .login-v11-brand strong {
+    font-size: 19px;
+  }
+
+  .login-v11-brand small {
+    display: none;
+  }
+
+  .login-v11-panel {
+    width: min(620px, 100%);
+    margin: 0 auto;
+    padding: 24px;
+    border-radius: 26px;
+    background: rgba(255, 255, 255, 0.97);
+    border: 1px solid rgba(218, 229, 240, 0.95);
+    box-shadow: 0 18px 50px rgba(21, 55, 90, 0.14);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .login-v11-title {
+    margin-bottom: 18px;
+  }
+
+  .login-v11-version {
+    position: static;
+    margin-top: 10px;
+    text-align: center;
+    color: #7c8ea1;
+    text-shadow: none;
+  }
+}
+
+@media (orientation: portrait) and (max-width: 700px) {
+  .login-v11 {
+    padding: calc(56.3vw + 10px) 10px 12px;
+  }
+
+  .login-v11-brand {
+    top: 10px;
+    left: 10px;
+    transform: scale(0.86);
+    transform-origin: left top;
+  }
+
+  .login-v11-panel {
+    width: 100%;
+    padding: 17px;
+    border-radius: 22px;
+  }
+
+  .login-v11-title {
+    margin-bottom: 13px;
+  }
+
+  .login-v11-title > span {
+    font-size: 27px;
+  }
+
+  .login-v11-title h1 {
+    font-size: 25px;
+  }
+
+  .login-v11-title p {
+    font-size: 11px;
+  }
+
+  .login-v11-form {
+    gap: 9px;
+  }
+
+  .login-v11-form input {
+    height: 44px;
+  }
+
+  .login-v11-form > button {
+    height: 46px;
+  }
+
+  .login-v11-divider {
+    margin: 11px 0 8px;
+  }
+
+  .login-v11-features {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 2px;
+  }
+
+  .login-v11-features span {
+    font-size: 16px;
+  }
+
+  .login-v11-features small {
+    display: none;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .login-v11 {
+    padding: 10px 18px;
+  }
+
+  .login-v11-brand {
+    top: 10px;
+    left: 16px;
+  }
+
+  .login-v11-panel {
+    width: min(430px, 46vw);
+    padding: 17px 19px;
+    border-radius: 22px;
+  }
+
+  .login-v11-title {
+    margin-bottom: 10px;
+  }
+
+  .login-v11-title h1 {
+    font-size: 27px;
+  }
+
+  .login-v11-form {
+    gap: 8px;
+  }
+
+  .login-v11-form input {
+    height: 41px;
+  }
+
+  .login-v11-form > button {
+    height: 43px;
+  }
+
+  .login-v11-divider,
+  .login-v11-features {
+    display: none;
+  }
+}

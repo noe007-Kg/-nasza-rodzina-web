@@ -19,7 +19,7 @@ import {
 import { auth, db } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 const APP_UPDATED = '29.09.2026';
 
 /* =========================================================
