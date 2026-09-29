@@ -1,10 +1,11 @@
 NASZA RODZINA — CHANGELOG
 
-v1.3.1 — 29.09.2026
-- Dodano Tryb DEMO w Ustawieniach.
-- Tryb DEMO pokazuje 2–3 przykładowe wpisy w każdym module i nie zapisuje ich do Firebase.
-- Dodano wyraźne oznaczenie DEMO nad modułami.
-- Zmniejszono zdjęcia produktów Wojanek / OXY do małych, czytelnych miniaturek w kafelkach.
-- Dopracowano wygląd rodzinnego Startu: Rodzinny czas, plan dnia i karty osób.
-- Dopracowano wizualnie Zadania, Zakupy, Czat, Zdrowie, Szkołę, Rodzinę i Ustawienia.
-- Zachowano ten sam projekt Firebase i dane z v1.3.0.
+v1.3.3 — 29.09.2026
+- Usunięto Tryb DEMO z logiki aplikacji.
+- Usunięto przełącznik DEMO z Ustawień.
+- Usunięto demonstracyjne karty i przykładowe dane.
+- Zachowano prawdziwe dane Firebase/Firestore i wszystkie funkcje v1.3.2.
+- Paczka przygotowana do wdrożenia produkcyjnego na Vercel.
+
+v1.3.2 — 29.09.2026
+- Visual Restore: granatowy sidebar i kompaktowy układ desktop/iPad.

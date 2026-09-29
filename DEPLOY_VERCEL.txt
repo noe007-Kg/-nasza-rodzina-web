@@ -1,19 +1,14 @@
-NASZA RODZINA v1.3.1 — WDROŻENIE
+NASZA RODZINA v1.3.3 — WDROŻENIE VERCEL
 
-1. Rozpakuj Nasza_Rodzina_v1.3.1.zip.
-2. Otwórz repozytorium GitHub używane przez Vercel.
-3. Podmień pliki z paczki v1.3.1 w tych samych miejscach.
-4. Najważniejsze pliki do podmiany:
-   src/main.tsx
-   src/style.css
-   package.json
-5. Folder public pozostaje zgodny z v1.3.0 i zawiera obrazki produktów.
-6. Zrób commit do gałęzi main.
-7. Vercel uruchomi automatyczny deployment.
+1. Rozpakuj paczkę ZIP.
+2. W repozytorium GitHub połączonym z Vercel podmień pliki na zawartość folderu Nasza_Rodzina_v1.3.3.
+3. Zrób commit do main.
+4. Vercel wykryje zmianę i wykona deployment.
 
-Framework Preset: Vite
-Build Command: npm run build
-Output Directory: dist
-Install Command: npm install
+Ustawienia Vercel:
+- Framework Preset: Vite
+- Build Command: npm run build
+- Output Directory: dist
+- Install Command: npm install
 
-Firebase pozostaje tym samym projektem. Tryb DEMO nie zapisuje przykładowych danych do Firebase.
+Firebase pozostaje tym samym projektem. Nie ma już Trybu DEMO ani przykładowych danych demonstracyjnych.
