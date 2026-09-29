@@ -1,22 +1,9 @@
 {
-  "name": "nasza-rodzina-web",
-  "private": true,
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "firebase": "^11.0.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
-  },
-  "devDependencies": {
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
-    "typescript": "^5.6.3",
-    "vite": "^6.0.0"
-  }
+  "name":"nasza-rodzina-buildtest",
+  "private":true,
+  "version":"1.2.3",
+  "type":"module",
+  "scripts":{"build":"tsc -b && vite build"},
+  "dependencies":{"firebase":"^12.3.0","react":"^19.1.1","react-dom":"^19.1.1"},
+  "devDependencies":{"@types/react":"^19.1.16","@types/react-dom":"^19.1.9","@vitejs/plugin-react":"^5.0.4","typescript":"~5.9.2","vite":"^7.1.7"}
 }
