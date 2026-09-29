@@ -1,3 +1,16 @@
+Nasza Rodzina 1.3.3 — ZAKUPY / zatwierdzony layout Versa
+Data: 30.09.2026
+
+- zatwierdzony jasny układ zakładki Zakupy na desktop/tablet i telefon
+- całe kafelki szybkich zakupów zmniejszone o około 30%
+- wszystkie kafelki mają stałe proporcje 1:1
+- zdjęcia są automatycznie kadrowane do kwadratu 900x900 przed wysłaniem do Firebase Storage
+- zdjęcia w kafelkach używają object-fit: cover i jednakowego kadrowania
+- nazwa produktu znajduje się na zdjęciu z mocną białą obwódką/poświatą
+- mały przycisk + w prawym górnym rogu kafelka
+- kolorowe tła kategorii, filtry kategorii, szybka notatka, sortowanie i własny produkt
+- zachowane funkcje listy zakupów i poprzednie moduły 1.3.2
+
 Nasza Rodzina 1.3.2
 - nowa zakładka Zadania w jasnym layoucie 1.3 Versa
 - kolorowe szybkie zadania z ikonkami

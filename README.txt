@@ -39,3 +39,7 @@ Wersja 1.3.2 zawiera przebudowaną zakładkę Zadania zgodną z projektem 1.3 Ve
 
 NAPRAWA BUILD
 Ta paczka przywraca pomocniczy kod modułu Zakupy, który został omyłkowo pominięty w pierwszej paczce v1.3.2.
+
+
+WERSJA 1.3.3 — ZAKUPY
+Zakładka Zakupy została przebudowana zgodnie z zatwierdzoną wizualizacją Versa. Kafelki produktu są około 30% mniejsze niż pierwotnie, zawsze kwadratowe i responsywne. Własne zdjęcia są automatycznie kadrowane do 900x900 px przed wysłaniem.

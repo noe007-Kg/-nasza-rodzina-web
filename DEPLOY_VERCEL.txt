@@ -31,3 +31,13 @@ WAŻNE
 - Wersja 1.3.1 nie usuwa kolekcji ani danych Firestore.
 - Google Calendar / Apple iCloud / Outlook są w tym etapie przygotowane w interfejsie, ale prawdziwa dwukierunkowa synchronizacja wymaga osobnej konfiguracji OAuth/API.
 - Pasek synchronizacji w Kalendarzu pokazuje rzeczywisty stan połączenia przeglądarki oraz bieżącą synchronizację danych rodzinnego kalendarza z Firestore.
+
+
+ETAP v1.3.3 ZAKUPY
+1. Rozpakuj paczkę.
+2. Wgraj ZAWARTOŚĆ folderu Nasza_Rodzina_v1.3.3_Zakupy do głównego katalogu repozytorium GitHub, zastępując pliki.
+3. Commit np. "v1.3.3 Zakupy".
+4. Poczekaj na Vercel.
+5. Po wdrożeniu odśwież stronę z pominięciem pamięci podręcznej.
+
+Ważne: obrazy własnych produktów wymagają działającego Firebase Storage, tak jak w poprzedniej wersji.
