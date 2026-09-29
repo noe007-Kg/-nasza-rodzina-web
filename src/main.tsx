@@ -19,7 +19,7 @@ import {
 import { auth, db } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.2.0';
 const APP_UPDATED = '29.09.2026';
 
 /* =========================================================
@@ -182,6 +182,14 @@ type FamilyMemberDoc = {
   active?: boolean;
 };
 
+type WeatherState = {
+  temperature: number;
+  max: number;
+  min: number;
+  wind: number;
+  code: number;
+};
+
 /* =========================================================
    HELPERS
    ========================================================= */
@@ -296,6 +304,22 @@ function dynamicTodayLabel() {
   return capitalize(new Date().toLocaleDateString('pl-PL', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   }));
+}
+
+function weatherMeta(code: number) {
+  if (code === 0) return { icon: '☀️', label: 'Słonecznie' };
+  if (code === 1 || code === 2) return { icon: '🌤️', label: 'Małe zachmurzenie' };
+  if (code === 3) return { icon: '☁️', label: 'Pochmurno' };
+  if ([45, 48].includes(code)) return { icon: '🌫️', label: 'Mgła' };
+  if ([51, 53, 55, 56, 57].includes(code)) return { icon: '🌦️', label: 'Mżawka' };
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return { icon: '🌧️', label: 'Deszcz' };
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return { icon: '🌨️', label: 'Śnieg' };
+  if ([95, 96, 99].includes(code)) return { icon: '⛈️', label: 'Burza' };
+  return { icon: '🌤️', label: 'Pogoda' };
+}
+
+function safeNumber(value: unknown, fallback = 0) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 function weekTitle(weekStart: Date) {
@@ -516,7 +540,7 @@ function FamilyApp({ user }: { user: User }) {
     <div className="app-shell">
       <Sidebar page={page} goTo={goTo} member={member} />
       <main className="main-area">
-        <FamilyHeader member={member} onLogout={() => signOut(auth)} />
+        {page !== 'Start' && <FamilyHeader member={member} onLogout={() => signOut(auth)} />}
         {renderPage()}
       </main>
       <MobileNavigation page={page} goTo={goTo} onMore={() => setMobileMoreOpen(true)} />
@@ -529,26 +553,29 @@ function FamilyApp({ user }: { user: User }) {
 
 function Sidebar({ page, goTo, member }: { page: Page; goTo: (page: Page) => void; member: Member | null }) {
   const items: Array<[Page, string]> = [
-    ['Start', '🏠'], ['Kalendarz', '📅'], ['Zadania', '✅'], ['Zakupy', '🛒'], ['Czat', '💬'],
-    ['Zdrowie', '❤️'], ['Szkoła', '🎒'], ['Rodzina', '👨‍👩‍👧‍👦'], ['Ustawienia', '⚙️'],
+    ['Start', '⌂'], ['Kalendarz', '▣'], ['Zadania', '✓'], ['Zakupy', '🛒'], ['Czat', '●'],
+    ['Zdrowie', '♡'], ['Szkoła', '◆'], ['Rodzina', '♟'], ['Ustawienia', '⚙'],
   ];
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-brand">
-        <div className="sidebar-logo">👨‍👩‍👧‍👦</div>
-        <div><strong>Nasza Rodzina</strong><small>Rodzinne centrum</small></div>
+    <aside className="sidebar sidebar-v12">
+      <div className="sidebar-brand sidebar-brand-v12">
+        <div className="sidebar-logo sidebar-logo-v12">⌂</div>
+        <div><strong>Nasza<br />Rodzina</strong><small>Rodzinne centrum</small></div>
       </div>
-      <nav className="sidebar-nav">
+      <nav className="sidebar-nav sidebar-nav-v12">
         {items.map(([label, icon]) => (
           <button key={label} type="button" className={`nav-button ${page === label ? 'active' : ''}`} onClick={() => goTo(label)}>
             <span>{icon}</span>{label}
           </button>
         ))}
       </nav>
-      <div className="sidebar-profile">
-        <div className="profile-avatar">{member?.photoURL ? <img src={member.photoURL} alt="" /> : initials(member?.name)}</div>
-        <div><strong>{member?.name || 'Rodzina'}</strong><small>{member?.role || 'Użytkownik'}</small></div>
+      <div className="sidebar-slogan" aria-hidden="true">
+        <span>Razem</span><span>zawsze</span><strong>lepiej ♥</strong>
+      </div>
+      <div className="sidebar-current-user" title={member?.name || 'Rodzina'}>
+        <span>{member?.photoURL ? <img src={member.photoURL} alt="" /> : initials(member?.name)}</span>
+        <small>{member?.name || 'Rodzina'}</small>
       </div>
     </aside>
   );
@@ -572,27 +599,205 @@ function FamilyHeader({ member, onLogout }: { member: Member | null; onLogout: (
 
 function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page) => void }) {
   const name = member?.name || 'Rodzina';
-  const cards: Array<[Page, string, string, string]> = [
-    ['Kalendarz', '📅', 'Kalendarz', 'Wydarzenia i plany całej rodziny.'],
-    ['Zadania', '✅', 'Zadania', 'Obowiązki, terminy i priorytety.'],
-    ['Zakupy', '🛒', 'Zakupy', 'Lista pogrupowana według działów sklepu.'],
-    ['Czat', '💬', 'Czat rodzinny', 'Wiadomości w jednym miejscu.'],
-    ['Zdrowie', '❤️', 'Zdrowie', 'Wizyty, lekarze, leki i historia.'],
-    ['Szkoła', '🎒', 'Szkoła', 'Sprawdziany, zadania i zajęcia.'],
-  ];
+  const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
+  const [selectedPerson, setSelectedPerson] = useState('');
+  const [weather, setWeather] = useState<WeatherState | null>(null);
+  const [events, setEvents] = useState<CalendarEventData[]>([]);
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [shoppingOpen, setShoppingOpen] = useState(0);
+  const [messagesToday, setMessagesToday] = useState(0);
+  const [healthUpcoming, setHealthUpcoming] = useState(0);
+  const [tileOrder, setTileOrder] = useState<Page[]>(() => {
+    const fallback: Page[] = ['Kalendarz', 'Zadania', 'Zakupy', 'Czat', 'Zdrowie', 'Szkoła', 'Rodzina', 'Ustawienia'];
+    try {
+      const saved = localStorage.getItem(`nasza-rodzina-dashboard-${member?.name || 'user'}`);
+      if (!saved) return fallback;
+      const parsed = JSON.parse(saved) as Page[];
+      return fallback.every((page) => parsed.includes(page)) ? parsed : fallback;
+    } catch { return fallback; }
+  });
+  const [editMode, setEditMode] = useState(false);
+  const dragPageRef = useRef<Page | null>(null);
+  const longPressRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'members'), (snap) => {
+      const next = snap.docs.map((d): FamilyMemberDoc => {
+        const x = d.data();
+        return { id: d.id, name: String(x.name || 'Rodzina'), role: String(x.role || 'Członek rodziny'), photoURL: typeof x.photoURL === 'string' ? x.photoURL : undefined, active: x.active !== false };
+      });
+      const familyOrder = ['Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla'];
+      next.sort((a, b) => familyOrder.indexOf(a.name) - familyOrder.indexOf(b.name));
+      setMembers(next);
+      setSelectedPerson((current) => current || member?.name || next[0]?.name || 'Sebastian');
+    });
+    return unsub;
+  }, [member?.name]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadWeather() {
+      try {
+        const url = 'https://api.open-meteo.com/v1/forecast?latitude=54.1757&longitude=15.5833&current=temperature_2m,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min&timezone=Europe%2FWarsaw&forecast_days=1';
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('weather');
+        const data = await response.json();
+        if (!cancelled) setWeather({
+          temperature: safeNumber(data?.current?.temperature_2m),
+          max: safeNumber(data?.daily?.temperature_2m_max?.[0]),
+          min: safeNumber(data?.daily?.temperature_2m_min?.[0]),
+          wind: safeNumber(data?.current?.wind_speed_10m),
+          code: safeNumber(data?.current?.weather_code),
+        });
+      } catch (error) {
+        console.warn('Nie udało się pobrać pogody:', error);
+      }
+    }
+    void loadWeather();
+    const timer = window.setInterval(loadWeather, 20 * 60 * 1000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+
+  useEffect(() => onSnapshot(collection(db, 'calendarEvents'), (snapshot) => {
+    const loaded: CalendarEventData[] = [];
+    snapshot.forEach((eventDoc) => {
+      const data = eventDoc.data();
+      if (!(data.date instanceof Timestamp)) return;
+      const start = data.date.toDate();
+      const end = data.endDate instanceof Timestamp ? data.endDate.toDate() : new Date(start.getTime() + 3600000);
+      loaded.push({ id: eventDoc.id, title: String(data.title || 'Wydarzenie'), person: isPersonKey(data.person) ? data.person : 'family', date: start, endDate: end, allDay: data.allDay === true, description: typeof data.description === 'string' ? data.description : '', createdBy: typeof data.createdBy === 'string' ? data.createdBy : '', repeat: isRepeatType(data.repeat) ? data.repeat : 'none', repeatUntil: data.repeatUntil instanceof Timestamp ? data.repeatUntil.toDate() : null });
+    });
+    setEvents(loaded);
+  }), []);
+
+  useEffect(() => onSnapshot(collection(db, 'tasks'), (snap) => {
+    const next = snap.docs.map((d): TaskItem => {
+      const x = d.data();
+      return { id: d.id, title: String(x.title || ''), person: isPersonKey(x.person) ? x.person : 'family', done: x.done === true, dueDate: typeof x.dueDate === 'string' ? x.dueDate : '', priority: x.priority === 'low' || x.priority === 'high' ? x.priority : 'normal', note: typeof x.note === 'string' ? x.note : '', createdAt: x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
+    });
+    setTasks(next);
+  }), []);
+
+  useEffect(() => onSnapshot(collection(db, 'shoppingItems'), (snap) => setShoppingOpen(snap.docs.filter((d) => d.data().done !== true).length)), []);
+  useEffect(() => onSnapshot(collection(db, 'familyMessages'), (snap) => {
+    const today = startOfDay(new Date()).getTime();
+    setMessagesToday(snap.docs.filter((d) => d.data().createdAt instanceof Timestamp && d.data().createdAt.toDate().getTime() >= today).length);
+  }), []);
+  useEffect(() => onSnapshot(collection(db, 'healthRecords'), (snap) => {
+    const today = formatDateInput(new Date());
+    setHealthUpcoming(snap.docs.filter((d) => typeof d.data().date === 'string' && d.data().date >= today).length);
+  }), []);
+
+  useEffect(() => {
+    try { localStorage.setItem(`nasza-rodzina-dashboard-${member?.name || 'user'}`, JSON.stringify(tileOrder)); } catch { /* ignore */ }
+  }, [tileOrder, member?.name]);
+
+  const todayOccurrences = useMemo(() => {
+    const dayStart = startOfDay(new Date());
+    const dayEnd = endOfDay(new Date());
+    return events.flatMap((event) => generateOccurrences(event, dayStart, dayEnd)).sort((a, b) => a.date.getTime() - b.date.getTime());
+  }, [events]);
+
+  const upcoming = useMemo(() => {
+    const now = new Date();
+    const end = endOfDay(addDays(now, 30));
+    return events.flatMap((event) => generateOccurrences(event, now, end)).filter((item) => item.date >= now).sort((a, b) => a.date.getTime() - b.date.getTime()).slice(0, 3);
+  }, [events]);
+
+  const importantTasks = useMemo(() => tasks.filter((task) => !task.done).sort((a, b) => Number(b.priority === 'high') - Number(a.priority === 'high') || (a.dueDate || '9999').localeCompare(b.dueDate || '9999')).slice(0, 3), [tasks]);
+  const weatherInfo = weather ? weatherMeta(weather.code) : { icon: '🌤️', label: 'Ładowanie pogody' };
+  const selected = members.find((m) => m.name === selectedPerson);
+
+  const tileMeta: Record<Page, { icon: string; title: string; subtitle: string; className: string }> = {
+    Start: { icon: '⌂', title: 'Start', subtitle: '', className: 'blue' },
+    Kalendarz: { icon: '▣', title: 'Kalendarz', subtitle: `${todayOccurrences.length} ${todayOccurrences.length === 1 ? 'wydarzenie' : 'wydarzenia'} dzisiaj`, className: 'blue' },
+    Zadania: { icon: '✓', title: 'Zadania', subtitle: `${tasks.filter((t) => !t.done).length} aktywnych zadań`, className: 'green' },
+    Zakupy: { icon: '🛒', title: 'Zakupy', subtitle: `${shoppingOpen} produktów na liście`, className: 'orange' },
+    Czat: { icon: '●', title: 'Czat rodzinny', subtitle: messagesToday ? `${messagesToday} wiadomości dzisiaj` : 'Rozmowy z rodziną', className: 'purple' },
+    Zdrowie: { icon: '♡', title: 'Zdrowie', subtitle: healthUpcoming ? `${healthUpcoming} nadchodzące wizyty` : 'Samopoczucie i wizyty', className: 'pink' },
+    Szkoła: { icon: '◆', title: 'Szkoła', subtitle: 'Plan lekcji i oceny', className: 'yellow' },
+    Rodzina: { icon: '♟', title: 'Rodzina', subtitle: `${members.length || 5} członków rodziny`, className: 'cyan' },
+    Ustawienia: { icon: '⚙', title: 'Ustawienia', subtitle: 'Konto i personalizacja', className: 'indigo' },
+  };
+
+  function startLongPress(page: Page) {
+    if (longPressRef.current) window.clearTimeout(longPressRef.current);
+    longPressRef.current = window.setTimeout(() => { setEditMode(true); dragPageRef.current = page; }, 520);
+  }
+  function cancelLongPress() { if (longPressRef.current) { window.clearTimeout(longPressRef.current); longPressRef.current = null; } }
+  function moveOver(page: Page) {
+    const dragged = dragPageRef.current;
+    if (!editMode || !dragged || dragged === page) return;
+    setTileOrder((current) => {
+      const copy = [...current];
+      const from = copy.indexOf(dragged); const to = copy.indexOf(page);
+      if (from < 0 || to < 0) return current;
+      copy.splice(from, 1); copy.splice(to, 0, dragged); return copy;
+    });
+  }
+  function handleTileClick(page: Page) {
+    if (editMode) return;
+    goTo(page);
+  }
+
+  const quickActions = selectedPerson === 'Nikodem' || selectedPerson === 'Paweł'
+    ? [['Szkoła', 'Plan lekcji', '▤'], ['Zadania', 'Zadania', '✓'], ['Kalendarz', 'Kalendarz', '▣']] as Array<[Page, string, string]>
+    : [['Kalendarz', 'Kalendarz', '▣'], ['Zadania', 'Zadania', '✓'], ['Zdrowie', 'Zdrowie', '♡']] as Array<[Page, string, string]>;
 
   return (
-    <div className="page-content compact-page">
-      <section className="welcome-card">
-        <div><small>{dynamicTodayLabel()}</small><h1>Cześć, {name}! 👋</h1><p>Miło Cię widzieć w Waszym rodzinnym centrum.</p></div>
-        <div className="welcome-illustration">🏡</div>
+    <div className="page-content home-v12">
+      <section className="family-weather-strip">
+        <div className="family-switcher" aria-label="Profile rodziny">
+          {members.map((person) => {
+            const isCurrent = person.name === member?.name;
+            const isSelected = person.name === selectedPerson;
+            return <button key={person.id} type="button" className={`family-chip ${isSelected ? 'selected' : ''}`} onClick={() => setSelectedPerson(person.name)}>
+              <span className="family-chip-avatar">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span>
+              <strong>{person.name}</strong><i className={isCurrent ? 'online' : 'offline'} />
+            </button>;
+          })}
+        </div>
+        <div className="weather-widget" title="Pogoda: Open-Meteo, Kołobrzeg">
+          <span className="weather-icon">{weatherInfo.icon}</span>
+          <div><small>Kołobrzeg</small><strong>{weather ? `${Math.round(weather.temperature)}°C` : '—'}</strong><span>{weatherInfo.label}</span></div>
+          <div className="weather-side"><span>↑ {weather ? Math.round(weather.max) : '—'}°C</span><span>↓ {weather ? Math.round(weather.min) : '—'}°C</span><span>≋ {weather ? Math.round(weather.wind) : '—'} km/h</span></div>
+        </div>
       </section>
-      <section className="dashboard-grid compact-dashboard">
-        {cards.map(([page, icon, title, text]) => (
-          <button className="app-card dashboard-link" type="button" key={page} onClick={() => goTo(page)}>
-            <div className="card-icon">{icon}</div><h3>{title}</h3><p>{text}</p><span>Otwórz →</span>
-          </button>
-        ))}
+
+      <section className="mini-welcome-banner">
+        <div className="mini-welcome-photo" aria-hidden="true" />
+        <div className="mini-welcome-copy"><h1>Cześć, {name}! 👋</h1><p>Miło Cię widzieć w Naszej Rodzinie.</p></div>
+        <div className="mini-date"><span>▣</span><div><strong>{capitalize(new Date().toLocaleDateString('pl-PL', { weekday: 'long' }))}</strong><small>{new Date().toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })}</small></div></div>
+      </section>
+
+      <section className="quick-person-card">
+        <div className="quick-person-profile"><span className="quick-avatar">{selected?.photoURL ? <img src={selected.photoURL} alt="" /> : memberEmoji(selectedPerson)}</span><div><strong>{selectedPerson}</strong><small>{selectedPerson === member?.name ? '● Online' : selected?.role || 'Profil rodzinny'}</small></div></div>
+        <div className="quick-actions"><span>Szybkie akcje</span><div>{quickActions.map(([page, label, icon]) => <button key={page} onClick={() => goTo(page)} className={`quick-${page.toLowerCase()}`}><b>{icon}</b>{label}</button>)}</div></div>
+        <div className="family-quote"><span>♥</span><p>„Szczęśliwa rodzina<br />to największa przygoda.”</p></div>
+      </section>
+
+      <div className="home-section-title"><h2>Twoje moduły</h2><div>{editMode ? <button className="done-arranging" onClick={() => { setEditMode(false); dragPageRef.current = null; }}>✓ Gotowe</button> : <span>☷ Przytrzymaj, aby zmienić kolejność</span>}</div></div>
+      <section className={`module-tiles ${editMode ? 'editing' : ''}`}>
+        {tileOrder.map((page) => {
+          const meta = tileMeta[page];
+          return <button key={page} data-page={page} type="button" className={`home-tile ${meta.className}`} draggable={editMode}
+            onClick={() => handleTileClick(page)}
+            onDragStart={() => { dragPageRef.current = page; setEditMode(true); }}
+            onDragEnter={() => moveOver(page)} onDragOver={(e) => e.preventDefault()} onDragEnd={() => { dragPageRef.current = null; }}
+            onPointerDown={() => startLongPress(page)} onPointerUp={() => { cancelLongPress(); dragPageRef.current = null; }} onPointerCancel={cancelLongPress}
+            onPointerMove={(e) => { if (!editMode || !dragPageRef.current) return; const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('.home-tile'); const target = el?.dataset.page as Page | undefined; if (target) moveOver(target); }}>
+            <span className="tile-menu">•••</span><span className="tile-icon">{meta.icon}</span><strong>{meta.title}</strong><small>{meta.subtitle}</small><i>→</i>
+          </button>;
+        })}
+      </section>
+
+      <section className="home-bottom-panels">
+        <article className="home-list-card"><header><div><span className="round-blue">◷</span><strong>Nadchodzące wydarzenia</strong></div><button onClick={() => goTo('Kalendarz')}>Zobacz kalendarz →</button></header><div className="home-mini-list">
+          {upcoming.length === 0 ? <p className="home-empty">Brak najbliższych wydarzeń.</p> : upcoming.map((item) => <button key={item.key} onClick={() => goTo('Kalendarz')}><time>{item.source.allDay ? 'Cały dzień' : formatTime(item.date)}</time><span style={{ background: personColor(item.source.person) }} /><strong>{personLabel(item.source.person)} – {item.source.title}</strong></button>)}
+        </div></article>
+        <article className="home-list-card"><header><div><span className="round-green">✓</span><strong>Najważniejsze zadania</strong></div><button onClick={() => goTo('Zadania')}>Zobacz wszystkie →</button></header><div className="home-mini-list tasks-mini">
+          {importantTasks.length === 0 ? <p className="home-empty">Nie ma pilnych zadań.</p> : importantTasks.map((task) => <button key={task.id} onClick={() => goTo('Zadania')}><span className="fake-check" /><strong>{task.title}</strong>{task.priority === 'high' && <b className="important-dot">!</b>}</button>)}
+        </div></article>
       </section>
     </div>
   );
@@ -1388,7 +1593,7 @@ function SettingsPage({ member }: { member: Member | null }) {
         <article className="app-card"><div className="settings-icon">🔔</div><h3>Powiadomienia</h3><p>Przypomnienia push wymagają osobnego etapu konfiguracji.</p><span className="setting-badge">Planowane</span></article>
         <article className="app-card"><div className="settings-icon">🔐</div><h3>Prywatność</h3><p>Dane modułów są dostępne po zalogowaniu zgodnie z regułami Firestore.</p></article>
         <article className="app-card version-card"><div className="settings-icon">🚀</div><h3>Nasza Rodzina</h3><p>Wersja <strong>{APP_VERSION}</strong><br />Aktualizacja: {APP_UPDATED}</p><span className="setting-badge green">Aktualna wersja</span></article>
-        <article className="app-card whats-new"><div className="settings-icon">✨</div><h3>Co nowego w 1.1.0</h3><p>Nowe logowanie, kompaktowy iPad, powtarzanie w Kalendarzu, priorytety Zadań, inteligentne Zakupy, rozbudowane Zdrowie i Szkoła oraz lepszy Czat.</p></article>
+        <article className="app-card whats-new"><div className="settings-icon">✨</div><h3>Co nowego w 1.2.0</h3><p>Nowy rodzinny pulpit: kolorowe moduły, profile u góry, pogoda dla Kołobrzegu, kompaktowe powitanie, nadchodzące wydarzenia, najważniejsze zadania i własna kolejność kafelków.</p></article>
       </section>
     </div>
   );
