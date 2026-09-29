@@ -33,3 +33,6 @@ npm run build
 
 Wersja aplikacji:
 const APP_VERSION = '1.3.1';
+
+
+Wersja 1.3.2 zawiera przebudowaną zakładkę Zadania zgodną z projektem 1.3 Versa.
