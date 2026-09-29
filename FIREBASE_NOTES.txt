@@ -1,0 +1,19 @@
+FIREBASE — UWAGI DO v1.3.0
+
+Aplikacja korzysta z tego samego projektu Firebase co wcześniejsza wersja.
+Nie podmieniaj obecnych reguł Firestore bez sprawdzenia, bo działająca wersja aplikacji korzysta już z istniejącej konfiguracji.
+
+Nowe kolekcje/obszary używane przez v1.3.0:
+quickProducts
+familyMessages
+healthRecords
+medicalContacts
+schoolItems
+
+Firebase Storage jest używany do:
+health/<osoba>/...                 dokumenty i wyniki medyczne
+quick-products/<uid>/...           własne zdjęcia/ikony produktów
+
+Jeśli upload nie działa, najpierw sprawdź, czy Firebase Storage jest aktywny i czy obecne reguły pozwalają zalogowanym użytkownikom rodziny zapisywać/odczytywać te foldery.
+
+Ważne dokumenty Pawła są ukrywane w interfejsie przed kontami nie-rodziców. Przed publicznym udostępnieniem aplikacji poza własną rodzinę należy dodatkowo wymusić analogiczne ograniczenia w regułach Firestore/Storage po stronie serwera.

@@ -1,0 +1,23 @@
+NAJPROSTSZA AKTUALIZACJA OBECNEJ STRONY NA VERCEL
+
+1. Rozpakuj Nasza_Rodzina_v1.3.0.zip.
+2. Otwórz obecne repozytorium GitHub używane przez Vercel.
+3. Podmień zawartość repozytorium plikami z paczki v1.3.0.
+4. Zostaw dokładnie tę strukturę:
+   index.html
+   package.json
+   tsconfig.json
+   tsconfig.app.json
+   src/
+   public/
+5. Zrób commit do gałęzi main.
+6. Vercel uruchomi automatyczny deployment.
+7. Po zakończeniu otwórz stronę i wykonaj twarde odświeżenie.
+
+Jeżeli Vercel poprosi o ustawienia:
+Framework Preset: Vite
+Build Command: npm run build
+Output Directory: dist
+Install Command: npm install
+
+Firebase pozostaje tym samym projektem co wcześniej.
