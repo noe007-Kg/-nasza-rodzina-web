@@ -358,61 +358,25 @@ function FamilyApp({ user }: { user: User }) {
         return <CalendarPage user={user} />;
 
       case 'Zadania':
-        return <TasksPage />;
+        return <TasksPage user={user} />;
 
       case 'Zakupy':
-        return (
-          <ComingSoon
-            icon="🛒"
-            title="Zakupy"
-            text="Wspólna lista zakupów dla całej rodziny."
-          />
-        );
+        return <ShoppingPage user={user} />;
 
       case 'Czat':
-        return (
-          <ComingSoon
-            icon="💬"
-            title="Czat"
-            text="Rodzinny czat będzie tutaj."
-          />
-        );
+        return <ChatPage user={user} member={member} />;
 
       case 'Zdrowie':
-        return (
-          <ComingSoon
-            icon="❤️"
-            title="Zdrowie"
-            text="Lekarze, wizyty i ważne informacje zdrowotne."
-          />
-        );
+        return <HealthPage user={user} />;
 
       case 'Szkoła':
-        return (
-          <ComingSoon
-            icon="🎒"
-            title="Szkoła"
-            text="Plan lekcji, zajęcia i sprawy szkolne."
-          />
-        );
+        return <SchoolPage user={user} />;
 
       case 'Rodzina':
-        return (
-          <ComingSoon
-            icon="👨‍👩‍👧‍👦"
-            title="Rodzina"
-            text="Profile wszystkich członków rodziny."
-          />
-        );
+        return <FamilyPage />;
 
       case 'Ustawienia':
-        return (
-          <ComingSoon
-            icon="⚙️"
-            title="Ustawienia"
-            text="Ustawienia aplikacji i konta."
-          />
-        );
+        return <SettingsPage member={member} />;
 
       default:
         return <StartPage member={member} />;
@@ -614,7 +578,7 @@ function StartPage({ member }: { member: Member | null }) {
     <div className="page-content">
       <section className="welcome-card">
         <div>
-          <small>Niedziela, 27 września</small>
+          <small>{capitalize(new Date().toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' }))}</small>
           <h1>Cześć, {name}! 👋</h1>
           <p>Miło Cię widzieć w Waszym rodzinnym centrum.</p>
         </div>
@@ -1879,39 +1843,78 @@ function DetailRow({
    ZADANIA
    ========================================================= */
 
-function TasksPage() {
-  return (
-    <div className="page-content">
-      <section className="page-header">
-        <div>
-          <small>Nasza Rodzina</small>
-          <h1>✅ Zadania</h1>
-          <p>Rodzinne obowiązki i rzeczy do zrobienia.</p>
-        </div>
-      </section>
+type SimpleItem = {
+  id: string;
+  title: string;
+  person?: PersonKey;
+  done?: boolean;
+  note?: string;
+  createdAt?: Date;
+};
 
-      <section className="dashboard-grid">
-        <AppCard
-          icon="🧹"
-          title="Dom"
-          text="Tutaj pojawią się zadania domowe."
-        />
-
-        <AppCard
-          icon="📌"
-          title="Do zrobienia"
-          text="Wspólna lista rodzinnych spraw."
-        />
-
-        <AppCard
-          icon="🏆"
-          title="Wykonane"
-          text="Tutaj zobaczymy wykonane zadania."
-        />
-      </section>
-    </div>
-  );
+function useSimpleCollection(name: string) {
+  const [items, setItems] = useState<SimpleItem[]>([]);
+  useEffect(() => onSnapshot(collection(db, name), snap => {
+    const next: SimpleItem[] = snap.docs.map(d => {
+      const x = d.data();
+      return { id: d.id, title: String(x.title || ''), person: isPersonKey(x.person) ? x.person : 'family', done: x.done === true, note: typeof x.note === 'string' ? x.note : '', createdAt: x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
+    });
+    next.sort((a,b)=>(b.createdAt?.getTime()||0)-(a.createdAt?.getTime()||0));
+    setItems(next);
+  }), [name]);
+  return items;
 }
+
+function ModuleHeader({icon,title,text,action}:{icon:string;title:string;text:string;action?:React.ReactNode}) {
+  return <section className="page-header"><div><small>Nasza Rodzina</small><h1>{icon} {title}</h1><p>{text}</p></div>{action}</section>;
+}
+
+function PersonSelect({value,onChange}:{value:PersonKey;onChange:(v:PersonKey)=>void}) {
+  return <select value={value} onChange={e=>isPersonKey(e.target.value)&&onChange(e.target.value)}>
+    <option value="family">Cała rodzina</option><option value="Sebastian">Sebastian</option><option value="Dominika">Dominika</option><option value="Paweł">Paweł</option><option value="Nikodem">Nikodem</option><option value="Layla">Layla</option>
+  </select>;
+}
+
+function TasksPage({user}:{user:User}) {
+  const items=useSimpleCollection('tasks'); const [title,setTitle]=useState(''); const [person,setPerson]=useState<PersonKey>('family');
+  async function add(e:React.FormEvent){e.preventDefault();if(!title.trim())return;await addDoc(collection(db,'tasks'),{title:title.trim(),person,done:false,createdBy:user.uid,createdAt:Timestamp.now()});setTitle('');}
+  return <div className="page-content"><ModuleHeader icon="✅" title="Zadania" text="Rodzinne obowiązki i rzeczy do zrobienia." />
+    <form className="quick-add" onSubmit={add}><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Dodaj nowe zadanie…"/><PersonSelect value={person} onChange={setPerson}/><button className="primary-button">＋ Dodaj</button></form>
+    <section className="module-list">{items.length===0?<EmptyState icon="✨" text="Nie ma jeszcze zadań."/>:items.map(i=><article className={`module-row ${i.done?'done':''}`} key={i.id}><button className="check-button" onClick={()=>updateDoc(doc(db,'tasks',i.id),{done:!i.done})}>{i.done?'✓':'○'}</button><div><strong>{i.title}</strong><small>{personLabel(i.person||'family')}</small></div><button className="icon-danger" onClick={()=>deleteDoc(doc(db,'tasks',i.id))}>🗑️</button></article>)}</section>
+  </div>;
+}
+
+function ShoppingPage({user}:{user:User}) {
+  const items=useSimpleCollection('shoppingItems'); const [title,setTitle]=useState('');
+  async function add(e:React.FormEvent){e.preventDefault();if(!title.trim())return;await addDoc(collection(db,'shoppingItems'),{title:title.trim(),done:false,createdBy:user.uid,createdAt:Timestamp.now()});setTitle('');}
+  return <div className="page-content"><ModuleHeader icon="🛒" title="Zakupy" text="Jedna wspólna lista zakupów dla całej rodziny." />
+    <form className="quick-add shopping" onSubmit={add}><input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Np. mleko, pieczywo, pieluchy…"/><button className="primary-button">＋ Dodaj</button></form>
+    <section className="module-list">{items.length===0?<EmptyState icon="🛍️" text="Lista zakupów jest pusta."/>:items.map(i=><article className={`module-row ${i.done?'done':''}`} key={i.id}><button className="check-button" onClick={()=>updateDoc(doc(db,'shoppingItems',i.id),{done:!i.done})}>{i.done?'✓':'○'}</button><div><strong>{i.title}</strong><small>{i.done?'Kupione':'Do kupienia'}</small></div><button className="icon-danger" onClick={()=>deleteDoc(doc(db,'shoppingItems',i.id))}>🗑️</button></article>)}</section>
+  </div>;
+}
+
+type ChatMessage={id:string;text:string;name:string;uid:string;createdAt?:Date};
+function ChatPage({user,member}:{user:User;member:Member|null}) {
+  const [messages,setMessages]=useState<ChatMessage[]>([]);const [text,setText]=useState('');
+  useEffect(()=>onSnapshot(collection(db,'familyMessages'),snap=>{const m=snap.docs.map(d=>{const x=d.data();return{id:d.id,text:String(x.text||''),name:String(x.name||'Rodzina'),uid:String(x.uid||''),createdAt:x.createdAt instanceof Timestamp?x.createdAt.toDate():undefined}});m.sort((a,b)=>(a.createdAt?.getTime()||0)-(b.createdAt?.getTime()||0));setMessages(m.slice(-100));}),[]);
+  async function send(e:React.FormEvent){e.preventDefault();if(!text.trim())return;await addDoc(collection(db,'familyMessages'),{text:text.trim(),name:member?.name||'Rodzina',uid:user.uid,createdAt:Timestamp.now()});setText('');}
+  return <div className="page-content"><ModuleHeader icon="💬" title="Czat" text="Prywatne wiadomości Waszej rodziny."/><section className="chat-card"><div className="chat-messages">{messages.length===0?<EmptyState icon="💬" text="Napisz pierwszą wiadomość."/>:messages.map(m=><div key={m.id} className={`chat-bubble ${m.uid===user.uid?'mine':''}`}><strong>{m.name}</strong><p>{m.text}</p><small>{m.createdAt?formatTime(m.createdAt):''}</small></div>)}</div><form className="chat-compose" onSubmit={send}><input value={text} onChange={e=>setText(e.target.value)} placeholder="Napisz wiadomość…"/><button className="primary-button">Wyślij</button></form></section></div>;
+}
+
+function HealthPage({user}:{user:User}) { return <RecordPage user={user} collectionName="healthRecords" icon="❤️" title="Zdrowie" text="Wizyty, lekarze, wyniki i ważne rodzinne informacje." placeholder="Np. kontrola u dentysty…"/>; }
+function SchoolPage({user}:{user:User}) { return <RecordPage user={user} collectionName="schoolItems" icon="🎒" title="Szkoła" text="Plan lekcji, sprawdziany, zadania i zajęcia dzieci." placeholder="Np. sprawdzian z matematyki…"/>; }
+function RecordPage({user,collectionName,icon,title,text,placeholder}:{user:User;collectionName:string;icon:string;title:string;text:string;placeholder:string}) {
+  const items=useSimpleCollection(collectionName);const [value,setValue]=useState('');const [person,setPerson]=useState<PersonKey>(title==='Szkoła'?'Nikodem':'family');
+  async function add(e:React.FormEvent){e.preventDefault();if(!value.trim())return;await addDoc(collection(db,collectionName),{title:value.trim(),person,note:'',createdBy:user.uid,createdAt:Timestamp.now()});setValue('');}
+  return <div className="page-content"><ModuleHeader icon={icon} title={title} text={text}/><form className="quick-add" onSubmit={add}><input value={value} onChange={e=>setValue(e.target.value)} placeholder={placeholder}/><PersonSelect value={person} onChange={setPerson}/><button className="primary-button">＋ Dodaj</button></form><section className="module-list">{items.length===0?<EmptyState icon={icon} text={`Brak wpisów w module ${title}.`}/>:items.map(i=><article className="module-row" key={i.id}><div className="record-dot" style={{background:personColor(i.person||'family')}}/><div><strong>{i.title}</strong><small>{personLabel(i.person||'family')}</small></div><button className="icon-danger" onClick={()=>deleteDoc(doc(db,collectionName,i.id))}>🗑️</button></article>)}</section></div>;
+}
+
+type FamilyMemberDoc={id:string;name:string;role:string;photoURL?:string;active?:boolean};
+function FamilyPage(){const [members,setMembers]=useState<FamilyMemberDoc[]>([]);useEffect(()=>onSnapshot(collection(db,'members'),snap=>setMembers(snap.docs.map(d=>{const x=d.data();return{id:d.id,name:String(x.name||'Rodzina'),role:String(x.role||'Członek rodziny'),photoURL:typeof x.photoURL==='string'?x.photoURL:undefined,active:x.active!==false}}))),[]);return <div className="page-content"><ModuleHeader icon="👨‍👩‍👧‍👦" title="Rodzina" text="Wasze profile w rodzinnym centrum."/><section className="family-grid">{members.map((m,index)=><article className="family-profile-card" key={m.id}><div className="family-profile-avatar">{m.photoURL?<img src={m.photoURL} alt=""/>:['👨','👩','🧑','👦','👶'][index%5]}</div><h3>{m.name}</h3><p>{m.role}</p><span className={m.active?'status-active':'status-muted'}>{m.active?'● Aktywny':'○ Nieaktywny'}</span></article>)}</section></div>}
+
+function SettingsPage({member}:{member:Member|null}){return <div className="page-content"><ModuleHeader icon="⚙️" title="Ustawienia" text="Konto, wygląd i przyszłe połączenia aplikacji."/><section className="settings-grid"><div className="app-card"><h3>👤 Twoje konto</h3><p><strong>{member?.name||'Użytkownik'}</strong><br/>{member?.role||'Rodzina'}</p></div><div className="app-card"><h3>📅 Połączone kalendarze</h3><p>Google Calendar, Outlook i eksport Apple Calendar przygotujemy jako osobną integrację wymagającą autoryzacji.</p><span className="setting-badge">Do podłączenia</span></div><div className="app-card"><h3>🔔 Powiadomienia</h3><p>Interfejs jest gotowy do dalszego etapu z powiadomieniami push.</p><span className="setting-badge">Etap 2</span></div><div className="app-card"><h3>🔐 Prywatność</h3><p>Dane aplikacji są dostępne wyłącznie po zalogowaniu zgodnie z regułami Firestore.</p></div></section></div>}
+
+function EmptyState({icon,text}:{icon:string;text:string}){return <div className="empty-state"><span>{icon}</span><p>{text}</p></div>}
 
 /* =========================================================
    POZOSTAŁE STRONY
