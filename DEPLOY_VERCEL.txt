@@ -1,0 +1,16 @@
+SZYBKIE WDROŻENIE — GITHUB + VERCEL
+
+1. Otwórz repozytorium aplikacji na GitHub.
+2. Wgraj wszystkie pliki z tego folderu do katalogu głównego repozytorium.
+3. Zastąp stare pliki src/, public/, index.html, package.json i tsconfig*.json.
+4. Zapisz commit, np.: Nasza Rodzina v1.3.0.
+5. Otwórz Vercel -> projekt Nasza Rodzina -> Deployments.
+6. Vercel powinien sam uruchomić nowy deployment po commicie.
+
+Jeśli Vercel pyta o ustawienia:
+- Framework: Vite
+- Install command: npm install
+- Build command: npm run build
+- Output directory: dist
+
+Po wdrożeniu odśwież stronę z pominięciem pamięci podręcznej, jeśli nadal widzisz starą wersję.
