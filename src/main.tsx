@@ -22,7 +22,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.3.2';
 const APP_UPDATED = '30.09.2026';
 
 /* =========================================================
@@ -1609,10 +1609,62 @@ function CalendarSide({ today, upcoming, onOpen }: { today: CalendarOccurrence[]
    TASKS + POINTS
    ========================================================= */
 
+
 const TASK_TEMPLATES = [
   ['🗑️', 'Wynieść śmieci'], ['🛏️', 'Posprzątać pokój'], ['🛁', 'Umyć łazienkę'], ['🪟', 'Umyć okna'],
   ['🧹', 'Odkurzyć'], ['🧺', 'Pranie'], ['🍽️', 'Zmywarka'], ['🐶', 'Nakarmić psa'],
 ] as const;
+
+const TASK_TEMPLATE_COLORS: Record<string, string> = {
+  'Wynieść śmieci': '#dff7ea',
+  'Posprzątać pokój': '#ffe6ee',
+  'Umyć łazienkę': '#e5f7ff',
+  'Umyć okna': '#fff1dd',
+  'Odkurzyć': '#efe7ff',
+  'Pranie': '#fff5cf',
+  'Zmywarka': '#ddf5ee',
+  'Nakarmić psa': '#ffe9df',
+};
+
+function taskTemplateIcon(title: string) {
+  const found = TASK_TEMPLATES.find(([, label]) => label === title);
+  return found?.[0] || '📝';
+}
+
+function taskRepeatLabel(repeat: TaskRepeat) {
+  switch (repeat) {
+    case 'daily': return 'Codziennie';
+    case 'weekly': return 'Co tydzień';
+    case 'monthly': return 'Co miesiąc';
+    default: return 'Jednorazowe';
+  }
+}
+
+function taskPriorityLabel(priority: TaskPriority) {
+  switch (priority) {
+    case 'high': return 'Wysoki';
+    case 'low': return 'Niski';
+    default: return 'Normalny';
+  }
+}
+
+function taskStatusLabel(item: TaskItem) {
+  if (item.done) return 'Wykonane';
+  if (item.approvalStatus === 'pending') return 'Do zatwierdzenia';
+  return 'Do zrobienia';
+}
+
+function taskStatusClass(item: TaskItem) {
+  if (item.done) return 'done';
+  if (item.approvalStatus === 'pending') return 'pending';
+  return 'todo';
+}
+
+function taskPointsTone(points: number) {
+  if (points >= 15) return 'hot';
+  if (points >= 10) return 'gold';
+  return 'green';
+}
 
 function TasksPage({ user, member }: { user: User; member: Member | null }) {
   const [items, setItems] = useState<TaskItem[]>([]);
@@ -1622,6 +1674,7 @@ function TasksPage({ user, member }: { user: User; member: Member | null }) {
   const [filter, setFilter] = useState<'all' | 'today' | 'upcoming' | 'pending' | 'done'>('all');
   const parent = isParent(member);
   const today = formatDateInput(new Date());
+  const tomorrow = formatDateInput(addDays(new Date(), 1));
 
   useEffect(() => onSnapshot(collection(db, 'tasks'), (snap) => {
     const next = snap.docs.map((d): TaskItem => {
@@ -1646,21 +1699,63 @@ function TasksPage({ user, member }: { user: User; member: Member | null }) {
     setItems(next);
   }), []);
 
-  const visible = items.filter((item) => {
+  const visible = useMemo(() => items.filter((item) => {
     if (filter === 'today') return !item.done && item.dueDate === today;
     if (filter === 'upcoming') return !item.done && !!item.dueDate && item.dueDate > today;
     if (filter === 'pending') return item.approvalStatus === 'pending';
     if (filter === 'done') return item.done;
     return true;
-  });
+  }), [items, filter, today]);
 
   const pointsByPerson = useMemo(() => {
     const result: Record<string, number> = {};
     for (const item of items) {
-      if (item.done && (item.approvalStatus === 'approved' || !item.requireApproval)) result[item.person] = (result[item.person] || 0) + item.points;
+      if (item.done && (item.approvalStatus === 'approved' || !item.requireApproval)) {
+        result[item.person] = (result[item.person] || 0) + item.points;
+      }
     }
     return result;
   }, [items]);
+
+  const totals = useMemo(() => ({
+    today: items.filter((i) => !i.done && i.dueDate === today).length,
+    pending: items.filter((i) => i.approvalStatus === 'pending').length,
+    done: items.filter((i) => i.done).length,
+    points: Object.values(pointsByPerson).reduce((a, b) => a + b, 0),
+  }), [items, pointsByPerson, today]);
+
+  const groupedSections = useMemo(() => {
+    const next: Array<{ key: string; title: string; subtitle: string; items: TaskItem[] }> = [];
+    const addSection = (key: string, title: string, subtitle: string, list: TaskItem[]) => {
+      if (list.length) next.push({ key, title, subtitle, items: list });
+    };
+
+    if (filter === 'done') {
+      addSection('done', 'Wykonane', 'Zadania zamknięte i rozliczone punktowo.', visible);
+      return next;
+    }
+    if (filter === 'pending') {
+      addSection('pending', 'Do zatwierdzenia', 'Czekają na akceptację rodzica.', visible);
+      return next;
+    }
+
+    const notDone = visible.filter((item) => !item.done);
+    addSection('today', 'Dzisiaj', capitalize(new Date().toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })), notDone.filter((item) => item.dueDate === today));
+    addSection('tomorrow', 'Jutro', capitalize(addDays(new Date(), 1).toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })), notDone.filter((item) => item.dueDate === tomorrow));
+    addSection('upcoming', 'Nadchodzące', 'Zadania zaplanowane na kolejne dni.', notDone.filter((item) => !!item.dueDate && item.dueDate > tomorrow));
+    addSection('later', 'Bez terminu', 'Stałe obowiązki i zadania bez daty.', notDone.filter((item) => !item.dueDate));
+    if (filter === 'all') addSection('completed', 'Ostatnio wykonane', 'Dla szybkiego podglądu postępów.', visible.filter((item) => item.done).slice(0, 4));
+    return next;
+  }, [visible, filter, today, tomorrow]);
+
+  const statCounts = useMemo(() => ({
+    created: items.length,
+    completed: items.filter((item) => item.done).length,
+    pending: items.filter((item) => item.approvalStatus === 'pending').length,
+    assignedPoints: items.reduce((sum, item) => sum + item.points, 0),
+  }), [items]);
+
+  const quickList = TASK_TEMPLATES.slice(0, 4);
 
   function openAdd(template?: string) {
     setEditing(null);
@@ -1701,48 +1796,131 @@ function TasksPage({ user, member }: { user: User; member: Member | null }) {
   }
 
   return (
-    <div className="page-content compact-page tasks-v130">
-      <ModuleHeader icon="✅" title="Zadania" text="Obowiązki, szybkie zadania, punkty i nagrody." action={<button className="primary-button" onClick={() => openAdd()}>＋ Dodaj zadanie</button>} />
+    <div className="page-content compact-page tasks-versa-page">
+      <ModuleHeader icon="✅" title="Zadania" text="Obowiązki, szybkie zadania, punkty i nagrody." action={<button className="primary-button tasks-add-button" onClick={() => openAdd()}>＋ Dodaj zadanie</button>} />
 
-      <section className="task-summary-v130">
-        <button onClick={() => setFilter('today')}><strong>{items.filter((i) => !i.done && i.dueDate === today).length}</strong><span>Dzisiaj</span></button>
-        <button onClick={() => setFilter('pending')}><strong>{items.filter((i) => i.approvalStatus === 'pending').length}</strong><span>Do zatwierdzenia</span></button>
-        <button onClick={() => setFilter('done')}><strong>{items.filter((i) => i.done).length}</strong><span>Wykonane</span></button>
-        <button className="points-card"><strong>⭐ {Object.values(pointsByPerson).reduce((a, b) => a + b, 0)}</strong><span>Punkty razem</span></button>
+      <section className="tasks-top-summary">
+        <button type="button" className="tasks-summary-card summary-today" onClick={() => setFilter('today')}>
+          <span className="summary-icon">📅</span>
+          <div><strong>{totals.today}</strong><small>Dzisiaj</small><em>z {items.filter((i) => !i.done).length} zadań</em></div>
+        </button>
+        <button type="button" className="tasks-summary-card summary-pending" onClick={() => setFilter('pending')}>
+          <span className="summary-icon">⏳</span>
+          <div><strong>{totals.pending}</strong><small>Do zatwierdzenia</small><em>oczekuje na rodzica</em></div>
+        </button>
+        <button type="button" className="tasks-summary-card summary-done" onClick={() => setFilter('done')}>
+          <span className="summary-icon">✅</span>
+          <div><strong>{totals.done}</strong><small>Wykonane</small><em>w tym miesiącu</em></div>
+        </button>
+        <button type="button" className="tasks-summary-card summary-points" onClick={() => setFilter('all')}>
+          <span className="summary-icon">⭐</span>
+          <div><strong>{totals.points}</strong><small>Punkty razem</small><em>dla całej rodziny</em></div>
+        </button>
       </section>
 
-      <section className="quick-task-section">
-        <header><div><strong>⚡ Szybkie zadania</strong><small>Kliknij gotowiec i wybierz osobę, termin oraz punkty.</small></div></header>
-        <div className="quick-task-grid">{TASK_TEMPLATES.map(([icon, title]) => <button key={title} onClick={() => openAdd(title)}><span>{icon}</span><strong>{title}</strong></button>)}</div>
+      <section className="tasks-quick-section">
+        <header>
+          <div><strong>⚡ Szybkie zadania</strong><small>Kliknij gotowiec i wybierz osobę, termin oraz punkty.</small></div>
+          <button type="button" className="tasks-link-button" onClick={() => setFilter('all')}>Zobacz wszystkie</button>
+        </header>
+        <div className="tasks-quick-grid">
+          {TASK_TEMPLATES.map(([icon, title]) => (
+            <button key={title} type="button" className="task-template-card" style={{ background: TASK_TEMPLATE_COLORS[title] || '#eff5ff' }} onClick={() => openAdd(title)}>
+              <span>{icon}</span>
+              <strong>{title}</strong>
+            </button>
+          ))}
+        </div>
       </section>
 
-      <div className="tasks-main-grid">
-        <section>
-          <div className="task-filters"><button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Wszystkie</button><button className={filter === 'today' ? 'active' : ''} onClick={() => setFilter('today')}>Dzisiaj</button><button className={filter === 'upcoming' ? 'active' : ''} onClick={() => setFilter('upcoming')}>Nadchodzące</button><button className={filter === 'pending' ? 'active' : ''} onClick={() => setFilter('pending')}>Do zatwierdzenia</button><button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}>Wykonane</button></div>
-          <section className="module-list compact-list">
-            {visible.length === 0 ? <EmptyState icon="✨" text="Brak zadań w tym widoku." /> : visible.map((item) => (
-              <article className={`module-row task-row task-row-v130 ${item.done ? 'done' : ''} ${item.approvalStatus === 'pending' ? 'pending' : ''}`} key={item.id}>
-                <button className="check-button" onClick={() => void toggleDone(item)}>{item.done ? '✓' : item.approvalStatus === 'pending' ? '⌛' : '○'}</button>
-                <div className="row-main"><strong>{item.title}</strong><small>{personLabel(item.person)} · {item.dueDate ? formatShortDate(item.dueDate) : 'bez terminu'}{item.repeat !== 'none' ? ` · ${item.repeat === 'daily' ? 'codziennie' : item.repeat === 'weekly' ? 'co tydzień' : 'co miesiąc'}` : ''}</small></div>
-                <span className={`priority-badge ${item.priority}`}>{item.priority === 'high' ? 'Ważne' : item.priority === 'low' ? 'Niski' : 'Normalny'}</span>
-                {item.points > 0 && <span className="task-points">+{item.points} pkt</span>}
-                {parent && item.approvalStatus === 'pending' ? <div className="approval-actions"><button onClick={() => void approve(item)}>✓ Zatwierdź</button><button onClick={() => void reject(item)}>✕ Odrzuć</button></div> : null}
-                {parent && <button className="icon-button" onClick={() => openEdit(item)}>✏️</button>}
-                {parent && <button className="icon-danger" onClick={() => deleteDoc(doc(db, 'tasks', item.id))}>🗑️</button>}
-              </article>
-            ))}
-          </section>
+      <div className="tasks-layout-grid">
+        <section className="tasks-primary-column">
+          <div className="tasks-filter-row">
+            <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Wszystkie</button>
+            <button className={filter === 'today' ? 'active' : ''} onClick={() => setFilter('today')}>Dzisiaj</button>
+            <button className={filter === 'upcoming' ? 'active' : ''} onClick={() => setFilter('upcoming')}>Nadchodzące</button>
+            <button className={filter === 'pending' ? 'active' : ''} onClick={() => setFilter('pending')}>Do zatwierdzenia</button>
+            <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}>Wykonane</button>
+            <button className="tasks-filter-ghost" type="button">⌕ Filtry</button>
+          </div>
+
+          {groupedSections.length === 0 ? <section className="module-list"><EmptyState icon="✨" text="Brak zadań w tym widoku." /></section> : groupedSections.map((section) => (
+            <section className="task-section-card" key={section.key}>
+              <header className="task-section-header">
+                <div><h3>{section.title}</h3><small>{section.subtitle}</small></div>
+              </header>
+              <div className="task-card-list">
+                {section.items.map((item) => (
+                  <article className={`task-card-row ${item.done ? 'done' : ''} ${item.approvalStatus === 'pending' ? 'pending' : ''}`} key={item.id}>
+                    <button className="check-button task-check-button" onClick={() => void toggleDone(item)}>{item.done ? '✓' : item.approvalStatus === 'pending' ? '⌛' : '○'}</button>
+                    <div className="task-icon-box">{taskTemplateIcon(item.title)}</div>
+                    <div className="task-card-main">
+                      <div className="task-title-line">
+                        <strong>{item.title}</strong>
+                        {item.repeat !== 'none' && <span className="task-repeat-chip">↻ {taskRepeatLabel(item.repeat)}</span>}
+                      </div>
+                      <small>{item.note ? `${item.note} · ` : ''}{taskPriorityLabel(item.priority)} · {item.dueDate ? formatShortDate(item.dueDate) : 'Bez terminu'}</small>
+                    </div>
+                    <div className="task-assignee-card">
+                      <span className="task-assignee-avatar" style={{ background: `${personColor(item.person)}20`, color: personColor(item.person) }}>{memberEmoji(item.person)}</span>
+                      <div><strong>{personLabel(item.person)}</strong><small>{item.dueDate ? formatShortDate(item.dueDate) : 'Cały dzień'}</small></div>
+                    </div>
+                    <span className={`task-points-pill ${taskPointsTone(item.points)}`}>⭐ +{item.points} pkt</span>
+                    <span className={`task-status-pill ${taskStatusClass(item)}`}>{taskStatusLabel(item)}</span>
+                    {parent && item.approvalStatus === 'pending' ? <div className="approval-actions tasks-approval-actions"><button onClick={() => void approve(item)}>✓ Zatwierdź</button><button onClick={() => void reject(item)}>✕ Odrzuć</button></div> : null}
+                    <div className="task-row-actions">
+                      {parent && <button className="icon-button" onClick={() => openEdit(item)}>✏️</button>}
+                      {parent && <button className="icon-danger" onClick={() => deleteDoc(doc(db, 'tasks', item.id))}>🗑️</button>}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ))}
         </section>
 
-        <aside className="points-panel">
-          <header><strong>🏆 Punkty i nagrody</strong><small>100 pkt = nagroda</small></header>
-          {(['Nikodem', 'Paweł'] as PersonKey[]).map((person) => {
-            const points = pointsByPerson[person] || 0;
-            const progress = points % 100;
-            return <article key={person}><div><span className="points-avatar">{memberEmoji(person)}</span><div><strong>{person}</strong><small>{points} pkt</small></div></div><div className="reward-progress"><span style={{ width: `${progress}%` }} /><em>{progress}/100</em></div></article>;
-          })}
-          <div className="reward-box"><span>🎁</span><div><strong>Nagroda przy 100 pkt</strong><small>Rodzice ustalają nagrodę razem z dzieckiem.</small></div></div>
-          <small className="points-note">Punkty za zadanie może ustawić tylko rodzic. Przy zadaniach z zatwierdzeniem punkty wpadają dopiero po akceptacji.</small>
+        <aside className="tasks-side-column">
+          <section className="tasks-side-card rewards-card">
+            <header><div><strong>🏆 Punkty i nagrody</strong><small>100 pkt = nagroda</small></div></header>
+            {(['Nikodem', 'Paweł', 'Layla'] as PersonKey[]).map((person) => {
+              const points = pointsByPerson[person] || 0;
+              const progress = Math.max(0, Math.min(100, points % 100));
+              return (
+                <article key={person} className="reward-person-row">
+                  <div className="reward-person-title">
+                    <span className="task-assignee-avatar" style={{ background: `${personColor(person)}20`, color: personColor(person) }}>{memberEmoji(person)}</span>
+                    <div><strong>{person}</strong><small>{points} pkt</small></div>
+                  </div>
+                  <div className="reward-progress-line"><span style={{ width: `${progress}%`, background: personColor(person) }} /></div>
+                  <em>{progress}/100</em>
+                </article>
+              );
+            })}
+            <div className="reward-highlight-box"><span>🎁</span><div><strong>Nagroda przy 100 pkt</strong><small>Rodzice ustalają nagrodę razem z dzieckiem. Punkty za zadanie może ustawić tylko rodzic.</small></div></div>
+          </section>
+
+          <section className="tasks-side-card stats-card">
+            <header><div><strong>📊 Statystyki</strong><small>Ten tydzień</small></div></header>
+            <div className="stats-list">
+              <div><span>Utworzone</span><strong>{statCounts.created}</strong></div>
+              <div><span>Wykonane</span><strong>{statCounts.completed}</strong></div>
+              <div><span>Do zatwierdzenia</span><strong>{statCounts.pending}</strong></div>
+              <div><span>Punkty przyznane</span><strong>{statCounts.assignedPoints}</strong></div>
+            </div>
+          </section>
+
+          <section className="tasks-side-card quick-add-card">
+            <header><div><strong>⚡ Najszybciej dodawane</strong><small>Stałe obowiązki z ikonkami</small></div></header>
+            <div className="quick-add-list">
+              {quickList.map(([icon, title]) => (
+                <button key={title} type="button" className="quick-add-row" onClick={() => openAdd(title)}>
+                  <span className="quick-add-icon">{icon}</span>
+                  <strong>{title}</strong>
+                  <em>＋</em>
+                </button>
+              ))}
+            </div>
+          </section>
         </aside>
       </div>
 
@@ -1751,137 +1929,16 @@ function TasksPage({ user, member }: { user: User; member: Member | null }) {
           <label className="field field-wide"><span>Zadanie</span><input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="Np. wyrzucić śmieci…" required /></label>
           <label className="field"><span>Osoba</span><PersonSelect value={form.person} onChange={(person) => setForm((f) => ({ ...f, person }))} /></label>
           <label className="field"><span>Termin</span><input type="date" value={form.dueDate} onChange={(e) => setForm((f) => ({ ...f, dueDate: e.target.value }))} /></label>
-          <label className="field"><span>Priorytet</span><select value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value as TaskPriority }))}><option value="low">Niski</option><option value="normal">Normalny</option><option value="high">Ważne</option></select></label>
-          <label className="field"><span>Powtarzanie</span><select value={form.repeat} onChange={(e) => setForm((f) => ({ ...f, repeat: e.target.value as TaskRepeat }))}><option value="none">Nie powtarzaj</option><option value="daily">Codziennie</option><option value="weekly">Co tydzień</option><option value="monthly">Co miesiąc</option></select></label>
-          {parent && <label className="field"><span>Punkty za zadanie</span><div className="point-picker">{[5,10,15,20].map((p) => <button type="button" key={p} className={form.points === p ? 'active' : ''} onClick={() => setForm((f) => ({ ...f, points: p }))}>{p}</button>)}<input type="number" min="0" max="500" value={form.points} onChange={(e) => setForm((f) => ({ ...f, points: Number(e.target.value) }))} /></div></label>}
-          {parent && <label className="checkbox-field field-wide"><input type="checkbox" checked={form.requireApproval} onChange={(e) => setForm((f) => ({ ...f, requireApproval: e.target.checked }))} /><span>Wymaga zatwierdzenia rodzica po wykonaniu</span></label>}
-          <label className="field field-wide"><span>Notatka</span><textarea rows={3} value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} placeholder="Opcjonalnie…" /></label>
-          <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Anuluj</button><button className="primary-button">✓ Zapisz</button></div>
+          <label className="field"><span>Priorytet</span><select value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value as TaskPriority }))}><option value="low">Niski</option><option value="normal">Normalny</option><option value="high">Wysoki</option></select></label>
+          <label className="field"><span>Powtarzanie</span><select value={form.repeat} onChange={(e) => setForm((f) => ({ ...f, repeat: e.target.value as TaskRepeat }))}><option value="none">Brak</option><option value="daily">Codziennie</option><option value="weekly">Co tydzień</option><option value="monthly">Co miesiąc</option></select></label>
+          <label className="field"><span>Punkty</span><input type="number" min={0} value={form.points} onChange={(e) => setForm((f) => ({ ...f, points: Number(e.target.value || 0) }))} disabled={!parent} /></label>
+          <label className="field field-wide"><span>Notatka</span><textarea value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} placeholder="Opcjonalna notatka" /></label>
+          <label className="toggle-row field-wide"><input type="checkbox" checked={form.requireApproval} onChange={(e) => setForm((f) => ({ ...f, requireApproval: e.target.checked }))} /><span>Wymaga zatwierdzenia przez rodzica</span></label>
+          <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Anuluj</button><button type="submit" className="primary-button">{editing ? 'Zapisz zmiany' : 'Dodaj zadanie'}</button></div>
         </form>
       </Modal>}
     </div>
   );
-}
-
-/* =========================================================
-   SHOPPING
-   ========================================================= */
-
-const SHOPPING_META: Record<ShoppingCategory, { label: string; icon: string }> = {
-  owoce: { label: 'Owoce', icon: '🍎' }, warzywa: { label: 'Warzywa', icon: '🥕' }, nabial: { label: 'Nabiał', icon: '🥛' },
-  pieczywo: { label: 'Pieczywo', icon: '🥖' }, mieso: { label: 'Mięso i wędliny', icon: '🥩' }, mrozonki: { label: 'Mrożonki', icon: '🧊' },
-  napoje: { label: 'Napoje', icon: '🥤' }, chemia: { label: 'Chemia i dom', icon: '🧴' }, zwierzeta: { label: 'Dla psa', icon: '🐶' },
-  dzieci: { label: 'Dzieci', icon: '👶' }, szkola: { label: 'Szkoła i biuro', icon: '✏️' }, inne: { label: 'Inne', icon: '📦' },
-};
-
-const DEFAULT_QUICK_PRODUCTS: QuickProduct[] = [
-  { id:'truskawki', title:'Truskawki', category:'owoce', icon:'🍓', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'maliny', title:'Maliny', category:'owoce', icon:'🫐', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'mandarynki', title:'Mandarynki', category:'owoce', icon:'🍊', defaultQuantity:'1', defaultUnit:'kg' },
-  { id:'jablka', title:'Jabłka', category:'owoce', icon:'🍎', defaultQuantity:'1', defaultUnit:'kg' },
-  { id:'banany', title:'Banany', category:'owoce', icon:'🍌', defaultQuantity:'1', defaultUnit:'kg' },
-  { id:'winogrona', title:'Winogrona', category:'owoce', icon:'🍇', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'salata', title:'Sałata', category:'warzywa', icon:'🥬', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'pomidory', title:'Pomidory', category:'warzywa', icon:'🍅', defaultQuantity:'1', defaultUnit:'kg' },
-  { id:'ogorki', title:'Ogórki', category:'warzywa', icon:'🥒', defaultQuantity:'1', defaultUnit:'kg' },
-  { id:'marchew', title:'Marchew', category:'warzywa', icon:'🥕', defaultQuantity:'1', defaultUnit:'kg' },
-  { id:'ziemniaki', title:'Ziemniaki', category:'warzywa', icon:'🥔', defaultQuantity:'1', defaultUnit:'kg' },
-  { id:'papryka', title:'Papryka', category:'warzywa', icon:'🫑', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'cebula', title:'Cebula', category:'warzywa', icon:'🧅', defaultQuantity:'1', defaultUnit:'kg' },
-  { id:'czosnek', title:'Czosnek', category:'warzywa', icon:'🧄', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'brokul', title:'Brokuł', category:'warzywa', icon:'🥦', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'kalafior', title:'Kalafior', category:'warzywa', icon:'🥦', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'pieczarki', title:'Pieczarki', category:'warzywa', icon:'🍄', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'cukinia', title:'Cukinia', category:'warzywa', icon:'🥒', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'rzodkiewka', title:'Rzodkiewka', category:'warzywa', icon:'🔴', defaultQuantity:'1', defaultUnit:'pęczek' },
-  { id:'pietruszka', title:'Pietruszka', category:'warzywa', icon:'🌿', defaultQuantity:'1', defaultUnit:'pęczek' },
-  { id:'koper', title:'Koper', category:'warzywa', icon:'🌿', defaultQuantity:'1', defaultUnit:'pęczek' },
-  { id:'kukurydza', title:'Kukurydza', category:'warzywa', icon:'🌽', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'mleko', title:'Mleko', category:'nabial', icon:'🥛', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'jajka', title:'Jajka', category:'nabial', icon:'🥚', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'jogurt', title:'Jogurt', category:'nabial', icon:'🥣', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'smietana', title:'Śmietana', category:'nabial', icon:'🥛', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'maslo', title:'Masło', category:'nabial', icon:'🧈', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'ser', title:'Ser', category:'nabial', icon:'🧀', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'chleb', title:'Chleb', category:'pieczywo', icon:'🍞', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'bulki', title:'Bułki', category:'pieczywo', icon:'🥯', defaultQuantity:'4', defaultUnit:'szt.' },
-  { id:'tortilla', title:'Tortilla', category:'pieczywo', icon:'🫓', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'wedlina', title:'Wędlina', category:'mieso', icon:'🥓', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'platki', title:'Płatki śniadaniowe', category:'inne', icon:'🥣', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'wojanek-napoj', title:'Wojanek napój', category:'napoje', imageURL:'/wojanek-napoj.png', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'wojanek-mus', title:'Wojanek mus', category:'dzieci', imageURL:'/wojanek-mus.png', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'sok', title:'Sok', category:'napoje', icon:'🧃', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'cola', title:'Napój gazowany', category:'napoje', icon:'🥤', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'woda', title:'Woda', category:'napoje', icon:'💧', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'chipsy', title:'Chipsy', category:'inne', icon:'🥔', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'ciastka', title:'Ciastka', category:'inne', icon:'🍪', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'slodycze', title:'Słodycze', category:'inne', icon:'🍫', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'kawa', title:'Kawa', category:'napoje', icon:'☕', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'herbata', title:'Herbata', category:'napoje', icon:'🍵', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'cukier', title:'Cukier', category:'inne', icon:'🧂', defaultQuantity:'1', defaultUnit:'kg' },
-  { id:'sol', title:'Sól', category:'inne', icon:'🧂', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'pieprz', title:'Pieprz', category:'inne', icon:'⚫', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'olej', title:'Olej', category:'inne', icon:'🫗', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'ocet', title:'Ocet', category:'inne', icon:'🧴', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'makaron', title:'Makaron', category:'inne', icon:'🍝', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'ryz', title:'Ryż', category:'inne', icon:'🍚', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'maka', title:'Mąka', category:'inne', icon:'🌾', defaultQuantity:'1', defaultUnit:'kg' },
-  { id:'kasza', title:'Kasza', category:'inne', icon:'🌾', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'ketchup', title:'Ketchup', category:'inne', icon:'🍅', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'majonez', title:'Majonez', category:'inne', icon:'🥫', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'musztarda', title:'Musztarda', category:'inne', icon:'🟡', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'papier', title:'Papier toaletowy', category:'chemia', icon:'🧻', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'reczniki', title:'Ręczniki papierowe', category:'chemia', icon:'🧻', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'worki', title:'Worki na śmieci', category:'chemia', icon:'🗑️', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'plyn-naczynia', title:'Płyn do naczyń', category:'chemia', icon:'🧴', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'tabletki-zmywarka', title:'Tabletki do zmywarki', category:'chemia', icon:'🧊', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'sol-zmywarka', title:'Sól do zmywarki', category:'chemia', icon:'🧂', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'nablyszczacz', title:'Nabłyszczacz do zmywarki', category:'chemia', icon:'✨', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'proszek', title:'Proszek do prania', category:'chemia', icon:'🧺', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'zel-pranie', title:'Żel do prania', category:'chemia', icon:'🧴', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'kapsulki-pranie', title:'Kapsułki do prania', category:'chemia', icon:'🟢', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'chusteczki-pranie', title:'Chusteczki do prania', category:'chemia', imageURL:'/oxy-chusteczki.png', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'plyn-plukanie', title:'Płyn do płukania', category:'chemia', icon:'🌸', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'szampon', title:'Szampon', category:'chemia', icon:'🧴', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'odzywka', title:'Odżywka', category:'chemia', icon:'🧴', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'zel-prysznic', title:'Żel pod prysznic', category:'chemia', icon:'🧼', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'dezodorant', title:'Dezodorant', category:'chemia', icon:'🧴', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'pasta', title:'Pasta do zębów', category:'chemia', icon:'🪥', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'szczoteczka', title:'Szczoteczka do zębów', category:'chemia', icon:'🪥', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'pieluchy', title:'Pieluchy', category:'dzieci', icon:'👶', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'chusteczki-dzieci', title:'Chusteczki dla dzieci', category:'dzieci', icon:'🧻', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'karma-pies', title:'Karma dla psa', category:'zwierzeta', icon:'🐶', defaultQuantity:'1', defaultUnit:'opak.' },
-  { id:'dlugopis', title:'Długopis', category:'szkola', icon:'🖊️', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'gumka', title:'Gumka', category:'szkola', icon:'🩷', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'zeszyt', title:'Zeszyt', category:'szkola', icon:'📓', defaultQuantity:'1', defaultUnit:'szt.' },
-  { id:'wodka', title:'Wódka', category:'napoje', icon:'🍾', adultOnly:true, defaultQuantity:'1', defaultUnit:'szt.' },
-];
-
-function isShoppingCategory(value: unknown): value is ShoppingCategory {
-  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(SHOPPING_META, value);
-}
-
-function normalizeProduct(value: string) {
-  return value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
-
-function categorizeProduct(title: string): ShoppingCategory {
-  const text = normalizeProduct(title);
-  const tests: Array<[ShoppingCategory, string[]]> = [
-    ['owoce', ['jabl', 'banan', 'gruszk', 'pomarancz', 'mandaryn', 'winogron', 'truskaw', 'malin', 'cytryn', 'kiwi', 'arbuz', 'brzoskw']],
-    ['warzywa', ['marchew', 'ziemni', 'pomidor', 'ogorek', 'papryk', 'cebula', 'salat', 'brokul', 'kalafior', 'cukini', 'burak', 'kapust', 'koper', 'pietrusz', 'rzodkiew', 'kukurydz', 'czosn', 'pieczark']],
-    ['nabial', ['mleko', 'jogurt', 'ser', 'smietan', 'maslo', 'kefir', 'serek']],
-    ['pieczywo', ['chleb', 'bulka', 'bagiet', 'kajzer', 'pieczyw', 'tost', 'tortill']],
-    ['mieso', ['kurcz', 'mieso', 'szynk', 'kielbas', 'parow', 'boczek', 'wolow', 'wieprz', 'wedlin']],
-    ['mrozonki', ['mrozon', 'lody', 'pizza mroz', 'frytki']],
-    ['napoje', ['woda', 'sok', 'cola', 'napoj', 'wojanek napoj', 'kawa', 'herbat', 'wodka']],
-    ['chemia', ['domestos', 'plyn do', 'proszek', 'kapsulki', 'papier toalet', 'recznik papier', 'mydlo', 'szampon', 'pasta do zeb', 'worki na smieci', 'tabletki do zmywarki', 'sol do zmywarki', 'nablyszczacz', 'chusteczki do prania']],
-    ['zwierzeta', ['karma', 'pies', 'przysmak dla psa']],
-    ['dzieci', ['pieluch', 'chusteczk dla dzieci', 'bebilon', 'mleko modyfik', 'smoczek', 'wojanek mus']],
-    ['szkola', ['dlugopis', 'gumka', 'zeszyt', 'kredk', 'klej', 'teczk', 'olowek', 'pisak']],
-  ];
-  for (const [category, words] of tests) if (words.some((word) => text.includes(word))) return category;
-  return 'inne';
 }
 
 function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
