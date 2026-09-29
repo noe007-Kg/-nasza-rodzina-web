@@ -82,7 +82,7 @@ img { max-width: 100%; }
   color: white;
   text-shadow: 0 2px 14px rgba(0,0,0,.34);
 }
-.login-v11-brand .login-v11-mark { font-size: 30px; }
+.login-v11-brand-logo { width: 44px; height: 44px; object-fit: contain; filter: drop-shadow(0 4px 16px rgba(0,0,0,.28)); }
 .login-v11-brand strong, .login-v11-brand small { display: block; }
 .login-v11-brand strong { font-size: clamp(20px, 2vw, 28px); line-height: 1; }
 .login-v11-brand small { margin-top: 5px; opacity: .86; }
@@ -97,7 +97,7 @@ img { max-width: 100%; }
   box-shadow: 0 28px 80px rgba(8, 13, 50, .28);
 }
 .login-v11-title { display: flex; align-items: center; gap: 14px; margin-bottom: 25px; }
-.login-v11-title > span { font-size: 38px; }
+.login-v11-title-logo { width: 52px; height: 52px; object-fit: contain; filter: drop-shadow(0 6px 18px rgba(30, 60, 120, .12)); }
 .login-v11-title h1 { margin: 0; font-size: clamp(29px, 3vw, 42px); color: #14395f; }
 .login-v11-title p { margin: 4px 0 0; color: #6f8094; }
 .login-v11-form { display: grid; gap: 16px; }
@@ -1031,54 +1031,46 @@ html[data-theme="dark"] .sidebar-bottom-art small { color: #93a8ce; }
 .start-weather strong { font-size: 13px; }
 .start-weather b { font-size: 31px; line-height: 1; margin: 2px 0 4px; }
 .start-weather small { font-size: 11px; }
-.weather-details { display: grid; gap: 4px; text-align: right; font-size: 11px; }
+.weather-main { min-width: 0; }
+.weather-side { min-width: 112px; display: grid; grid-template-columns: auto auto; align-items: center; gap: 12px; padding-left: 12px; border-left: 1px solid rgba(69,105,170,.22); }
+.weather-date { min-width: 100px; }
+.weather-date strong { font-size: 11px; text-transform: capitalize; }
+.weather-date small { margin-top: 2px; font-size: 9px; white-space: nowrap; }
+.weather-details { display: grid; gap: 4px; text-align: right; font-size: 10px; white-space: nowrap; }
 html[data-theme="dark"] .start-weather { color: #f6f8ff; background: linear-gradient(90deg, rgba(5,21,50,.56), rgba(39,93,177,.28)), url('/sidebar-sunset.jpg') center 45% / cover no-repeat; }
 
 /* -------- mały pasek powitalny -------- */
 .start-welcome-banner {
   position: relative;
-  min-height: 146px;
+  min-height: 112px;
   margin-bottom: 14px;
-  padding: 20px 22px 18px 55%;
+  padding: 12px 24px 12px 54%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
+  justify-content: flex-end;
   overflow: hidden;
-  border-radius: 23px;
+  border-radius: 22px;
   color: #102a63;
   border: 1px solid #eadff8;
   background:
-    linear-gradient(90deg, rgba(255,255,255,.02) 0 48%, rgba(255,248,255,.86) 63%, rgba(255,255,255,.94) 100%),
+    linear-gradient(90deg, rgba(255,255,255,.01) 0 48%, rgba(255,248,255,.82) 65%, rgba(255,255,255,.96) 100%),
     url('/start-banner.png') left center / cover no-repeat;
   box-shadow: var(--nr-shadow);
 }
-.start-welcome-copy { min-width: 0; }
-.start-welcome-copy h1 { margin: 0 0 5px; font-size: clamp(26px, 2.8vw, 42px); line-height: .95; letter-spacing: -.7px; }
-.start-welcome-copy h1 span { color: #b429df; }
-.start-welcome-copy p { margin: 0; font-size: 14px; line-height: 1.35; }
-.start-date-chip {
-  flex: 0 0 auto;
-  padding: 10px 14px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid rgba(217,156,238,.45);
-  border-radius: 15px;
-  background: rgba(255,255,255,.82);
-  box-shadow: 0 6px 16px rgba(87,41,120,.06);
+.start-welcome-copy {
+  width: min(430px, 44%);
+  min-width: 0;
+  margin-left: auto;
+  text-align: left;
 }
-.start-date-chip > span { font-size: 24px; color: #bb29da; }
-.start-date-chip strong, .start-date-chip small { display: block; }
-.start-date-chip strong { font-size: 11px; }
-.start-date-chip small { margin-top: 2px; font-size: 10px; color: #6f7791; }
+.start-welcome-copy h1 { margin: 0 0 4px; font-size: clamp(23px, 2.3vw, 34px); line-height: 1; letter-spacing: -.55px; }
+.start-welcome-copy h1 span { color: #b429df; }
+.start-welcome-copy p { margin: 0; font-size: 12px; line-height: 1.3; }
 html[data-theme="dark"] .start-welcome-banner {
   color: white;
   border-color: rgba(194,91,244,.35);
-  background: linear-gradient(90deg, rgba(5,12,35,.02) 0 48%, rgba(11,24,57,.86) 66%, rgba(9,21,48,.96) 100%), url('/start-banner.png') left center / cover no-repeat;
+  background: linear-gradient(90deg, rgba(5,12,35,.01) 0 48%, rgba(11,24,57,.82) 66%, rgba(9,21,48,.96) 100%), url('/start-banner.png') left center / cover no-repeat;
 }
-html[data-theme="dark"] .start-date-chip { background: rgba(9,22,49,.72); color: white; border-color: rgba(221,131,255,.4); }
-html[data-theme="dark"] .start-date-chip small { color: #aebdde; }
 
 /* -------- Zadania + wydarzenia przed kafelkami -------- */
 .home-focus-grid {
@@ -1238,7 +1230,8 @@ html[data-theme="dark"] textarea { background: #102947; color: #edf4ff; border-c
   .start-top-row { grid-template-columns: minmax(0,1fr) 300px; }
   .quick-avatar { width: 54px; height: 54px; }
   .online-dot { top: 47px; }
-  .start-welcome-banner { padding-left: 51%; }
+  .start-welcome-banner { min-height: 106px; padding-left: 52%; padding-right: 18px; }
+  .start-welcome-copy { width: min(390px, 46%); }
   .home-modules-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
   .home-module-tile { min-height: 100px; padding: 12px; grid-template-columns: 46px minmax(0,1fr); }
   .tile-icon { width: 46px; height: 46px; }
@@ -1254,7 +1247,8 @@ html[data-theme="dark"] textarea { background: #102947; color: #edf4ff; border-c
   .family-quick-strip { min-height: 94px; }
   .quick-avatar { width: 48px; height: 48px; }
   .online-dot { top: 41px; }
-  .start-welcome-banner { min-height: 132px; padding-left: 48%; }
+  .start-welcome-banner { min-height: 102px; padding-left: 47%; padding-right: 16px; }
+  .start-welcome-copy { width: min(350px, 51%); }
   .home-modules-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 
@@ -1268,12 +1262,13 @@ html[data-theme="dark"] textarea { background: #102947; color: #edf4ff; border-c
   .quick-avatar { width: 44px; height: 44px; }
   .online-dot { top: 38px; left: 44px; }
   .start-weather { min-height: 82px; grid-template-columns: auto 1fr auto; }
-  .start-welcome-banner { min-height: 150px; padding: 15px; align-items: flex-end; background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.92) 65%), url('/start-banner.png') 28% center / cover no-repeat; }
-  .start-welcome-copy { width: 58%; margin-left: auto; }
-  .start-welcome-copy h1 { font-size: 24px; }
-  .start-welcome-copy p { font-size: 11px; }
-  .start-date-chip { padding: 7px 9px; }
-  .start-date-chip > span { display: none; }
+  .weather-side { min-width: 0; grid-template-columns: 1fr; gap: 4px; padding-left: 8px; }
+  .weather-date { min-width: 0; }
+  .weather-date small { white-space: normal; }
+  .start-welcome-banner { min-height: 112px; padding: 11px 13px; align-items: center; justify-content: flex-end; background: linear-gradient(90deg, rgba(255,255,255,.02) 0 45%, rgba(255,255,255,.82) 66%, rgba(255,255,255,.96) 100%), url('/start-banner.png') 32% center / cover no-repeat; }
+  .start-welcome-copy { width: 52%; margin-left: auto; }
+  .start-welcome-copy h1 { font-size: 21px; }
+  .start-welcome-copy p { font-size: 10px; }
   .home-focus-grid { grid-template-columns: 1fr; }
   .home-modules-section > header { align-items: flex-start; flex-direction: column; gap: 4px; }
   .home-modules-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
@@ -1281,11 +1276,13 @@ html[data-theme="dark"] textarea { background: #102947; color: #edf4ff; border-c
   .tile-icon { width: 43px; height: 43px; margin-bottom: 8px; }
   .tile-copy strong { font-size: 15px; }
   .tile-copy small { font-size: 9px; }
-  html[data-theme="dark"] .start-welcome-banner { background: linear-gradient(180deg, rgba(5,12,35,.08), rgba(8,20,44,.92) 68%), url('/start-banner.png') 28% center / cover no-repeat; }
+  html[data-theme="dark"] .start-welcome-banner { background: linear-gradient(90deg, rgba(5,12,35,.02) 0 45%, rgba(8,20,44,.82) 66%, rgba(8,20,44,.96) 100%), url('/start-banner.png') 32% center / cover no-repeat; }
 }
 
 @media (max-width: 390px) {
   .weather-details { display: none; }
+  .weather-date strong { font-size: 10px; }
+  .weather-date small { font-size: 8px; }
   .home-modules-grid { grid-template-columns: 1fr 1fr; }
   .focus-card > header { align-items: flex-start; }
   .focus-card > header strong { font-size: 14px; }

@@ -19,7 +19,7 @@ import {
 import { auth, db } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.3';
 const APP_UPDATED = '29.09.2026';
 
 /* =========================================================
@@ -433,13 +433,13 @@ function Login() {
     <div className="login-v11">
       <div className="login-v11-overlay" />
       <div className="login-v11-brand">
-        <span className="login-v11-mark">👨‍👩‍👧‍👦</span>
+        <img className="login-v11-brand-logo" src="/nasza-rodzina-logo.svg" alt="" />
         <div><strong>Nasza Rodzina</strong><small>Rodzinne centrum</small></div>
       </div>
 
       <div className="login-v11-panel">
         <div className="login-v11-title">
-          <span>👨‍👩‍👧‍👦</span>
+          <img className="login-v11-title-logo" src="/nasza-rodzina-logo.svg" alt="" />
           <div>
             <h1>Nasza Rodzina</h1>
             <p>Wszystko, co ważne. Razem.</p>
@@ -722,14 +722,16 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
         </div>
         <div className="start-weather" title="Pogoda: Open-Meteo">
           <span className="weather-icon">{weather?.icon || '🌤️'}</span>
-          <div><strong>Kołobrzeg</strong><b>{weather ? `${weather.temp}°C` : '—°C'}</b><small>{weather?.label || 'Pobieranie pogody…'}</small></div>
-          {weather && <div className="weather-details"><span>↑ {weather.max}°C</span><span>↓ {weather.min}°C</span><span>≋ {weather.wind} km/h</span></div>}
+          <div className="weather-main"><strong>Kołobrzeg</strong><b>{weather ? `${weather.temp}°C` : '—°C'}</b><small>{weather?.label || 'Pobieranie pogody…'}</small></div>
+          <div className="weather-side">
+            <div className="weather-date"><strong>{capitalize(new Date().toLocaleDateString('pl-PL', { weekday: 'long' }))}</strong><small>{new Date().toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })}</small></div>
+            {weather && <div className="weather-details"><span>↑ {weather.max}°C</span><span>↓ {weather.min}°C</span><span>≋ {weather.wind} km/h</span></div>}
+          </div>
         </div>
       </section>
 
       <section className="start-welcome-banner">
         <div className="start-welcome-copy"><h1>Cześć, <span>{name}!</span> 👋</h1><p>Miło Cię znowu widzieć.<br />Dobrego dnia dla całej rodziny!</p></div>
-        <div className="start-date-chip"><span>▣</span><div><strong>{capitalize(new Date().toLocaleDateString('pl-PL', { weekday: 'long' }))}</strong><small>{new Date().toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })}</small></div></div>
       </section>
 
       <section className="home-focus-grid">
