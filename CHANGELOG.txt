@@ -1,18 +1,16 @@
-v1.3.0 — 29.09.2026
-- gruntowna rozbudowa wszystkich głównych modułów
-- Start: wspólny rodzinny plan dnia, „Wszyscy wolni od…”, statusy osób, zadania, wydarzenia i lista zakupów
-- Kalendarz: rozbudowane widoki i przygotowanie integracji z kalendarzami zewnętrznymi
-- Zadania: szybkie zadania, punkty, zatwierdzanie przez rodzica, nagrody
-- Zakupy: szybkie kafelki, własne ikony/zdjęcia, szybka notatka, kategorie, 18+
-- Czat: rodzinny + prywatne 1:1
-- Zdrowie: kartoteki osób, wizyty, leki, przypomnienia, dokumenty, specjalizacje, kontakty
-- Szkoła: ręczny plan, zajęcia dodatkowe, widok rodzica i ucznia, miejsce pod VULCAN
-- Rodzina: profile-huby wszystkich osób
-- Ustawienia: powiadomienia, motyw, kalendarze, prywatność i stałe „Co nowego?”
-- ekran ładowania z logo Nasza Rodzina
-- nowe grafiki Wojanek napój, Wojanek mus oraz chusteczki do prania OXY
+NASZA RODZINA — CHANGELOG
 
-v1.2.3
-- finalny pakiet wcześniejszej wersji
-- login z neonowym logo jako oddzielny asset
-- zachowany dashboard startowy w ustalonym stylu
+v1.3.1 — 30.09.2026 — VERSA / KALENDARZ
+- zatwierdzony jasny szablon Kalendarza,
+- wspólny styl ze stroną Start,
+- responsywny desktop/tablet/telefon,
+- tygodniowa siatka godzinowa 06:00–22:00,
+- mobilna agenda dnia,
+- mini-kalendarz i filtry członków rodziny,
+- pasek stanu synchronizacji Firestore / online,
+- widoczna sekcja zewnętrznych źródeł kalendarza,
+- bez fotografii w tle sidebara,
+- zachowane dotychczasowe dane i funkcje Firestore.
+
+v1.3.0 — 29.09.2026
+- pełna baza funkcjonalna aplikacji rodzinnej.
