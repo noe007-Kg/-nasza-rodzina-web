@@ -22,8 +22,8 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.0';
-const APP_UPDATED = '29.09.2026';
+const APP_VERSION = '1.3.1';
+const APP_UPDATED = '30.09.2026';
 
 /* =========================================================
    TYPES
@@ -639,7 +639,7 @@ function FamilyApp({ user }: { user: User }) {
   function renderPage() {
     switch (page) {
       case 'Start': return <StartPage member={member} goTo={goTo} />;
-      case 'Kalendarz': return <CalendarPage user={user} />;
+      case 'Kalendarz': return <CalendarPage user={user} goTo={goTo} />;
       case 'Zadania': return <TasksPage user={user} member={member} />;
       case 'Zakupy': return <ShoppingPage user={user} member={member} />;
       case 'Czat': return <ChatPage user={user} member={member} />;
@@ -655,7 +655,7 @@ function FamilyApp({ user }: { user: User }) {
     <div className={`app-shell theme-${theme}`}>
       <Sidebar page={page} goTo={goTo} member={member} />
       <main className="main-area">
-        {page !== 'Start' && <FamilyHeader member={member} onLogout={() => signOut(auth)} />}
+        {page !== 'Start' && page !== 'Kalendarz' && <FamilyHeader member={member} onLogout={() => signOut(auth)} />}
         {renderPage()}
       </main>
       <MobileNavigation page={page} goTo={goTo} onMore={() => setMobileMoreOpen(true)} />
@@ -1035,10 +1035,11 @@ function DetailRow({ label, value }: { label: string; value: string }) {
    CALENDAR 2.1
    ========================================================= */
 
-function CalendarPage({ user }: { user: User }) {
+function CalendarPage({ user, goTo }: { user: User; goTo: (page: Page) => void }) {
   const [view, setView] = useState<CalendarView>('week');
   const [focusDate, setFocusDate] = useState(() => new Date());
   const [events, setEvents] = useState<CalendarEventData[]>([]);
+  const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<PersonKey>('family');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<EventForm>(() => createDefaultEventForm(new Date()));
@@ -1048,6 +1049,23 @@ function CalendarPage({ user }: { user: User }) {
   const [editForm, setEditForm] = useState<EventForm>(() => createDefaultEventForm(new Date()));
   const [updating, setUpdating] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [lastChecked, setLastChecked] = useState(() => new Date());
+
+  useEffect(() => onSnapshot(collection(db, 'members'), (snapshot) => {
+    const loaded = snapshot.docs.map((memberDoc): FamilyMemberDoc => {
+      const data = memberDoc.data();
+      return {
+        id: memberDoc.id,
+        name: String(data.name || 'Rodzina'),
+        role: personRole(String(data.name || ''), typeof data.role === 'string' ? data.role : ''),
+        photoURL: typeof data.photoURL === 'string' ? data.photoURL : undefined,
+        active: data.active !== false,
+        birthDate: typeof data.birthDate === 'string' ? data.birthDate : undefined,
+      };
+    });
+    loaded.sort((a, b) => FAMILY_ORDER.indexOf(a.name) - FAMILY_ORDER.indexOf(b.name));
+    setMembers(loaded);
+  }, (error) => console.error('Błąd profili w kalendarzu:', error)), []);
 
   useEffect(() => onSnapshot(collection(db, 'calendarEvents'), (snapshot) => {
     const loaded: CalendarEventData[] = [];
@@ -1055,13 +1073,13 @@ function CalendarPage({ user }: { user: User }) {
       const data = eventDoc.data();
       if (!(data.date instanceof Timestamp)) return;
       const start = data.date.toDate();
-      const end = data.endDate instanceof Timestamp ? data.endDate.toDate() : new Date(start.getTime() + 3600000);
+      const endDate = data.endDate instanceof Timestamp ? data.endDate.toDate() : new Date(start.getTime() + 3600000);
       loaded.push({
         id: eventDoc.id,
         title: typeof data.title === 'string' && data.title.trim() ? data.title : 'Wydarzenie',
         person: isPersonKey(data.person) ? data.person : 'family',
         date: start,
-        endDate: end,
+        endDate,
         allDay: data.allDay === true,
         description: typeof data.description === 'string' ? data.description : '',
         createdBy: typeof data.createdBy === 'string' ? data.createdBy : '',
@@ -1071,6 +1089,7 @@ function CalendarPage({ user }: { user: User }) {
     });
     loaded.sort((a, b) => a.date.getTime() - b.date.getTime());
     setEvents(loaded);
+    setLastChecked(new Date());
     setSelectedEvent((current) => current ? loaded.find((item) => item.id === current.id) || null : null);
   }, (error) => console.error('Błąd kalendarza:', error)), []);
 
@@ -1088,29 +1107,41 @@ function CalendarPage({ user }: { user: User }) {
     return { start: startOfDay(monthDays[0]), end: endOfDay(monthDays[monthDays.length - 1]) };
   }, [view, focusDate, weekStart, monthDays]);
 
-  const occurrences = useMemo(() => {
-    return events
-      .filter((event) => selectedPerson === 'family' || event.person === selectedPerson || event.person === 'family')
-      .flatMap((event) => generateOccurrences(event, range.start, range.end))
-      .sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [events, selectedPerson, range]);
+  const visibleEvents = useMemo(() => events.filter((event) => (
+    selectedPerson === 'family' || event.person === selectedPerson || event.person === 'family'
+  )), [events, selectedPerson]);
+
+  const occurrences = useMemo(() => visibleEvents
+    .flatMap((event) => generateOccurrences(event, range.start, range.end))
+    .sort((a, b) => a.date.getTime() - b.date.getTime()), [visibleEvents, range]);
 
   const todayRange = useMemo(() => ({ start: startOfDay(new Date()), end: endOfDay(new Date()) }), []);
-  const todayOccurrences = useMemo(() => events
-    .filter((event) => selectedPerson === 'family' || event.person === selectedPerson || event.person === 'family')
-    .flatMap((event) => generateOccurrences(event, todayRange.start, todayRange.end)), [events, selectedPerson, todayRange]);
+  const todayOccurrences = useMemo(() => visibleEvents
+    .flatMap((event) => generateOccurrences(event, todayRange.start, todayRange.end)), [visibleEvents, todayRange]);
 
   const upcomingOccurrences = useMemo(() => {
     const now = new Date();
     const todayStart = startOfDay(now);
     const futureEnd = endOfDay(addDays(now, 30));
-    return events
-      .filter((event) => selectedPerson === 'family' || event.person === selectedPerson || event.person === 'family')
+    return visibleEvents
       .flatMap((event) => generateOccurrences(event, todayStart, futureEnd))
       .filter((item) => item.date >= todayStart)
       .sort((a, b) => a.date.getTime() - b.date.getTime())
-      .slice(0, 5);
-  }, [events, selectedPerson]);
+      .slice(0, 7);
+  }, [visibleEvents]);
+
+  const loggedMember = members.find((item) => item.id === user.uid) || members.find((item) => item.name === 'Sebastian') || null;
+  const selectedDayOccurrences = useMemo(() => occurrences.filter((item) => sameDay(item.date, focusDate)), [occurrences, focusDate]);
+
+  function memberForPerson(person: PersonKey) {
+    if (person === 'family') return null;
+    return members.find((item) => item.name === person) || null;
+  }
+
+  function personAvatar(person: PersonKey) {
+    const familyMember = memberForPerson(person);
+    return familyMember?.photoURL ? <img src={familyMember.photoURL} alt="" /> : <>{memberEmoji(person)}</>;
+  }
 
   function titleForView() {
     if (view === 'day') return capitalize(focusDate.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }));
@@ -1189,53 +1220,151 @@ function CalendarPage({ user }: { user: User }) {
     } finally { setDeleting(false); }
   }
 
-  return (
-    <div className="page-content compact-page">
-      <ModuleHeader icon="📅" title="Kalendarz" text="Wydarzenia całej rodziny — dzień, tydzień i miesiąc." action={<button className="primary-button" type="button" onClick={() => openNewEvent()}>＋ Dodaj wydarzenie</button>} />
+  const syncText = navigator.onLine ? 'Dane rodzinne są synchronizowane na bieżąco' : 'Tryb offline — zmiany zsynchronizują się po odzyskaniu połączenia';
 
-      <section className="calendar-toolbar">
-        <div className="calendar-navigation"><button onClick={() => navigate(-1)}>‹</button><strong>{titleForView()}</strong><button onClick={() => navigate(1)}>›</button></div>
-        <button className="secondary-button" type="button" onClick={() => setFocusDate(new Date())}>Dzisiaj</button>
-        <div className="view-switch">
-          {(['day', 'week', 'month'] as CalendarView[]).map((item) => <button key={item} type="button" className={view === item ? 'active' : ''} onClick={() => setView(item)}>{item === 'day' ? 'Dzień' : item === 'week' ? 'Tydzień' : 'Miesiąc'}</button>)}
+  return (
+    <div className="page-content calendar-page-v131">
+      <div className="calendar-mobile-appbar">
+        <button type="button" className="calendar-mobile-menu" aria-label="Menu">☰</button>
+        <div><img src="/nasza-rodzina-logo.svg" alt="" /><strong>Nasza Rodzina</strong></div>
+        <span className="calendar-mobile-bell">🔔</span>
+        <span className="calendar-mobile-user">{loggedMember?.photoURL ? <img src={loggedMember.photoURL} alt="" /> : memberEmoji(loggedMember?.name || 'Sebastian')}</span>
+      </div>
+
+      <section className="calendar-family-top">
+        <div className="calendar-family-people" aria-label="Profile rodziny">
+          {members.slice(0, 5).map((person) => (
+            <button key={person.id} type="button" className="calendar-family-person" onClick={() => setSelectedPerson(person.name as PersonKey)}>
+              <span className="calendar-family-avatar">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span>
+              <span className={`calendar-family-dot ${person.active ? 'on' : ''}`} />
+              <strong>{person.name}</strong>
+              <small>{personRole(person.name, person.role)}</small>
+            </button>
+          ))}
+        </div>
+        <div className="calendar-family-actions">
+          <button type="button" title="Szukaj">⌕</button>
+          <button type="button" title="Powiadomienia" className="calendar-bell">🔔<i>3</i></button>
+          <span className="calendar-account-avatar">{loggedMember?.photoURL ? <img src={loggedMember.photoURL} alt="" /> : memberEmoji(loggedMember?.name || 'Sebastian')}</span>
         </div>
       </section>
 
-      <section className="person-filters">
-        {PEOPLE.map((person) => <button key={person} type="button" className={selectedPerson === person ? 'active' : ''} onClick={() => setSelectedPerson(person)}><span style={{ background: personColor(person) }} />{personLabel(person)}</button>)}
+      <section className="calendar-heading-row">
+        <div>
+          <h1>Kalendarz</h1>
+          <p>Wszystkie wydarzenia w jednym miejscu</p>
+        </div>
+        <div className="calendar-heading-actions">
+          <button className="calendar-add-button" type="button" onClick={() => openNewEvent()}>＋ Dodaj wydarzenie</button>
+          <button className="calendar-today-button" type="button" onClick={() => setFocusDate(new Date())}>▣ Dzisiaj</button>
+          <div className="calendar-view-switch">
+            {(['day', 'week', 'month'] as CalendarView[]).map((item) => (
+              <button key={item} type="button" className={view === item ? 'active' : ''} onClick={() => setView(item)}>
+                {item === 'day' ? 'Dzień' : item === 'week' ? 'Tydzień' : 'Miesiąc'}
+              </button>
+            ))}
+          </div>
+        </div>
       </section>
+
+      <section className={`calendar-sync-strip ${navigator.onLine ? 'online' : 'offline'}`}>
+        <span className="calendar-sync-icon">↻</span>
+        <div>
+          <strong>Synchronizacja kalendarza</strong>
+          <small>{syncText} · ostatnie sprawdzenie {lastChecked.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}</small>
+        </div>
+        <button type="button" onClick={() => setLastChecked(new Date())}>↻ Sprawdź</button>
+        <button type="button" className="calendar-sync-settings" onClick={() => goTo('Ustawienia')}>⋮</button>
+      </section>
+
+      <section className="calendar-mobile-primary-action">
+        <button className="calendar-add-button" type="button" onClick={() => openNewEvent()}>＋ Dodaj wydarzenie</button>
+        <div className="calendar-view-switch">
+          {(['day', 'week', 'month'] as CalendarView[]).map((item) => (
+            <button key={item} type="button" className={view === item ? 'active' : ''} onClick={() => setView(item)}>
+              {item === 'day' ? 'Dzień' : item === 'week' ? 'Tydzień' : 'Miesiąc'}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="calendar-period-row">
+        <strong>{titleForView()}</strong>
+        <span>{view === 'week' ? `Tydzień ${getWeekNumber(focusDate)}` : ''}</span>
+        <div>
+          <button type="button" onClick={() => navigate(-1)}>‹</button>
+          <button type="button" onClick={() => setFocusDate(new Date())}>Dzisiaj</button>
+          <button type="button" onClick={() => navigate(1)}>›</button>
+        </div>
+      </section>
+
+      {view === 'week' && (
+        <>
+          <section className="calendar-mobile-week-strip">
+            {weekDays.map((day) => (
+              <button key={formatDateInput(day)} type="button" className={sameDay(day, focusDate) ? 'active' : ''} onClick={() => setFocusDate(day)}>
+                <small>{capitalize(day.toLocaleDateString('pl-PL', { weekday: 'short' })).replace('.', '')}</small>
+                <strong>{day.getDate()}</strong>
+              </button>
+            ))}
+          </section>
+
+          <div className="calendar-main-layout">
+            <CalendarWeekTimetable days={weekDays} occurrences={occurrences} onOpen={openEvent} onAdd={openNewEvent} />
+
+            <aside className="calendar-right-column">
+              <CalendarMiniMonth focusDate={focusDate} setFocusDate={setFocusDate} />
+
+              <section className="calendar-side-card calendar-visible-calendars">
+                <h3>Widoczne kalendarze</h3>
+                <button type="button" className={selectedPerson === 'family' ? 'active' : ''} onClick={() => setSelectedPerson('family')}>
+                  <span className="calendar-filter-dot family" /> <strong>Wydarzenia rodzinne</strong><em>✓</em>
+                </button>
+                {(['Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla'] as PersonKey[]).map((person) => (
+                  <button type="button" key={person} className={selectedPerson === person ? 'active' : ''} onClick={() => setSelectedPerson(person)}>
+                    <span className="calendar-filter-avatar">{personAvatar(person)}</span><strong>{person}</strong><em>✓</em>
+                  </button>
+                ))}
+              </section>
+
+              <section className="calendar-side-card calendar-connected-card">
+                <h3>Połączone kalendarze</h3>
+                <div><span className="source-icon family-source">NR</span><p><strong>Nasza Rodzina</strong><small className="connected-label">● Aktywny</small></p></div>
+                <div><span className="source-icon google-source">G</span><p><strong>Google Calendar</strong><small>Do podłączenia w Ustawieniach</small></p></div>
+                <div><span className="source-icon apple-source"></span><p><strong>Apple / iCloud</strong><small>Do podłączenia w Ustawieniach</small></p></div>
+                <button type="button" className="calendar-source-settings" onClick={() => goTo('Ustawienia')}>⚙ Źródła kalendarzy ustawisz w Ustawieniach</button>
+              </section>
+
+              <CalendarUpcomingCard items={upcomingOccurrences.slice(0, 4)} onOpen={openEvent} />
+            </aside>
+          </div>
+
+          <section className="calendar-mobile-agenda">
+            <h2>{capitalize(focusDate.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))}</h2>
+            {selectedDayOccurrences.length === 0 ? <p className="calendar-empty-mobile">Brak wydarzeń tego dnia.</p> : selectedDayOccurrences.map((item) => (
+              <button type="button" key={item.key} className={`calendar-mobile-event ${personEventClass(item.source.person)}`} onClick={() => openEvent(item.source)}>
+                <time>{item.source.allDay ? 'Cały dzień' : <>{formatTime(item.date)}<small>{formatTime(item.endDate)}</small></>}</time>
+                <span className="calendar-mobile-event-icon">{eventActivityIcon(item.source.title)}</span>
+                <span className="calendar-mobile-event-copy"><strong>{item.source.title}</strong><small>{personLabel(item.source.person)}</small></span>
+                <span className="calendar-mobile-event-avatar">{personAvatar(item.source.person)}</span>
+                <em>⋮</em>
+              </button>
+            ))}
+            <CalendarUpcomingCard items={upcomingOccurrences.slice(0, 4)} onOpen={openEvent} mobile />
+          </section>
+        </>
+      )}
 
       {view === 'day' && <CalendarDay date={focusDate} occurrences={occurrences} onOpen={openEvent} onAdd={openNewEvent} />}
-      {view === 'week' && (
-        <div className="calendar-week-layout">
-          <section className="calendar-week-card">
-            <div className="calendar-week-grid">
-              {weekDays.map((day) => {
-                const dayItems = occurrences.filter((item) => sameDay(item.date, day));
-                return (
-                  <div className={`calendar-week-day ${sameDay(day, new Date()) ? 'today' : ''}`} key={formatDateInput(day)}>
-                    <button className="calendar-day-heading" type="button" onClick={() => { setFocusDate(day); setView('day'); }}><span>{capitalize(day.toLocaleDateString('pl-PL', { weekday: 'short' }))}</span><strong>{day.getDate()}</strong></button>
-                    <button className="calendar-plus" type="button" onClick={() => openNewEvent(day)}>＋</button>
-                    <div className="calendar-day-events">
-                      {dayItems.length === 0 && <small className="muted">Brak wydarzeń</small>}
-                      {dayItems.map((item) => <CalendarEventButton key={item.key} occurrence={item} onClick={() => openEvent(item.source)} />)}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-          <CalendarSide today={todayOccurrences} upcoming={upcomingOccurrences} onOpen={openEvent} />
-        </div>
-      )}
       {view === 'month' && <CalendarMonth focusDate={focusDate} days={monthDays} occurrences={occurrences} onOpen={openEvent} onAdd={openNewEvent} onDay={(day) => { setFocusDate(day); setView('day'); }} />}
 
-      <section className="calendar-lower-grid">
-        <article className="calendar-lower-card"><header><strong>⏭️ Nadchodzące wydarzenia</strong></header>{upcomingOccurrences.slice(0,4).map((item) => { const done=sameDay(item.date,new Date())&&item.endDate<new Date(); return <button key={item.key} className={done?'completed-today':''} onClick={()=>openEvent(item.source)}><span>{eventActivityIcon(item.source.title)}</span><div><strong>{item.source.title}</strong><small>{item.date.toLocaleDateString('pl-PL')} · {item.source.allDay?'Cały dzień':`${formatTime(item.date)}–${formatTime(item.endDate)}`}</small></div><em>{done?'✓ Zakończone':'›'}</em></button>; })}</article>
-        <article className="calendar-lower-card"><header><strong>🔔 Twoje przypomnienia</strong></header><p>Przypomnienia o wizytach, lekach i zadaniach są zarządzane w odpowiednich modułach.</p><button className="secondary-button" onClick={()=>alert('Ustawienia przypomnień znajdziesz także w zakładce Ustawienia.')}>Ustawienia przypomnień</button></article>
-        <article className="calendar-lower-card"><header><strong>⚡ Szybkie akcje</strong></header><div className="calendar-actions"><button onClick={()=>openNewEvent(new Date())}>＋ Wydarzenie</button><button onClick={()=>openNewEvent(new Date(),'12:00',true)}>☀️ Cały dzień</button><button onClick={()=>setFocusDate(new Date())}>📍 Dzisiaj</button></div></article>
+      <section className="calendar-summary-tiles">
+        <button type="button" onClick={() => setFocusDate(new Date())}><span>▣</span><div><strong>Dzisiaj</strong><small>{todayOccurrences.length} wydarzeń</small></div></button>
+        <button type="button"><span>◷</span><div><strong>Najbliższe</strong><small>{upcomingOccurrences.length} wydarzeń</small></div></button>
+        <button type="button"><span>♛</span><div><strong>Urodziny</strong><small>Rodzinne daty</small></div></button>
+        <button type="button"><span>↻</span><div><strong>Powtarzające się</strong><small>{events.filter((item) => item.repeat !== 'none').length} wydarzeń</small></div></button>
+        <button type="button" onClick={() => goTo('Ustawienia')}><span>▱</span><div><strong>Połączone kalendarze</strong><small>Ustaw źródła</small></div></button>
       </section>
-      <section className="connected-calendars-footer"><header><div><strong>🔗 Połączone kalendarze</strong><small>Nasza Rodzina jest kalendarzem domyślnym.</small></div></header><div><span className="connected active">● Nasza Rodzina</span><span>Google Calendar — do połączenia</span><span>Apple / iCloud — ICS</span><span>Outlook — do połączenia</span></div></section>
 
       {showForm && (
         <Modal title="➕ Nowe wydarzenie" subtitle="Kalendarz" onClose={() => setShowForm(false)} wide>
@@ -1262,7 +1391,109 @@ function CalendarPage({ user }: { user: User }) {
           )}
         </Modal>
       )}
+
+      <button type="button" className="calendar-mobile-fab" onClick={() => openNewEvent()}>＋</button>
     </div>
+  );
+}
+
+function getWeekNumber(date: Date) {
+  const value = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = value.getUTCDay() || 7;
+  value.setUTCDate(value.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(value.getUTCFullYear(), 0, 1));
+  return Math.ceil((((value.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
+
+function CalendarWeekTimetable({ days, occurrences, onOpen, onAdd }: { days: Date[]; occurrences: CalendarOccurrence[]; onOpen: (event: CalendarEventData) => void; onAdd: (date?: Date, time?: string, allDay?: boolean) => void }) {
+  const firstHour = 6;
+  const lastHour = 22;
+  const hourHeight = 42;
+  const hours = Array.from({ length: lastHour - firstHour + 1 }, (_, index) => firstHour + index);
+
+  function eventStyle(item: CalendarOccurrence): React.CSSProperties {
+    const startMinutes = Math.max(firstHour * 60, item.date.getHours() * 60 + item.date.getMinutes());
+    const endMinutes = Math.min((lastHour + 1) * 60, item.endDate.getHours() * 60 + item.endDate.getMinutes());
+    const top = ((startMinutes - firstHour * 60) / 60) * hourHeight;
+    const height = Math.max(32, ((Math.max(endMinutes, startMinutes + 30) - startMinutes) / 60) * hourHeight - 3);
+    return { top, height };
+  }
+
+  return (
+    <section className="calendar-week-timetable">
+      <div className="calendar-week-head">
+        <span className="calendar-time-corner">Godzina</span>
+        {days.map((day) => (
+          <button type="button" key={formatDateInput(day)} className={sameDay(day, new Date()) ? 'today' : ''} onClick={() => onAdd(day)}>
+            <strong>{capitalize(day.toLocaleDateString('pl-PL', { weekday: 'short' })).replace('.', '')}</strong>
+            <span>{day.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' })}</span>
+          </button>
+        ))}
+      </div>
+      <div className="calendar-all-day-row">
+        <span>Cały dzień</span>
+        {days.map((day) => {
+          const allDay = occurrences.filter((item) => sameDay(item.date, day) && item.source.allDay);
+          return <div key={formatDateInput(day)}>{allDay.slice(0, 2).map((item) => <button type="button" key={item.key} className={`calendar-week-event all-day ${personEventClass(item.source.person)}`} onClick={() => onOpen(item.source)}><strong>{item.source.title}</strong></button>)}</div>;
+        })}
+      </div>
+      <div className="calendar-time-grid" style={{ '--hour-height': `${hourHeight}px`, '--hour-count': hours.length } as React.CSSProperties}>
+        <div className="calendar-hour-axis">{hours.map((hour) => <span key={hour}>{String(hour).padStart(2, '0')}:00</span>)}</div>
+        {days.map((day) => {
+          const timed = occurrences.filter((item) => sameDay(item.date, day) && !item.source.allDay && item.endDate.getHours() >= firstHour && item.date.getHours() <= lastHour);
+          return (
+            <div className={`calendar-day-column ${sameDay(day, new Date()) ? 'today' : ''}`} key={formatDateInput(day)}>
+              {timed.map((item) => (
+                <button type="button" key={item.key} style={eventStyle(item)} className={`calendar-week-event ${personEventClass(item.source.person)}`} onClick={() => onOpen(item.source)}>
+                  <span>{eventActivityIcon(item.source.title)}</span>
+                  <strong>{item.source.title}</strong>
+                  <small>{formatTime(item.date)}–{formatTime(item.endDate)}</small>
+                </button>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function CalendarMiniMonth({ focusDate, setFocusDate }: { focusDate: Date; setFocusDate: React.Dispatch<React.SetStateAction<Date>> }) {
+  const first = new Date(focusDate.getFullYear(), focusDate.getMonth(), 1);
+  const offset = (first.getDay() + 6) % 7;
+  const count = new Date(focusDate.getFullYear(), focusDate.getMonth() + 1, 0).getDate();
+  const cells: Array<number | null> = [...Array(offset).fill(null), ...Array.from({ length: count }, (_, index) => index + 1)];
+  while (cells.length % 7) cells.push(null);
+
+  return (
+    <section className="calendar-side-card calendar-mini-month">
+      <header>
+        <button type="button" onClick={() => setFocusDate((current) => addMonths(current, -1))}>‹</button>
+        <strong>{capitalize(focusDate.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' }))}</strong>
+        <button type="button" onClick={() => setFocusDate((current) => addMonths(current, 1))}>›</button>
+      </header>
+      <div className="calendar-mini-weekdays">{['Pn','Wt','Śr','Cz','Pt','So','Nd'].map((day) => <span key={day}>{day}</span>)}</div>
+      <div className="calendar-mini-days">
+        {cells.map((day, index) => day ? (
+          <button type="button" key={`${day}-${index}`} className={day === focusDate.getDate() ? 'active' : ''} onClick={() => setFocusDate(new Date(focusDate.getFullYear(), focusDate.getMonth(), day))}>{day}</button>
+        ) : <span key={`empty-${index}`} />)}
+      </div>
+    </section>
+  );
+}
+
+function CalendarUpcomingCard({ items, onOpen, mobile = false }: { items: CalendarOccurrence[]; onOpen: (event: CalendarEventData) => void; mobile?: boolean }) {
+  return (
+    <section className={`calendar-side-card calendar-upcoming-card ${mobile ? 'mobile' : ''}`}>
+      <header><h3>Nadchodzące wydarzenia</h3><span>Zobacz wszystkie</span></header>
+      {items.length === 0 ? <p className="muted">Brak nadchodzących wydarzeń.</p> : items.map((item) => (
+        <button type="button" key={item.key} onClick={() => onOpen(item.source)}>
+          <span className="calendar-upcoming-date"><b>{String(item.date.getDate()).padStart(2, '0')}</b><small>{item.date.toLocaleDateString('pl-PL', { month: 'short' }).replace('.', '').toUpperCase()}</small></span>
+          <span><strong>{item.source.title}</strong><small>{item.source.allDay ? 'Cały dzień' : `${formatTime(item.date)}–${formatTime(item.endDate)}`}</small></span>
+          <em>›</em>
+        </button>
+      ))}
+    </section>
   );
 }
 
