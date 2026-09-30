@@ -3065,7 +3065,7 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
       </section>}
 
       <nav className="health-tabs-versa">
-        {tabItems.map(([key,icon,label])=><button key={key} className={healthTab === key ? 'active' : ''} onClick={()=>setHealthTab(key)}><span><AppNavIcon name={icon} /></span>{label}</button>)}
+        {tabItems.map(([key,icon,label])=><button key={key} className={healthTab === key ? 'active' : ''} onClick={()=>setHealthTab(key)}><span>{icon}</span>{label}</button>)}
       </nav>
 
       {healthTab === 'summary' && <div className="health-summary-grid">
@@ -3417,7 +3417,7 @@ function SchoolPage({ user, member }: { user: User; member: Member | null }) {
       </section>
 
       <nav className="school-main-tabs" aria-label="Sekcje szkoły">
-        {tabs.map(([key,icon,label])=><button type="button" key={key} className={tab === key ? 'active' : ''} onClick={()=>setTab(key)}><span><AppNavIcon name={icon} /></span>{label}</button>)}
+        {tabs.map(([key,icon,label])=><button type="button" key={key} className={tab === key ? 'active' : ''} onClick={()=>setTab(key)}><span>{icon}</span>{label}</button>)}
       </nav>
 
       {tab === 'summary' && <SummaryView />}
@@ -3669,7 +3669,7 @@ function FamilyPage({ user, member, goTo }: { user: User; member: Member | null;
       </div>
 
       <nav className="family-versa-tabs">
-        {tabs.map(([key,icon,label])=><button key={key} className={tab===key ? 'active' : ''} onClick={()=>setTab(key)}><span><AppNavIcon name={icon} /></span>{label}</button>)}
+        {tabs.map(([key,icon,label])=><button key={key} className={tab===key ? 'active' : ''} onClick={()=>setTab(key)}><span>{icon}</span>{label}</button>)}
       </nav>
 
       {tab === 'summary' && <>
