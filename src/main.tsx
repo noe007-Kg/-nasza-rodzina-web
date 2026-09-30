@@ -22,7 +22,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.12';
+const APP_VERSION = '1.3.13';
 const APP_UPDATED = '30.09.2026';
 
 /* =========================================================
@@ -718,10 +718,29 @@ function FamilyApp({ user }: { user: User }) {
   );
 }
 
+
+type NavIconName = 'start' | 'calendar' | 'tasks' | 'shopping' | 'chat' | 'health' | 'school' | 'family' | 'settings' | 'more';
+
+function AppNavIcon({ name }: { name: NavIconName }) {
+  const common = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+  return <svg className="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+    {name === 'start' && <><path {...common} d="M3.5 10.7 12 3.7l8.5 7"/><path {...common} d="M5.5 9.5v10h13v-10"/><path {...common} d="M9.5 19.5v-6h5v6"/></>}
+    {name === 'calendar' && <><rect {...common} x="3.5" y="5.2" width="17" height="15.2" rx="2.2"/><path {...common} d="M7 3.5v4M17 3.5v4M3.5 9.5h17"/><path {...common} d="M7.5 13h2M12 13h2M16.5 13h.1M7.5 16.5h2M12 16.5h2"/></>}
+    {name === 'tasks' && <><rect {...common} x="4" y="4" width="16" height="16" rx="2.5"/><path {...common} d="m7.5 12 2.7 2.7 6.4-6.4"/></>}
+    {name === 'shopping' && <><path {...common} d="M3 4h2l2.1 10.1a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 1.9-1.4L21 8H6"/><circle {...common} cx="9.5" cy="19" r="1.2"/><circle {...common} cx="17.2" cy="19" r="1.2"/></>}
+    {name === 'chat' && <><path {...common} d="M4 5.5h16v10.8H9l-4.5 3.2.8-3.2H4z"/><path {...common} d="M8 10h.1M12 10h.1M16 10h.1"/></>}
+    {name === 'health' && <path {...common} d="M12 20.2S4 15.8 4 9.4a4.3 4.3 0 0 1 7.8-2.5L12 7l.2-.2A4.3 4.3 0 0 1 20 9.4c0 6.4-8 10.8-8 10.8Z"/>}
+    {name === 'school' && <><path {...common} d="m3 9 9-5 9 5-9 5z"/><path {...common} d="M6.5 11.2v5.2c2.6 2 8.4 2 11 0v-5.2M21 9v6"/></>}
+    {name === 'family' && <><circle {...common} cx="8" cy="8" r="3"/><circle {...common} cx="16.5" cy="9" r="2.5"/><path {...common} d="M2.8 19c.5-3.4 2.3-5.2 5.2-5.2S12.7 15.6 13.2 19M13 14.2c1-.9 2.2-1.3 3.6-1.3 2.6 0 4.2 1.7 4.6 4.8"/></>}
+    {name === 'settings' && <><circle {...common} cx="12" cy="12" r="3.2"/><path {...common} d="M19.2 13.5v-3l-2-.6a7 7 0 0 0-.7-1.6l1-1.8-2.1-2.1-1.8 1a7 7 0 0 0-1.6-.7L11.5 2h-3L8 4.7a7 7 0 0 0-1.6.7l-1.8-1-2.1 2.1 1 1.8a7 7 0 0 0-.7 1.6L.8 10.5v3l2 .6a7 7 0 0 0 .7 1.6l-1 1.8 2.1 2.1 1.8-1a7 7 0 0 0 1.6.7l.5 2.7h3l.5-2.7a7 7 0 0 0 1.6-.7l1.8 1 2.1-2.1-1-1.8a7 7 0 0 0 .7-1.6z" transform="translate(1.5 0) scale(.87)"/></>}
+    {name === 'more' && <><path {...common} d="M5 7h14M5 12h14M5 17h14"/></>}
+  </svg>;
+}
+
 function Sidebar({ page, goTo, member }: { page: Page; goTo: (page: Page) => void; member: Member | null }) {
-  const items: Array<[Page, string]> = [
-    ['Start', '⌂'], ['Kalendarz', '▣'], ['Zadania', '✓'], ['Zakupy', '🛒'], ['Czat', '◌'],
-    ['Zdrowie', '♡'], ['Szkoła', '🎓'], ['Rodzina', '👥'], ['Ustawienia', '⚙'],
+  const items: Array<[Page, NavIconName]> = [
+    ['Start', 'start'], ['Kalendarz', 'calendar'], ['Zadania', 'tasks'], ['Zakupy', 'shopping'], ['Czat', 'chat'],
+    ['Zdrowie', 'health'], ['Szkoła', 'school'], ['Rodzina', 'family'], ['Ustawienia', 'settings'],
   ];
 
   return (
@@ -733,7 +752,7 @@ function Sidebar({ page, goTo, member }: { page: Page; goTo: (page: Page) => voi
       <nav className="sidebar-nav">
         {items.map(([label, icon]) => (
           <button key={label} type="button" className={`nav-button ${page === label ? 'active' : ''}`} onClick={() => goTo(label)}>
-            <span>{icon}</span>{label}
+            <span><AppNavIcon name={icon} /></span>{label}
           </button>
         ))}
       </nav>
@@ -3046,7 +3065,7 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
       </section>}
 
       <nav className="health-tabs-versa">
-        {tabItems.map(([key,icon,label])=><button key={key} className={healthTab === key ? 'active' : ''} onClick={()=>setHealthTab(key)}><span>{icon}</span>{label}</button>)}
+        {tabItems.map(([key,icon,label])=><button key={key} className={healthTab === key ? 'active' : ''} onClick={()=>setHealthTab(key)}><span><AppNavIcon name={icon} /></span>{label}</button>)}
       </nav>
 
       {healthTab === 'summary' && <div className="health-summary-grid">
@@ -3398,7 +3417,7 @@ function SchoolPage({ user, member }: { user: User; member: Member | null }) {
       </section>
 
       <nav className="school-main-tabs" aria-label="Sekcje szkoły">
-        {tabs.map(([key,icon,label])=><button type="button" key={key} className={tab === key ? 'active' : ''} onClick={()=>setTab(key)}><span>{icon}</span>{label}</button>)}
+        {tabs.map(([key,icon,label])=><button type="button" key={key} className={tab === key ? 'active' : ''} onClick={()=>setTab(key)}><span><AppNavIcon name={icon} /></span>{label}</button>)}
       </nav>
 
       {tab === 'summary' && <SummaryView />}
@@ -3650,7 +3669,7 @@ function FamilyPage({ user, member, goTo }: { user: User; member: Member | null;
       </div>
 
       <nav className="family-versa-tabs">
-        {tabs.map(([key,icon,label])=><button key={key} className={tab===key ? 'active' : ''} onClick={()=>setTab(key)}><span>{icon}</span>{label}</button>)}
+        {tabs.map(([key,icon,label])=><button key={key} className={tab===key ? 'active' : ''} onClick={()=>setTab(key)}><span><AppNavIcon name={icon} /></span>{label}</button>)}
       </nav>
 
       {tab === 'summary' && <>
@@ -3916,20 +3935,23 @@ function SettingsPage({ member, theme, setTheme, goTo }: { member: Member | null
    ========================================================= */
 
 function MobileNavigation({ page, goTo, onMore }: { page: Page; goTo: (page: Page) => void; onMore: () => void }) {
-  const items: Array<[Page, string, string]> = [['Start', '🏠', 'Start'], ['Kalendarz', '📅', 'Kalendarz'], ['Zadania', '✅', 'Zadania'], ['Zakupy', '🛒', 'Zakupy']];
+  const items: Array<[Page, NavIconName, string]> = [
+    ['Start', 'start', 'Start'], ['Kalendarz', 'calendar', 'Kalendarz'], ['Zadania', 'tasks', 'Zadania'], ['Zakupy', 'shopping', 'Zakupy'],
+  ];
+  const moreActive = !items.some(([target]) => target === page);
   return (
-    <nav className="mobile-navigation">
-      {items.map(([target, icon, label]) => <button type="button" key={target} className={page === target ? 'active' : ''} onClick={() => goTo(target)}><span>{icon}</span><small>{label}</small></button>)}
-      <button type="button" onClick={onMore}><span>☰</span><small>Więcej</small></button>
+    <nav className="mobile-navigation" aria-label="Nawigacja główna">
+      {items.map(([target, icon, label]) => <button type="button" key={target} className={page === target ? 'active' : ''} onClick={() => goTo(target)}><span className="mobile-nav-icon"><AppNavIcon name={icon} /></span><small>{label}</small></button>)}
+      <button type="button" className={moreActive ? 'active' : ''} onClick={onMore}><span className="mobile-nav-icon"><AppNavIcon name="more" /></span><small>Więcej</small></button>
     </nav>
   );
 }
 
 function MobileMoreMenu({ page, goTo, onClose, onLogout }: { page: Page; goTo: (page: Page) => void; onClose: () => void; onLogout: () => void }) {
-  const items: Array<[Page, string]> = [['Czat', '💬'], ['Zdrowie', '❤️'], ['Szkoła', '🎒'], ['Rodzina', '👨‍👩‍👧‍👦'], ['Ustawienia', '⚙️']];
+  const items: Array<[Page, NavIconName]> = [['Czat', 'chat'], ['Zdrowie', 'health'], ['Szkoła', 'school'], ['Rodzina', 'family'], ['Ustawienia', 'settings']];
   return (
     <div className="mobile-more-backdrop" onClick={onClose}>
-      <section className="mobile-more" onClick={(e) => e.stopPropagation()}><header><strong>Więcej</strong><button onClick={onClose}>✕</button></header>{items.map(([target, icon]) => <button key={target} className={page === target ? 'active' : ''} onClick={() => goTo(target)}><span>{icon}</span>{target}</button>)}<button className="logout-mobile" onClick={onLogout}><span>↪️</span>Wyloguj</button></section>
+      <section className="mobile-more" onClick={(e) => e.stopPropagation()}><header><strong>Więcej</strong><button onClick={onClose}>✕</button></header>{items.map(([target, icon]) => <button key={target} className={page === target ? 'active' : ''} onClick={() => goTo(target)}><span><AppNavIcon name={icon} /></span>{target}</button>)}<button className="logout-mobile" onClick={onLogout}><span>↪</span>Wyloguj</button></section>
     </div>
   );
 }
