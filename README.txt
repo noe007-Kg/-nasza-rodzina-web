@@ -1,4 +1,4 @@
-NASZA RODZINA v1.3.2 — VERSA / ETAP ZADANIA
+NASZA RODZINA v1.3.1 — VERSA / ETAP KALENDARZ
 Data: 30.09.2026
 
 Ta paczka bazuje na Nasza Rodzina v1.3.0 i zmienia przede wszystkim zakładkę Kalendarz, zgodnie z zatwierdzonym jasnym szablonem aplikacji.
@@ -36,10 +36,3 @@ const APP_VERSION = '1.3.1';
 
 
 Wersja 1.3.2 zawiera przebudowaną zakładkę Zadania zgodną z projektem 1.3 Versa.
-
-NAPRAWA BUILD
-Ta paczka przywraca pomocniczy kod modułu Zakupy, który został omyłkowo pominięty w pierwszej paczce v1.3.2.
-
-
-WERSJA 1.3.3 — ZAKUPY
-Zakładka Zakupy została przebudowana zgodnie z zatwierdzoną wizualizacją Versa. Kafelki produktu są około 30% mniejsze niż pierwotnie, zawsze kwadratowe i responsywne. Własne zdjęcia są automatycznie kadrowane do 900x900 px przed wysłaniem.
