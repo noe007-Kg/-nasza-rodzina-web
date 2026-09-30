@@ -22,7 +22,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.5';
+const APP_VERSION = '1.3.6';
 const APP_UPDATED = '30.09.2026';
 
 /* =========================================================
@@ -234,7 +234,7 @@ type MedicalContact = {
   note: string;
 };
 
-type SchoolType = 'lesson' | 'homework' | 'test' | 'grade' | 'message' | 'activity';
+type SchoolType = 'lesson' | 'homework' | 'test' | 'grade' | 'message' | 'activity' | 'attendance';
 type SchoolRecord = {
   id: string;
   title: string;
@@ -252,6 +252,9 @@ type SchoolRecord = {
 type SchoolForm = Omit<SchoolRecord, 'id' | 'createdAt'> & {
   addToCalendar: boolean;
 };
+
+type SchoolStudentFilter = 'Paweł' | 'Nikodem' | 'all';
+type SchoolTab = 'summary' | 'plan' | 'homework' | 'tests' | 'grades' | 'attendance' | 'messages';
 
 type FamilyMemberDoc = {
   id: string;
@@ -2815,33 +2818,107 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
    ========================================================= */
 
 const SCHOOL_META: Record<SchoolType, { label: string; icon: string }> = {
-  lesson: { label: 'Plan lekcji', icon: '📚' }, homework: { label: 'Zadania domowe', icon: '📝' }, test: { label: 'Sprawdziany / kartkówki', icon: '📅' }, grade: { label: 'Oceny', icon: '⭐' }, message: { label: 'Wiadomości', icon: '💬' }, activity: { label: 'Zajęcia dodatkowe', icon: '🎯' },
+  lesson: { label: 'Plan lekcji', icon: '📚' },
+  homework: { label: 'Zadania domowe', icon: '📝' },
+  test: { label: 'Sprawdziany / kartkówki', icon: '📅' },
+  grade: { label: 'Oceny', icon: '⭐' },
+  message: { label: 'Wiadomości', icon: '💬' },
+  activity: { label: 'Zajęcia dodatkowe', icon: '🎯' },
+  attendance: { label: 'Frekwencja', icon: '📊' },
 };
 function isSchoolType(value: unknown): value is SchoolType { return typeof value === 'string' && Object.prototype.hasOwnProperty.call(SCHOOL_META, value); }
 
+function schoolDaysUntil(value: string) {
+  if (!value) return '';
+  const today = startOfDay(new Date());
+  const date = startOfDay(new Date(`${value}T12:00:00`));
+  const days = Math.round((date.getTime() - today.getTime()) / 86400000);
+  if (days < 0) return 'po terminie';
+  if (days === 0) return 'dzisiaj';
+  if (days === 1) return 'jutro';
+  return `za ${days} dni`;
+}
+
+function schoolGradeTone(value: string) {
+  const number = Number(String(value).replace(',', '.').match(/[1-6]/)?.[0] || 0);
+  if (number >= 5) return 'great';
+  if (number >= 4) return 'good';
+  if (number >= 3) return 'mid';
+  return 'low';
+}
+
 function SchoolPage({ user, member }: { user: User; member: Member | null }) {
   const [records, setRecords] = useState<SchoolRecord[]>([]);
+  const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
   const parent = isParent(member);
-  const ownStudent = member?.name === 'Paweł' || member?.name === 'Nikodem' ? member.name as PersonKey : null;
-  const [selectedPerson, setSelectedPerson] = useState<PersonKey>(ownStudent || 'Paweł');
+  const ownStudent = member?.name === 'Paweł' || member?.name === 'Nikodem' ? member.name as 'Paweł' | 'Nikodem' : null;
+  const [selectedStudent, setSelectedStudent] = useState<SchoolStudentFilter>(ownStudent || 'Paweł');
+  const [tab, setTab] = useState<SchoolTab>('summary');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<SchoolForm>({ title:'', person:ownStudent || 'Paweł', type:'lesson', subject:'', date:'', time:'08:00', endTime:'08:45', weekday:1, note:'', addToCalendar:false });
+  const today = formatDateInput(new Date());
   const todayWeekday = new Date().getDay() === 0 ? 7 : new Date().getDay();
 
   useEffect(() => onSnapshot(collection(db, 'schoolItems'), (snap) => {
     const next = snap.docs.map((d): SchoolRecord => {
       const x=d.data();
-      return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'Nikodem', type:isSchoolType(x.type) ? x.type : 'homework', subject:typeof x.subject === 'string' ? x.subject : '', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', endTime:typeof x.endTime === 'string' ? x.endTime : '', weekday:Number(x.weekday || 0), note:typeof x.note === 'string' ? x.note : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
+      return {
+        id:d.id,
+        title:String(x.title || ''),
+        person:isPersonKey(x.person) ? x.person : 'Nikodem',
+        type:isSchoolType(x.type) ? x.type : 'homework',
+        subject:typeof x.subject === 'string' ? x.subject : '',
+        date:typeof x.date === 'string' ? x.date : '',
+        time:typeof x.time === 'string' ? x.time : '',
+        endTime:typeof x.endTime === 'string' ? x.endTime : '',
+        weekday:Number(x.weekday || 0),
+        note:typeof x.note === 'string' ? x.note : '',
+        createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
+      };
     });
     next.sort((a,b)=>(a.weekday || 9)-(b.weekday || 9) || (a.time || '99:99').localeCompare(b.time || '99:99') || (a.date || '9999').localeCompare(b.date || '9999'));
     setRecords(next);
   }), []);
 
-  const students: PersonKey[] = parent ? ['Paweł','Nikodem'] : ownStudent ? [ownStudent] : ['Paweł','Nikodem'];
+  useEffect(() => onSnapshot(collection(db, 'members'), (snap) => {
+    const next = snap.docs.map((d): FamilyMemberDoc => {
+      const x=d.data();
+      return { id:d.id, name:String(x.name || ''), role:personRole(String(x.name || ''), typeof x.role === 'string' ? x.role : ''), photoURL:typeof x.photoURL === 'string' ? x.photoURL : undefined, active:x.active !== false, birthDate:typeof x.birthDate === 'string' ? x.birthDate : undefined };
+    });
+    setMembers(next.filter((x)=>x.name === 'Paweł' || x.name === 'Nikodem'));
+  }), []);
+
+  useEffect(() => {
+    if (!parent && ownStudent) setSelectedStudent(ownStudent);
+  }, [parent, ownStudent]);
+
+  const students: Array<'Paweł' | 'Nikodem'> = parent ? ['Paweł','Nikodem'] : ownStudent ? [ownStudent] : ['Paweł','Nikodem'];
+  const selectedPeople: Array<'Paweł' | 'Nikodem'> = selectedStudent === 'all' ? students : [selectedStudent];
+  const selectedRecords = records.filter((r)=>selectedPeople.includes(r.person as 'Paweł' | 'Nikodem'));
+
+  function photoFor(person: 'Paweł' | 'Nikodem') {
+    return members.find((m)=>m.name === person)?.photoURL;
+  }
+
+  function selectStudent(value: SchoolStudentFilter) {
+    setSelectedStudent(value);
+    setTab('summary');
+  }
 
   function openAdd(person: PersonKey, type: SchoolType = 'lesson') {
-    setSelectedPerson(person);
-    setForm({ title:'', person, type, subject:'', date: type === 'lesson' || type === 'activity' ? '' : formatDateInput(new Date()), time:type === 'activity' ? '17:00' : '08:00', endTime:type === 'activity' ? '18:00' : '08:45', weekday:todayWeekday <= 5 ? todayWeekday : 1, note:'', addToCalendar:type === 'activity' });
+    const target = person === 'family' ? (selectedStudent === 'all' ? 'Paweł' : selectedStudent) : person;
+    setForm({
+      title:type === 'attendance' ? 'Obecność' : '',
+      person:target,
+      type,
+      subject:'',
+      date: type === 'lesson' || type === 'activity' ? '' : today,
+      time:type === 'activity' ? '17:00' : '08:00',
+      endTime:type === 'activity' ? '18:00' : '08:45',
+      weekday:todayWeekday <= 5 ? todayWeekday : 1,
+      note:'',
+      addToCalendar:type === 'activity',
+    });
     setShowForm(true);
   }
 
@@ -2850,46 +2927,183 @@ function SchoolPage({ user, member }: { user: User; member: Member | null }) {
     const { addToCalendar, ...record }=form;
     await addDoc(collection(db,'schoolItems'), { ...record, title:form.title.trim(), createdBy:user.uid, createdAt:Timestamp.now() });
     if (addToCalendar && form.date) {
-      const start=parseLocalDate(form.date,form.time || '08:00'); const end=parseLocalDate(form.date,form.endTime || form.time || '09:00');
+      const start=parseLocalDate(form.date,form.time || '08:00');
+      const end=parseLocalDate(form.date,form.endTime || form.time || '09:00');
       await addDoc(collection(db,'calendarEvents'), { title:`🎒 ${form.title.trim()}`, person:form.person, date:Timestamp.fromDate(start), endDate:Timestamp.fromDate(end), allDay:false, description:[form.subject,form.note].filter(Boolean).join(' · '), repeat:'none', repeatUntil:null, createdBy:user.uid, createdAt:Timestamp.now() });
     }
     setShowForm(false);
   }
 
-  function panelFor(person: PersonKey) {
-    const all=records.filter((r)=>r.person === person);
-    const lessons=all.filter((r)=>r.type === 'lesson' && (r.weekday === todayWeekday || (!r.weekday && r.date === formatDateInput(new Date()))));
-    const activities=all.filter((r)=>r.type === 'activity' && (r.weekday === todayWeekday || r.date === formatDateInput(new Date())));
-    const tests=all.filter((r)=>r.type === 'test').sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,3);
-    const grades=all.filter((r)=>r.type === 'grade').slice(-5).reverse();
-    const homework=all.filter((r)=>r.type === 'homework').sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,4);
-    const messages=all.filter((r)=>r.type === 'message').slice(-3).reverse();
-    return <article className="student-school-panel" key={person}>
-      <header className="student-school-header"><div className="student-avatar">{memberEmoji(person)}</div><div><h2>{person}</h2><p>{person === 'Nikodem' ? 'Szkoła podstawowa' : 'Szkoła / liceum'}</p></div>{parent && <button onClick={()=>openAdd(person,'lesson')}>＋ Dodaj</button>}</header>
-      <div className="student-school-grid">
-        <section className="school-day-card"><header><strong>📘 Dzisiejszy plan</strong><button onClick={()=>openAdd(person,'lesson')}>Edytuj plan</button></header>{lessons.length === 0 ? <p className="school-empty">Brak lekcji na dziś — dodaj plan ręcznie.</p> : lessons.map((r)=><div className="lesson-row" key={r.id}><time>{r.time}</time><span className="subject-icon">{subjectIcon(r.subject || r.title)}</span><div><strong>{r.subject || r.title}</strong><small>{r.endTime ? `do ${r.endTime}` : ''}{r.note ? ` · ${r.note}` : ''}</small></div>{parent && <button onClick={()=>deleteDoc(doc(db,'schoolItems',r.id))}>⋯</button>}</div>)}{activities.length > 0 && <div className="activities-inline"><strong>⭐ Zajęcia dodatkowe</strong>{activities.map((r)=><div key={r.id}><span>{subjectIcon(r.subject || r.title)}</span><b>{r.time}–{r.endTime} {r.title}</b><small>{r.note}</small></div>)}</div>}</section>
-        <section className="school-mini-card"><header><strong>📅 Najbliższe sprawdziany</strong><button onClick={()=>openAdd(person,'test')}>＋</button></header>{tests.length ? tests.map((r)=><div className="school-mini-row" key={r.id}><span>{subjectIcon(r.subject)}</span><div><strong>{r.subject || r.title}</strong><small>{r.title} · {r.date ? formatShortDate(r.date) : ''}</small></div></div>) : <p className="school-empty">Brak wpisów.</p>}</section>
-        <section className="school-mini-card"><header><strong>⭐ Ostatnie oceny</strong><button onClick={()=>openAdd(person,'grade')}>＋</button></header>{grades.length ? grades.map((r)=><div className="grade-row" key={r.id}><span>{subjectIcon(r.subject)}</span><strong>{r.subject || r.title}</strong><b>{r.title}</b></div>) : <p className="school-empty">Brak ocen.</p>}</section>
-        <section className="school-mini-card"><header><strong>📝 Zadania domowe</strong><button onClick={()=>openAdd(person,'homework')}>＋</button></header>{homework.length ? homework.map((r)=><div className="school-mini-row" key={r.id}><span>{subjectIcon(r.subject)}</span><div><strong>{r.title}</strong><small>{r.subject}{r.date ? ` · na ${formatShortDate(r.date)}` : ''}</small></div></div>) : <p className="school-empty">Brak zadań.</p>}</section>
-        <section className="school-mini-card"><header><strong>💬 Wiadomości</strong><button onClick={()=>openAdd(person,'message')}>＋</button></header>{messages.length ? messages.map((r)=><div className="school-mini-row" key={r.id}><span>💬</span><div><strong>{r.title}</strong><small>{r.note}</small></div></div>) : <p className="school-empty">Brak wiadomości.</p>}</section>
+  const todayLessons = selectedRecords
+    .filter((r)=>r.type === 'lesson' && (r.weekday === todayWeekday || (!r.weekday && r.date === today)))
+    .sort((a,b)=>(a.time || '').localeCompare(b.time || ''));
+  const upcomingTests = selectedRecords
+    .filter((r)=>r.type === 'test' && (!r.date || r.date >= today))
+    .sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,6);
+  const homework = selectedRecords
+    .filter((r)=>r.type === 'homework' && (!r.date || r.date >= today))
+    .sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,6);
+  const grades = selectedRecords.filter((r)=>r.type === 'grade').slice(-8).reverse();
+  const messages = selectedRecords.filter((r)=>r.type === 'message').slice(-5).reverse();
+  const attendance = selectedRecords.filter((r)=>r.type === 'attendance');
+  const presentCount = attendance.filter((r)=>normalizeProduct(r.title).includes('obecn') && !normalizeProduct(r.title).includes('nieobecn')).length;
+  const absentCount = attendance.filter((r)=>normalizeProduct(r.title).includes('nieobecn')).length;
+  const lateCount = attendance.filter((r)=>normalizeProduct(r.title).includes('spozn') || normalizeProduct(r.title).includes('spóź')).length;
+  const attendanceBase = presentCount + absentCount;
+  const attendancePercent = attendanceBase ? Math.round((presentCount / attendanceBase) * 100) : 100;
+
+  const tabs: Array<[SchoolTab,string,string]> = [
+    ['summary','⌂','Podsumowanie'], ['plan','▣','Plan lekcji'], ['homework','☷','Zadania'],
+    ['tests','📖','Sprawdziany'], ['grades','⭐','Oceny'], ['attendance','📊','Frekwencja'], ['messages','✉️','Wiadomości'],
+  ];
+
+  function personMark(person: PersonKey) {
+    if (selectedStudent !== 'all') return null;
+    return <span className="school-person-mark" style={{ color: personColor(person) }}>{person}</span>;
+  }
+
+  function sectionHeader(title: string, actionType?: SchoolType, actionText = 'Dodaj') {
+    return <header className="school-card-header"><strong>{title}</strong>{parent && actionType ? <button type="button" onClick={()=>openAdd(selectedStudent === 'all' ? 'Paweł' : selectedStudent, actionType)}>{actionText}</button> : null}</header>;
+  }
+
+  function SummaryView() {
+    return <div className="school-summary-grid">
+      <section className="school-card school-today-card">
+        {sectionHeader('🗓️ Dzisiejszy plan','lesson','Zobacz cały plan →')}
+        <div className="school-list">
+          {todayLessons.length === 0 ? <p className="school-empty">Brak lekcji na dziś. Plan możesz uzupełnić ręcznie.</p> : todayLessons.map((r)=><article className="school-lesson-line" key={r.id}>
+            <time>{r.time || '—'}{r.endTime ? <small>– {r.endTime}</small> : null}</time>
+            <span className="school-subject-icon">{subjectIcon(r.subject || r.title)}</span>
+            <div><strong>{r.subject || r.title}</strong><small>{r.note || r.title}</small>{personMark(r.person)}</div>
+            {parent && <button className="school-row-menu" type="button" onClick={()=>deleteDoc(doc(db,'schoolItems',r.id))}>⋯</button>}
+          </article>)}
+        </div>
+      </section>
+
+      <section className="school-card school-tests-card">
+        {sectionHeader('🗓️ Najbliższe sprawdziany','test','Zobacz wszystkie →')}
+        <div className="school-list">
+          {upcomingTests.length === 0 ? <p className="school-empty">Brak zaplanowanych sprawdzianów.</p> : upcomingTests.slice(0,4).map((r)=><article className="school-test-line" key={r.id}>
+            <span className="school-date-tile"><b>{r.date ? new Date(`${r.date}T12:00:00`).getDate() : '—'}</b><small>{r.date ? new Date(`${r.date}T12:00:00`).toLocaleDateString('pl-PL',{month:'short'}).replace('.','') : ''}</small></span>
+            <span className="school-subject-icon">{subjectIcon(r.subject || r.title)}</span>
+            <div><strong>{r.subject || r.title}</strong><small>{r.title}{r.note ? ` · ${r.note}` : ''}</small>{personMark(r.person)}</div>
+            <em className="school-due-chip">{schoolDaysUntil(r.date)}</em>
+          </article>)}
+        </div>
+      </section>
+
+      <section className="school-card school-homework-card">
+        {sectionHeader('✏️ Zadania domowe','homework','Zobacz wszystkie →')}
+        <div className="school-list">
+          {homework.length === 0 ? <p className="school-empty">Brak zadań domowych.</p> : homework.slice(0,4).map((r)=><article className="school-homework-line" key={r.id}>
+            <span className="school-task-check" />
+            <span className="school-subject-icon">{subjectIcon(r.subject || r.title)}</span>
+            <div><strong>{r.subject || r.title}</strong><small>{r.title}{r.note ? ` · ${r.note}` : ''}</small>{personMark(r.person)}</div>
+            <em className="school-due-chip">{schoolDaysUntil(r.date)}</em>
+          </article>)}
+        </div>
+      </section>
+
+      <section className="school-card school-grades-card">
+        {sectionHeader('⭐ Ostatnie oceny','grade','Zobacz wszystkie →')}
+        <div className="school-grade-list">
+          {grades.length === 0 ? <p className="school-empty">Brak ocen.</p> : grades.slice(0,5).map((r)=><article key={r.id}>
+            <span className="school-subject-icon">{subjectIcon(r.subject || r.title)}</span>
+            <strong>{r.subject || 'Przedmiot'}</strong>
+            <b className={`school-grade-badge ${schoolGradeTone(r.title)}`}>{r.title}</b>
+            {personMark(r.person)}
+          </article>)}
+        </div>
+      </section>
+
+      <section className="school-card school-attendance-card">
+        {sectionHeader('📊 Frekwencja','attendance','Ten miesiąc')}
+        <div className="attendance-summary">
+          <div className="attendance-ring" style={{ background: `conic-gradient(#38c976 ${attendancePercent * 3.6}deg, #e7eef5 0deg)` }}><span><strong>{attendancePercent}%</strong><small>obecności</small></span></div>
+          <div className="attendance-legend"><span><i className="green" /> Obecności <b>{presentCount}</b></span><span><i className="red" /> Nieobecności <b>{absentCount}</b></span><span><i className="blue" /> Spóźnienia <b>{lateCount}</b></span></div>
+        </div>
+      </section>
+
+      <section className="school-card school-messages-card">
+        {sectionHeader('✉️ Wiadomości ze szkoły','message','Zobacz wszystkie →')}
+        <div className="school-list compact">
+          {messages.length === 0 ? <p className="school-empty">Brak wiadomości.</p> : messages.slice(0,3).map((r)=><article className="school-message-line" key={r.id}><span>✉️</span><div><strong>{r.title}</strong><small>{r.note || r.subject}</small>{personMark(r.person)}</div><time>{r.date ? formatShortDate(r.date) : ''}</time></article>)}
+        </div>
+      </section>
+    </div>;
+  }
+
+  function PlanView() {
+    const weekdays = [1,2,3,4,5];
+    const names = ['Poniedziałek','Wtorek','Środa','Czwartek','Piątek'];
+    return <section className="school-card school-full-card">
+      {sectionHeader('▣ Plan lekcji','lesson','＋ Dodaj lekcję')}
+      <div className="school-week-grid">
+        {weekdays.map((day,index)=>{
+          const rows=selectedRecords.filter((r)=>r.type === 'lesson' && r.weekday === day).sort((a,b)=>(a.time || '').localeCompare(b.time || ''));
+          return <div className="school-week-day" key={day}><header><strong>{names[index]}</strong></header>{rows.length === 0 ? <p>Brak lekcji</p> : rows.map((r)=><article key={r.id}><time>{r.time}</time><span>{subjectIcon(r.subject || r.title)}</span><div><strong>{r.subject || r.title}</strong><small>{r.endTime ? `do ${r.endTime}` : ''}{r.note ? ` · ${r.note}` : ''}</small>{personMark(r.person)}</div></article>)}</div>;
+        })}
       </div>
-    </article>;
+    </section>;
+  }
+
+  function ListView({ type, title, icon }: { type: SchoolType; title: string; icon: string }) {
+    const list=selectedRecords.filter((r)=>r.type === type).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999'));
+    return <section className="school-card school-full-card">
+      {sectionHeader(`${icon} ${title}`,type,`＋ Dodaj`)}
+      <div className="school-detailed-list">
+        {list.length === 0 ? <p className="school-empty">Brak wpisów w tej sekcji.</p> : list.map((r)=><article key={r.id}>
+          <span className="school-subject-icon">{type === 'message' ? '✉️' : type === 'attendance' ? '📊' : subjectIcon(r.subject || r.title)}</span>
+          <div><strong>{r.subject || r.title}</strong><small>{type === 'grade' ? `Ocena: ${r.title}` : r.title}{r.note ? ` · ${r.note}` : ''}</small>{personMark(r.person)}</div>
+          <span>{r.date ? formatShortDate(r.date) : type === 'lesson' ? ['','Pon','Wt','Śr','Czw','Pt','Sob','Nd'][r.weekday] : ''}</span>
+          {parent && <button className="icon-danger" type="button" onClick={()=>deleteDoc(doc(db,'schoolItems',r.id))}>🗑️</button>}
+        </article>)}
+      </div>
+    </section>;
   }
 
   return (
-    <div className="page-content compact-page school-v130">
-      <ModuleHeader icon="🎒" title="Szkoła" text="Ręczny plan lekcji, zajęcia dodatkowe, zadania, sprawdziany i oceny." action={parent ? <button className="primary-button" onClick={()=>openAdd(selectedPerson,'lesson')}>＋ Dodaj</button> : undefined} />
-      {parent && <section className="school-role-info"><strong>Widok rodzica</strong><span>Widzisz plany wszystkich dzieci. Po zalogowaniu dziecko widzi tylko własny plan.</span></section>}
-      {!parent && ownStudent && <section className="school-role-info child"><strong>Twój plan — {ownStudent}</strong><span>Ten ekran pokazuje tylko Twoje szkolne informacje.</span></section>}
-      <section className="school-student-tabs">{students.map((p)=><button key={p} className={selectedPerson === p ? 'active' : ''} onClick={()=>setSelectedPerson(p)}>{memberEmoji(p)} {p}</button>)}</section>
-      <div className="school-overview">{parent ? students.map((p)=>panelFor(p)) : panelFor(ownStudent || selectedPerson)}</div>
-      <aside className="integration-card vulcan-note"><span>🔗</span><div><h3>VULCAN — przygotowane miejsce na przyszłość</h3><p>Na razie plan i dane szkolne wpisujemy ręcznie. Nie zapisujemy loginów ani haseł do VULCAN-a w przeglądarce lub Firestore.</p></div><span className="setting-badge">Niepołączone</span></aside>
+    <div className="page-content compact-page school-versa-page">
+      <section className="school-versa-header">
+        <div><small>Rodzinne centrum</small><h1>🎒 Szkoła</h1><p>Ręczny plan lekcji, zajęcia dodatkowe, zadania, sprawdziany i oceny.</p></div>
+        <div className="school-header-actions">
+          <span className="school-source-chip manual">✏️ <b>Źródło danych: Ręcznie</b><i>ⓘ</i></span>
+          <button className="school-source-chip vulcan" type="button" onClick={()=>alert('Miejsce przygotowane na przyszłą, bezpieczną integrację z VULCAN-em. Na tym etapie dane wpisujemy ręcznie.')}>🔗 <b>VULCAN</b><small>opcjonalna synchronizacja</small><i>ⓘ</i></button>
+          {parent && <button className="primary-button school-add-button" type="button" onClick={()=>openAdd(selectedStudent === 'all' ? 'Paweł' : selectedStudent,'lesson')}>＋ Dodaj</button>}
+        </div>
+      </section>
+
+      <section className="school-student-cards">
+        {students.map((person)=>{
+          const photo=photoFor(person);
+          return <button type="button" key={person} className={`school-student-card ${selectedStudent === person ? 'active' : ''}`} onClick={()=>selectStudent(person)}>
+            <span className="school-student-photo">{photo ? <img src={photo} alt="" /> : memberEmoji(person)}</span>
+            <div><strong>{person}</strong><small>Szkoła / plan zajęć</small></div><em>›</em>
+          </button>;
+        })}
+        {parent && <button type="button" className={`school-student-card all ${selectedStudent === 'all' ? 'active' : ''}`} onClick={()=>selectStudent('all')}><span className="school-student-photo">👥</span><div><strong>Wszyscy uczniowie</strong><small>Zobacz łączne informacje</small></div><em>›</em></button>}
+      </section>
+
+      <nav className="school-main-tabs" aria-label="Sekcje szkoły">
+        {tabs.map(([key,icon,label])=><button type="button" key={key} className={tab === key ? 'active' : ''} onClick={()=>setTab(key)}><span>{icon}</span>{label}</button>)}
+      </nav>
+
+      {tab === 'summary' && <SummaryView />}
+      {tab === 'plan' && <PlanView />}
+      {tab === 'homework' && <ListView type="homework" title="Zadania domowe" icon="✏️" />}
+      {tab === 'tests' && <ListView type="test" title="Sprawdziany i kartkówki" icon="🗓️" />}
+      {tab === 'grades' && <ListView type="grade" title="Oceny" icon="⭐" />}
+      {tab === 'attendance' && <ListView type="attendance" title="Frekwencja" icon="📊" />}
+      {tab === 'messages' && <ListView type="message" title="Wiadomości" icon="✉️" />}
 
       {showForm && <Modal title={`🎒 ${SCHOOL_META[form.type].label} — ${form.person}`} onClose={()=>setShowForm(false)} wide>
         <form className="form-grid" onSubmit={save}>
           {parent && <label className="field"><span>Dziecko</span><PersonSelect schoolOnly value={form.person} onChange={(value)=>setForm((f)=>({...f,person:value}))} /></label>}
-          <label className="field"><span>Rodzaj</span><select value={form.type} onChange={(e)=>setForm((f)=>({...f,type:e.target.value as SchoolType}))}>{(Object.keys(SCHOOL_META) as SchoolType[]).map((type)=><option key={type} value={type}>{SCHOOL_META[type].icon} {SCHOOL_META[type].label}</option>)}</select></label>
-          <label className="field field-wide"><span>Nazwa</span><input value={form.title} onChange={(e)=>setForm((f)=>({...f,title:e.target.value}))} placeholder="Np. Matematyka / Kartkówka / Fortepian" required /></label>
+          <label className="field"><span>Rodzaj</span><select value={form.type} onChange={(e)=>{
+            const type=e.target.value as SchoolType;
+            setForm((f)=>({...f,type,title:type === 'attendance' ? 'Obecność' : f.title}));
+          }}>{(Object.keys(SCHOOL_META) as SchoolType[]).map((type)=><option key={type} value={type}>{SCHOOL_META[type].icon} {SCHOOL_META[type].label}</option>)}</select></label>
+          {form.type === 'attendance' ? <label className="field field-wide"><span>Status</span><select value={form.title} onChange={(e)=>setForm((f)=>({...f,title:e.target.value}))}><option>Obecność</option><option>Nieobecność</option><option>Spóźnienie</option></select></label> : <label className="field field-wide"><span>Nazwa</span><input value={form.title} onChange={(e)=>setForm((f)=>({...f,title:e.target.value}))} placeholder="Np. Matematyka / Kartkówka / Zadanie" required /></label>}
           <label className="field"><span>Przedmiot</span><input value={form.subject} onChange={(e)=>setForm((f)=>({...f,subject:e.target.value}))} placeholder="Matematyka" /></label>
           {(form.type === 'lesson' || form.type === 'activity') && <label className="field"><span>Dzień tygodnia</span><select value={form.weekday} onChange={(e)=>setForm((f)=>({...f,weekday:Number(e.target.value)}))}><option value={1}>Poniedziałek</option><option value={2}>Wtorek</option><option value={3}>Środa</option><option value={4}>Czwartek</option><option value={5}>Piątek</option><option value={6}>Sobota</option><option value={7}>Niedziela</option></select></label>}
           {(form.type !== 'lesson' && form.type !== 'activity') && <label className="field"><span>Data / termin</span><input type="date" value={form.date} onChange={(e)=>setForm((f)=>({...f,date:e.target.value}))} /></label>}
