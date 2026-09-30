@@ -22,7 +22,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.9';
+const APP_VERSION = '1.3.10';
 const APP_UPDATED = '30.09.2026';
 
 /* =========================================================
@@ -713,9 +713,11 @@ function Sidebar({ page, goTo, member }: { page: Page; goTo: (page: Page) => voi
           </button>
         ))}
       </nav>
-      <div className="sidebar-bottom-art">
-        <strong>Razem<br />zawsze lepiej ♡</strong>
-        <small>{member?.name || 'Nasza Rodzina'}</small>
+      <div className="sidebar-bottom-art sidebar-logo-art">
+        <img src="/nasza-rodzina-logo.svg" alt="Nasza Rodzina" />
+        <strong>Nasza Rodzina</strong>
+        <span>Razem zawsze lepiej ♡</span>
+        <small>v{APP_VERSION}</small>
       </div>
     </aside>
   );
@@ -744,18 +746,37 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
   const [events, setEvents] = useState<CalendarEventData[]>([]);
   const [schoolRecords, setSchoolRecords] = useState<SchoolRecord[]>([]);
   const [shopping, setShopping] = useState<ShoppingItem[]>([]);
+  const [healthRecords, setHealthRecords] = useState<HealthRecord[]>([]);
+  const [healthAlerts, setHealthAlerts] = useState<HealthAlert[]>([]);
   const [weather, setWeather] = useState<{ temp: number; max: number; min: number; wind: number; label: string; icon: string } | null>(null);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const defaultWidgetOrder = ['day','ends','free','school','tasks','shopping','health','events','quick'];
+  const layoutKey=`nr-start-order:${auth.currentUser?.uid || member?.name || 'family'}`;
+  const [widgetOrder, setWidgetOrder] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(layoutKey);
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) && parsed.length === defaultWidgetOrder.length ? parsed : defaultWidgetOrder;
+    } catch { return defaultWidgetOrder; }
+  });
+  const widgetOrderRef = useRef<string[]>(widgetOrder);
+  useEffect(() => { widgetOrderRef.current = widgetOrder; }, [widgetOrder]);
+  const dragRef = useRef<{
+    id:string; pointerId:number; startX:number; startY:number; offsetX:number; offsetY:number;
+    timer:number; active:boolean; source:HTMLElement; ghost:HTMLElement | null;
+  } | null>(null);
 
   useEffect(() => onSnapshot(collection(db, 'members'), (snap) => {
     const next = snap.docs.map((d): FamilyMemberDoc => {
       const x = d.data();
+      const personName = String(x.name || 'Rodzina');
       return {
         id: d.id,
-        name: String(x.name || 'Rodzina'),
-        role: personRole(String(x.name || ''), typeof x.role === 'string' ? x.role : ''),
+        name: personName,
+        role: personRole(personName, typeof x.role === 'string' ? x.role : ''),
         photoURL: typeof x.photoURL === 'string' ? x.photoURL : undefined,
         active: x.active !== false,
-        birthDate: typeof x.birthDate === 'string' ? x.birthDate : FAMILY_BIRTHDAYS[String(x.name || '') as PersonKey],
+        birthDate: typeof x.birthDate === 'string' ? x.birthDate : FAMILY_BIRTHDAYS[personName as PersonKey],
       };
     });
     next.sort((a, b) => FAMILY_ORDER.indexOf(a.name) - FAMILY_ORDER.indexOf(b.name));
@@ -763,337 +784,260 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
   }), []);
 
   useEffect(() => onSnapshot(collection(db, 'tasks'), (snap) => {
-    const next = snap.docs.map((d): TaskItem => {
+    setTasks(snap.docs.map((d): TaskItem => {
       const x = d.data();
       return {
-        id: d.id,
-        title: String(x.title || ''),
-        person: isPersonKey(x.person) ? x.person : 'family',
-        done: x.done === true,
-        dueDate: typeof x.dueDate === 'string' ? x.dueDate : '',
-        priority: x.priority === 'low' || x.priority === 'high' ? x.priority : 'normal',
-        note: typeof x.note === 'string' ? x.note : '',
-        points: Number(x.points || 0),
-        requireApproval: x.requireApproval === true,
+        id: d.id, title: String(x.title || ''), person: isPersonKey(x.person) ? x.person : 'family', done: x.done === true,
+        dueDate: typeof x.dueDate === 'string' ? x.dueDate : '', priority: x.priority === 'low' || x.priority === 'high' ? x.priority : 'normal',
+        note: typeof x.note === 'string' ? x.note : '', points: Number(x.points || 0), requireApproval: x.requireApproval === true,
         approvalStatus: x.approvalStatus === 'pending' || x.approvalStatus === 'approved' ? x.approvalStatus : 'none',
         repeat: x.repeat === 'daily' || x.repeat === 'weekly' || x.repeat === 'monthly' ? x.repeat : 'none',
         createdAt: x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
         completedAt: x.completedAt instanceof Timestamp ? x.completedAt.toDate() : undefined,
       };
-    });
-    setTasks(next);
+    }));
   }), []);
 
   useEffect(() => onSnapshot(collection(db, 'shoppingItems'), (snap) => {
-    const next = snap.docs.map((d): ShoppingItem => {
-      const x = d.data();
-      const productTitle = String(x.title || '');
-      return {
-        id: d.id,
-        title: productTitle,
-        done: x.done === true,
-        category: isShoppingCategory(x.category) ? x.category : categorizeProduct(productTitle),
-        quantity: typeof x.quantity === 'string' ? x.quantity : '',
-        unit: typeof x.unit === 'string' ? x.unit : '',
-        createdAt: x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
-      };
-    });
-    setShopping(next);
+    setShopping(snap.docs.map((d): ShoppingItem => {
+      const x = d.data(); const productTitle = String(x.title || '');
+      return { id:d.id, title:productTitle, done:x.done === true, category:isShoppingCategory(x.category) ? x.category : categorizeProduct(productTitle), quantity:typeof x.quantity === 'string' ? x.quantity : '', unit:typeof x.unit === 'string' ? x.unit : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
+    }));
   }), []);
 
-  useEffect(() => onSnapshot(collection(db, 'calendarEvents'), (snapshot) => {
-    const loaded: CalendarEventData[] = [];
-    snapshot.forEach((eventDoc) => {
-      const data = eventDoc.data();
-      if (!(data.date instanceof Timestamp)) return;
-      const start = data.date.toDate();
-      loaded.push({
-        id: eventDoc.id,
-        title: typeof data.title === 'string' && data.title.trim() ? data.title : 'Wydarzenie',
-        person: isPersonKey(data.person) ? data.person : 'family',
-        date: start,
-        endDate: data.endDate instanceof Timestamp ? data.endDate.toDate() : new Date(start.getTime() + 3600000),
-        allDay: data.allDay === true,
-        description: typeof data.description === 'string' ? data.description : '',
-        createdBy: typeof data.createdBy === 'string' ? data.createdBy : '',
-        repeat: isRepeatType(data.repeat) ? data.repeat : 'none',
-        repeatUntil: data.repeatUntil instanceof Timestamp ? data.repeatUntil.toDate() : null,
-      });
+  useEffect(() => onSnapshot(collection(db, 'calendarEvents'), (snap) => {
+    const next: CalendarEventData[] = [];
+    snap.forEach((d) => {
+      const x=d.data(); if (!(x.date instanceof Timestamp)) return;
+      const start=x.date.toDate();
+      next.push({ id:d.id, title:String(x.title || 'Wydarzenie'), person:isPersonKey(x.person) ? x.person : 'family', date:start, endDate:x.endDate instanceof Timestamp ? x.endDate.toDate() : new Date(start.getTime()+3600000), allDay:x.allDay === true, description:typeof x.description === 'string' ? x.description : '', createdBy:typeof x.createdBy === 'string' ? x.createdBy : '', repeat:isRepeatType(x.repeat) ? x.repeat : 'none', repeatUntil:x.repeatUntil instanceof Timestamp ? x.repeatUntil.toDate() : null });
     });
-    setEvents(loaded);
+    setEvents(next);
   }), []);
 
   useEffect(() => onSnapshot(collection(db, 'schoolItems'), (snap) => {
-    const next = snap.docs.map((d): SchoolRecord => {
-      const x = d.data();
-      return {
-        id: d.id,
-        title: String(x.title || ''),
-        person: isPersonKey(x.person) ? x.person : 'Nikodem',
-        type: isSchoolType(x.type) ? x.type : 'homework',
-        subject: typeof x.subject === 'string' ? x.subject : '',
-        date: typeof x.date === 'string' ? x.date : '',
-        time: typeof x.time === 'string' ? x.time : '',
-        endTime: typeof x.endTime === 'string' ? x.endTime : '',
-        weekday: Number(x.weekday || 0),
-        note: typeof x.note === 'string' ? x.note : '',
-        createdAt: x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
-      };
-    });
-    setSchoolRecords(next);
+    setSchoolRecords(snap.docs.map((d): SchoolRecord => {
+      const x=d.data();
+      return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'Nikodem', type:isSchoolType(x.type) ? x.type : 'homework', subject:typeof x.subject === 'string' ? x.subject : '', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', endTime:typeof x.endTime === 'string' ? x.endTime : '', weekday:Number(x.weekday || 0), note:typeof x.note === 'string' ? x.note : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
+    }));
+  }), []);
+
+  useEffect(() => onSnapshot(collection(db, 'healthRecords'), (snap) => {
+    setHealthRecords(snap.docs.map((d): HealthRecord => {
+      const x=d.data();
+      const legacyTime=typeof x.medicineTime === 'string' ? x.medicineTime : (typeof x.time === 'string' ? x.time : '');
+      const rawTimes=Array.isArray(x.medicineTimes) ? x.medicineTimes.filter((v:unknown)=>typeof v === 'string') as string[] : [];
+      return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', type:isHealthType(x.type) ? x.type : 'history', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', doctor:typeof x.doctor === 'string' ? x.doctor : '', location:typeof x.location === 'string' ? x.location : '', note:typeof x.note === 'string' ? x.note : '', specialty:typeof x.specialty === 'string' ? x.specialty : '', status:isHealthStatus(x.status) ? x.status : (x.type === 'visit' ? 'planned' : 'done'), referralCode:typeof x.referralCode === 'string' ? x.referralCode : '', nextControl:typeof x.nextControl === 'string' ? x.nextControl : '', callReminderDate:typeof x.callReminderDate === 'string' ? x.callReminderDate : '', documentURL:typeof x.documentURL === 'string' ? x.documentURL : '', privateToParents:x.privateToParents === true, sharedWithPerson:x.sharedWithPerson === true, dose:typeof x.dose === 'string' ? x.dose : '', medicineTime:legacyTime, medicineTimes:rawTimes.length ? rawTimes : (legacyTime ? [legacyTime] : []), escalationMinutes:Number.isFinite(Number(x.escalationMinutes)) ? Math.max(1,Number(x.escalationMinutes)) : 15, confirmedDate:typeof x.confirmedDate === 'string' ? x.confirmedDate : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
+    }));
+  }), []);
+
+  useEffect(() => onSnapshot(collection(db, 'healthAlerts'), (snap) => {
+    setHealthAlerts(snap.docs.map((d): HealthAlert => {
+      const x=d.data();
+      return { id:d.id, recordId:String(x.recordId || ''), person:isPersonKey(x.person) ? x.person : 'family', date:String(x.date || ''), time:String(x.time || ''), title:String(x.title || ''), dose:String(x.dose || ''), status:x.status === 'acknowledged' || x.status === 'resolved' ? x.status : 'open', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
+    }));
   }), []);
 
   useEffect(() => {
-    const controller = new AbortController();
+    const controller=new AbortController();
     async function loadWeather() {
       try {
-        const url = 'https://api.open-meteo.com/v1/forecast?latitude=54.176&longitude=15.576&current=temperature_2m,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min&timezone=Europe%2FWarsaw&forecast_days=1';
-        const response = await fetch(url, { signal: controller.signal });
-        if (!response.ok) throw new Error('weather');
-        const data = await response.json();
-        const code = Number(data.current?.weather_code ?? 0);
-        const weatherMeta = code <= 1 ? ['Słonecznie', '☀️'] : code <= 3 ? ['Częściowe zachmurzenie', '⛅'] : code <= 48 ? ['Mgła / chmury', '🌫️'] : code <= 67 ? ['Deszcz', '🌧️'] : code <= 77 ? ['Śnieg', '🌨️'] : code <= 82 ? ['Przelotny deszcz', '🌦️'] : ['Burze', '⛈️'];
-        setWeather({ temp: Math.round(data.current?.temperature_2m ?? 0), max: Math.round(data.daily?.temperature_2m_max?.[0] ?? 0), min: Math.round(data.daily?.temperature_2m_min?.[0] ?? 0), wind: Math.round(data.current?.wind_speed_10m ?? 0), label: weatherMeta[0], icon: weatherMeta[1] });
-      } catch (error) {
-        if ((error as Error).name !== 'AbortError') console.warn('Pogoda chwilowo niedostępna');
-      }
+        const url='https://api.open-meteo.com/v1/forecast?latitude=54.176&longitude=15.576&current=temperature_2m,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min&timezone=Europe%2FWarsaw&forecast_days=1';
+        const response=await fetch(url,{signal:controller.signal}); if(!response.ok) throw new Error('weather');
+        const data=await response.json(); const code=Number(data.current?.weather_code ?? 0);
+        const meta=code<=1 ? ['Słonecznie','☀️'] : code<=3 ? ['Częściowe zachmurzenie','⛅'] : code<=48 ? ['Mgła / chmury','🌫️'] : code<=67 ? ['Deszcz','🌧️'] : code<=77 ? ['Śnieg','🌨️'] : code<=82 ? ['Przelotny deszcz','🌦️'] : ['Burze','⛈️'];
+        setWeather({temp:Math.round(data.current?.temperature_2m ?? 0),max:Math.round(data.daily?.temperature_2m_max?.[0] ?? 0),min:Math.round(data.daily?.temperature_2m_min?.[0] ?? 0),wind:Math.round(data.current?.wind_speed_10m ?? 0),label:meta[0],icon:meta[1]});
+      } catch(error) { if ((error as Error).name !== 'AbortError') console.warn('Pogoda chwilowo niedostępna'); }
     }
-    void loadWeather();
-    const timer = window.setInterval(() => void loadWeather(), 30 * 60 * 1000);
-    return () => { controller.abort(); window.clearInterval(timer); };
-  }, []);
+    void loadWeather(); const timer=window.setInterval(()=>void loadWeather(),30*60*1000);
+    return ()=>{controller.abort();window.clearInterval(timer);};
+  },[]);
 
-  const now = new Date();
-  const todayStart = startOfDay(now);
-  const todayEnd = endOfDay(now);
-  const todayOccurrences = useMemo(() => events
-    .flatMap((event) => generateOccurrences(event, todayStart, todayEnd))
-    .sort((a, b) => a.date.getTime() - b.date.getTime()), [events, todayStart.getTime(), todayEnd.getTime()]);
+  const now=new Date();
+  const todayKey=formatDateInput(now);
+  const todayWeekday=now.getDay()===0 ? 7 : now.getDay();
+  const todayStart=startOfDay(now); const todayEnd=endOfDay(now);
+  const todayOccurrences=useMemo(()=>events.flatMap((event)=>generateOccurrences(event,todayStart,todayEnd)).sort((a,b)=>a.date.getTime()-b.date.getTime()),[events,todayKey]);
+  const todaySchoolItems=useMemo(()=>schoolRecords.filter((r)=>(r.type==='lesson' || r.type==='activity') && (r.weekday===todayWeekday || (!!r.date && r.date===todayKey))).sort((a,b)=>(a.time || '99:99').localeCompare(b.time || '99:99')),[schoolRecords,todayWeekday,todayKey]);
 
-  const priorityTasks = useMemo(() => tasks
-    .filter((item) => !item.done)
-    .sort((a, b) => (
-      { high: 0, normal: 1, low: 2 }[a.priority]
-      - { high: 0, normal: 1, low: 2 }[b.priority]
-      || (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99')
-    ))
-    .slice(0, 4), [tasks]);
+  function schoolStart(record:SchoolRecord){ return parseLocalDate(todayKey,record.time || '08:00'); }
+  function schoolEnd(record:SchoolRecord){ const start=schoolStart(record); const end=parseLocalDate(todayKey,record.endTime || record.time || '08:45'); return end>start ? end : new Date(start.getTime()+45*60000); }
 
-  const upcomingEvents = useMemo(() => {
-    const rangeStart = startOfDay(new Date());
-    const end = endOfDay(addDays(rangeStart, 45));
-    return events.flatMap((event) => generateOccurrences(event, rangeStart, end))
-      .sort((a, b) => a.date.getTime() - b.date.getTime())
-      .slice(0, 5);
-  }, [events]);
-
-  const openShopping = shopping.filter((item) => !item.done).slice(0, 5);
-
-  const todayKey = formatDateInput(now);
-  const todayWeekday = now.getDay() === 0 ? 7 : now.getDay();
-  const todaySchoolItems = useMemo(() => schoolRecords
-    .filter((r) => (r.type === 'lesson' || r.type === 'activity') && (r.weekday === todayWeekday || (!!r.date && r.date === todayKey)))
-    .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99')), [schoolRecords, todayWeekday, todayKey]);
-
-  function schoolStart(record: SchoolRecord) {
-    return parseLocalDate(todayKey, record.time || '08:00');
-  }
-  function schoolEnd(record: SchoolRecord) {
-    const start = schoolStart(record);
-    const end = parseLocalDate(todayKey, record.endTime || record.time || '08:45');
-    return end > start ? end : new Date(start.getTime() + 45 * 60000);
+  type StartPlanRow={ key:string; person:PersonKey; start:Date; end:Date; title:string; icon:string; place:string; source:'calendar'|'school'; allDay:boolean };
+  function planForPerson(personName:string):StartPlanRow[] {
+    const key=personName as PersonKey;
+    const calendarRows=todayOccurrences.filter((o)=>o.source.person===key || o.source.person==='family').map((o):StartPlanRow=>({key:o.key,person:key,start:o.date,end:o.endDate,title:o.source.title,icon:eventActivityIcon(o.source.title),place:o.source.description || '',source:'calendar',allDay:o.source.allDay}));
+    const schoolRows=todaySchoolItems.filter((r)=>r.person===key).map((r):StartPlanRow=>({key:`school-${r.id}`,person:key,start:schoolStart(r),end:schoolEnd(r),title:r.type==='activity' ? r.title : (r.subject || r.title),icon:subjectIcon(r.subject || r.title),place:r.note || 'Szkoła',source:'school',allDay:false}));
+    return [...calendarRows,...schoolRows].sort((a,b)=>a.start.getTime()-b.start.getTime());
   }
 
-  const allFreeAt = useMemo(() => {
-    const ends: Date[] = todayOccurrences
-      .filter((o) => o.source.person !== 'family' && !o.source.allDay)
-      .map((o) => o.endDate);
-    for (const item of todaySchoolItems) ends.push(schoolEnd(item));
-    if (!ends.length) return 'Teraz';
-    return formatTime(ends.reduce((max, value) => value > max ? value : max, ends[0]));
-  }, [todayOccurrences, todaySchoolItems, todayKey]);
-
-  function planForPerson(personName: string) {
-    const key = personName as PersonKey;
-    const calendarRows = todayOccurrences
-      .filter((o) => o.source.person === key)
-      .map((o) => ({ key:o.key, start:o.date, end:o.endDate, title:o.source.title, icon:eventActivityIcon(o.source.title), allDay:o.source.allDay }));
-    const schoolRows = todaySchoolItems
-      .filter((r) => r.person === key)
-      .map((r) => ({ key:`school-${r.id}`, start:schoolStart(r), end:schoolEnd(r), title:r.type === 'activity' ? r.title : (r.subject || r.title), icon:subjectIcon(r.subject || r.title), allDay:false }));
-    return [...calendarRows, ...schoolRows].sort((a,b)=>a.start.getTime()-b.start.getTime());
+  function liveStatus(personName:string) {
+    const rows=planForPerson(personName).filter((r)=>!r.allDay);
+    const active=rows.find((r)=>r.start<=now && r.end>now);
+    const next=rows.find((r)=>r.start>now);
+    if (active) {
+      return { tone:'busy', label:active.title, detail:active.place || `do ${formatTime(active.end)}`, until:`do ${formatTime(active.end)}`, next:next ? `${next.title} ${formatTime(next.start)}` : 'Później wolny' };
+    }
+    if (next) {
+      const minutes=Math.round((next.start.getTime()-now.getTime())/60000);
+      if (minutes<=30) return { tone:'break', label:'Przerwa', detail:`do ${formatTime(next.start)}`, until:`za ${Math.max(1,minutes)} min`, next:`${next.title} ${formatTime(next.start)}` };
+      return { tone:'free', label:personName==='Layla' ? 'W domu' : 'Wolny', detail:'Brak zajęć teraz', until:'', next:`${next.title} ${formatTime(next.start)}` };
+    }
+    return { tone:'free', label:personName==='Layla' ? 'W domu' : 'Wolny', detail:'Brak planów', until:'', next:'Brak kolejnych zajęć' };
   }
 
-  function personStatus(personName: string) {
-    const rows = planForPerson(personName);
-    const active = rows.find((o) => !o.allDay && o.start <= now && o.end > now);
-    if (active) return `${active.icon} ${active.title} do ${formatTime(active.end)}`;
-    const next = rows.find((o) => o.start > now);
-    if (next) return `${next.icon} ${next.title} ${formatTime(next.start)}`;
-    return '🟢 Wolny';
+  const familyStatus=members.slice(0,5).map((m)=>({member:m,status:liveStatus(m.name)}));
+  const allFreeAt=useMemo(()=>{
+    const ends:Date[]=[];
+    members.forEach((m)=>planForPerson(m.name).forEach((r)=>{ if(!r.allDay && r.end>now) ends.push(r.end); }));
+    if(!ends.length) return 'Teraz';
+    const latest=ends.reduce((max,d)=>d>max ? d : max,ends[0]);
+    return latest<=now ? 'Teraz' : formatTime(latest);
+  },[todayOccurrences,todaySchoolItems,members,todayKey]);
+
+  const dayPlan=useMemo(()=>{
+    const calendarRows=todayOccurrences.map((o):StartPlanRow=>({ key:o.key, person:o.source.person, start:o.date, end:o.endDate, title:o.source.title, icon:eventActivityIcon(o.source.title), place:o.source.description || '', source:'calendar', allDay:o.source.allDay }));
+    const schoolRows=todaySchoolItems.map((r):StartPlanRow=>({ key:`school-${r.id}`, person:r.person, start:schoolStart(r), end:schoolEnd(r), title:r.type==='activity' ? r.title : (r.subject || r.title), icon:subjectIcon(r.subject || r.title), place:r.note || 'Szkoła', source:'school', allDay:false }));
+    return [...calendarRows,...schoolRows].sort((a,b)=>a.start.getTime()-b.start.getTime()).slice(0,7);
+  },[todayOccurrences,todaySchoolItems,todayKey]);
+
+  const priorityTasks=useMemo(()=>tasks.filter((t)=>!t.done).sort((a,b)=>(({high:0,normal:1,low:2}[a.priority]-{high:0,normal:1,low:2}[b.priority]) || (a.dueDate || '9999').localeCompare(b.dueDate || '9999'))).slice(0,4),[tasks]);
+  const openShopping=shopping.filter((i)=>!i.done).slice(0,5);
+  const upcomingEvents=useMemo(()=>events.flatMap((e)=>generateOccurrences(e,startOfDay(now),endOfDay(addDays(now,45)))).filter((o)=>o.endDate>=now).sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,4),[events,todayKey]);
+  const upcomingVisits=useMemo(()=>healthRecords.filter((r)=>r.type==='visit' && r.status!=='cancelled' && r.date>=todayKey).sort((a,b)=>(`${a.date} ${a.time}`).localeCompare(`${b.date} ${b.time}`)).slice(0,2),[healthRecords,todayKey]);
+  const dueMedicines=useMemo(()=>healthRecords.filter((r)=>r.type==='medicine' && (r.medicineTimes.length || r.medicineTime)).filter((r)=>r.confirmedDate!==todayKey),[healthRecords,todayKey]);
+  const schoolTests=useMemo(()=>schoolRecords.filter((r)=>r.type==='test' && r.date>=todayKey).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,2),[schoolRecords,todayKey]);
+  const schoolHomework=useMemo(()=>schoolRecords.filter((r)=>r.type==='homework' && (!r.date || r.date>=todayKey)).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,2),[schoolRecords,todayKey]);
+  const todayLabel=capitalize(now.toLocaleDateString('pl-PL',{weekday:'long',day:'numeric',month:'long',year:'numeric'}));
+
+  const notificationItems=useMemo(()=>{
+    const list:Array<{id:string;icon:string;title:string;meta:string;page:Page}>=[];
+    healthAlerts.filter((a)=>a.status==='open').slice(0,3).forEach((a)=>list.push({id:`h-${a.id}`,icon:'❤️',title:`Lek: ${a.title}`,meta:`${personLabel(a.person)} · ${a.time || 'do potwierdzenia'}`,page:'Zdrowie'}));
+    tasks.filter((t)=>!t.done && (t.approvalStatus==='pending' || t.dueDate===todayKey)).slice(0,3).forEach((t)=>list.push({id:`t-${t.id}`,icon:'✅',title:t.title,meta:`${personLabel(t.person)} · ${t.approvalStatus==='pending' ? 'do zatwierdzenia' : 'dzisiaj'}`,page:'Zadania'}));
+    schoolTests.slice(0,2).forEach((r)=>list.push({id:`s-${r.id}`,icon:'🎓',title:`Sprawdzian: ${r.subject || r.title}`,meta:`${personLabel(r.person)} · ${formatShortDate(r.date)}`,page:'Szkoła'}));
+    upcomingEvents.filter((o)=>o.date.getTime()-now.getTime()<=24*3600000).slice(0,2).forEach((o)=>list.push({id:`e-${o.key}`,icon:'📅',title:o.source.title,meta:`${o.source.person==='family' ? 'Rodzina' : personLabel(o.source.person)} · ${formatTime(o.date)}`,page:'Kalendarz'}));
+    return list.slice(0,8);
+  },[healthAlerts,tasks,schoolTests,upcomingEvents,todayKey]);
+
+  function openFamily(person?:string) {
+    try { sessionStorage.setItem('nr-family-focus', person && isPersonKey(person) ? person : 'family'); } catch { /* ignore */ }
+    goTo('Rodzina');
   }
 
-  const todayLabel = capitalize(now.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' }));
-  const openTasksCount = tasks.filter((item) => !item.done).length;
-  const openShoppingCount = shopping.filter((item) => !item.done).length;
+  function lastEndFor(personName:string) {
+    const rows=planForPerson(personName).filter((r)=>!r.allDay && r.end>now);
+    if(!rows.length) return null;
+    return rows.reduce((max,r)=>r.end>max ? r.end : max,rows[0].end);
+  }
 
-  const dayPlan = [
-    ...todayOccurrences.map((occurrence) => ({
-      key: `cal-${occurrence.key}`,
-      start: occurrence.date,
-      end: occurrence.endDate,
-      title: occurrence.source.title,
-      person: occurrence.source.person,
-      place: occurrence.source.description || (occurrence.source.person === 'family' ? 'Rodzina' : ''),
-      icon: eventActivityIcon(occurrence.source.title),
-      allDay: occurrence.source.allDay,
-    })),
-    ...todaySchoolItems.map((record) => ({
-      key: `school-${record.id}`,
-      start: schoolStart(record),
-      end: schoolEnd(record),
-      title: record.type === 'activity' ? record.title : (record.subject || record.title),
-      person: record.person,
-      place: record.note || 'Szkoła',
-      icon: subjectIcon(record.subject || record.title),
-      allDay: false,
-    })),
-  ].sort((a, b) => a.start.getTime() - b.start.getTime()).slice(0, 8);
+  function persistOrder(next:string[]) {
+    widgetOrderRef.current=next;
+    setWidgetOrder(next);
+    try { localStorage.setItem(layoutKey,JSON.stringify(next)); } catch { /* ignore */ }
+  }
 
-  return (
-    <div className="page-content start-dashboard-page start-v139">
-      <header className="start-app-header">
-        <div><small>Rodzinne centrum</small><strong>Nasza Rodzina</strong></div>
-        <div className="start-header-actions">
-          <button type="button" aria-label="Szukaj" title="Szukaj">⌕</button>
-          <button type="button" aria-label="Powiadomienia" title="Powiadomienia">🔔</button>
-          <div className="start-current-user">
-            <div><strong>{name}</strong><small>{member?.role || 'Rodzina'}</small></div>
-            <span>{member?.photoURL ? <img src={member.photoURL} alt="" /> : memberEmoji(name)}</span>
-          </div>
-          <button type="button" className="start-logout" onClick={() => void signOut(auth)}>Wyloguj</button>
-        </div>
-      </header>
+  function beginTilePress(id:string,e:React.PointerEvent<HTMLElement>) {
+    if (e.pointerType==='mouse' && e.button!==0) return;
+    const source=e.currentTarget;
+    const rect=source.getBoundingClientRect();
+    try { source.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    const holder={id,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,offsetX:e.clientX-rect.left,offsetY:e.clientY-rect.top,timer:0,active:false,source,ghost:null as HTMLElement|null};
+    holder.timer=window.setTimeout(()=>{
+      const ghost=source.cloneNode(true) as HTMLElement;
+      ghost.classList.add('start-drag-ghost');
+      ghost.style.width=`${rect.width}px`; ghost.style.height=`${rect.height}px`;
+      ghost.style.left=`${e.clientX-holder.offsetX}px`; ghost.style.top=`${e.clientY-holder.offsetY}px`;
+      document.body.appendChild(ghost);
+      source.classList.add('start-drag-source');
+      holder.ghost=ghost; holder.active=true;
+      document.body.classList.add('start-is-dragging');
+      if (navigator.vibrate) navigator.vibrate(20);
+    },430);
+    dragRef.current=holder;
+  }
 
-      <section className="start-family-weather-row">
-        <div className="start-family-switcher" aria-label="Profile rodziny">
-          <button className="start-person-tile all" type="button" onClick={() => goTo('Rodzina')}>
-            <span className="start-person-avatar all">👨‍👩‍👧‍👦</span>
-            <strong>Wszyscy</strong><small>Cała rodzina</small>
-          </button>
-          {members.slice(0, 5).map((person) => (
-            <button key={person.id} className="start-person-tile" type="button" onClick={() => goTo('Rodzina')} title={`Profil: ${person.name}`}>
-              <span className="start-person-avatar">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span>
-              <span className={`start-online-dot ${person.active ? 'on' : ''}`} />
-              <strong>{person.name}</strong><small>{personRole(person.name, person.role)}</small>
-            </button>
-          ))}
-        </div>
+  function moveTile(e:React.PointerEvent<HTMLElement>) {
+    const d=dragRef.current; if(!d || d.pointerId!==e.pointerId) return;
+    if(!d.active) {
+      if(Math.hypot(e.clientX-d.startX,e.clientY-d.startY)>12) { window.clearTimeout(d.timer); dragRef.current=null; }
+      return;
+    }
+    e.preventDefault();
+    if(d.ghost) { d.ghost.style.left=`${e.clientX-d.offsetX}px`; d.ghost.style.top=`${e.clientY-d.offsetY}px`; }
+    const target=document.elementFromPoint(e.clientX,e.clientY)?.closest<HTMLElement>('[data-start-widget]');
+    const targetId=target?.dataset.startWidget;
+    if(targetId && targetId!==d.id) {
+      setWidgetOrder((current)=>{
+        const next=[...current]; const from=next.indexOf(d.id); const to=next.indexOf(targetId);
+        if(from<0 || to<0 || from===to) return current;
+        next.splice(from,1); next.splice(to,0,d.id); widgetOrderRef.current=next; return next;
+      });
+    }
+    const edge=72;
+    if(e.clientY<edge) window.scrollBy({top:-18,behavior:'auto'});
+    else if(e.clientY>window.innerHeight-edge) window.scrollBy({top:18,behavior:'auto'});
+  }
 
-        <div className="start-weather-v139" title="Pogoda: Open-Meteo">
-          <div className="weather-city">Kołobrzeg</div>
-          <div className="weather-center"><span>{weather?.icon || '🌤️'}</span><strong>{weather ? `${weather.temp}°C` : '—°C'}</strong></div>
-          <small>{todayLabel}</small>
-          {weather && <div className="weather-mini"><span>↑ {weather.max}°C</span><span>↓ {weather.min}°C</span><span>≋ {weather.wind} km/h</span></div>}
-        </div>
-      </section>
+  function endTilePress(e?:React.PointerEvent<HTMLElement>) {
+    const d=dragRef.current; if(!d) return;
+    window.clearTimeout(d.timer);
+    if(d.active) {
+      d.ghost?.remove(); d.source.classList.remove('start-drag-source'); document.body.classList.remove('start-is-dragging');
+      persistOrder(widgetOrderRef.current);
+      e?.preventDefault();
+    }
+    dragRef.current=null;
+  }
 
-      <section className="start-hero-v139">
-        <div className="start-hero-copy-v139">
-          <small>Dzień dobry 👋</small>
-          <h1>Cześć,<br /><span>{name}!</span></h1>
-          <p>Miło Cię znowu widzieć.<br />Dobrego dnia dla całej rodziny!</p>
-          <button type="button" onClick={() => goTo('Kalendarz')}>👨‍👩‍👧‍👦 Wszyscy wolni od <strong>{allFreeAt}</strong> ›</button>
-        </div>
-        <div className="start-hero-family-art" aria-hidden="true">
-          <span>👨‍👩‍👧‍👦</span>
-          <p>„Małe kroki,<br />wielkie rzeczy<br />w naszej rodzinie.”</p>
-        </div>
-      </section>
+  function tileProps(id:string) {
+    return {
+      'data-start-widget':id,
+      onPointerDown:(e:React.PointerEvent<HTMLElement>)=>beginTilePress(id,e),
+      onPointerMove:moveTile,
+      onPointerUp:endTilePress,
+      onPointerCancel:endTilePress,
+    };
+  }
 
-      <section className="start-today-bar">
-        <div><span>📅</span><strong>Dziś – {todayLabel}</strong></div>
-        <button type="button" onClick={() => goTo('Kalendarz')}>Pełny plan dnia ›</button>
-      </section>
+  const studentSummary=(person:'Paweł'|'Nikodem')=>{
+    const rows=planForPerson(person).filter((r)=>r.source==='school');
+    const active=rows.find((r)=>r.start<=now && r.end>now);
+    const last=rows[rows.length-1];
+    return { active, last };
+  };
 
-      <section className="start-main-grid-v139">
-        <article className="start-card-v139 start-day-plan-card">
-          <header><div><span>🗓️</span><strong>Plan dnia – wszyscy</strong></div><button onClick={() => goTo('Kalendarz')}>Zobacz cały dzień ›</button></header>
-          <div className="start-day-list">
-            {dayPlan.length === 0 ? <p className="start-empty-v139">Dziś nie ma jeszcze wpisów w planie.</p> : dayPlan.map((item) => (
-              <button key={item.key} className="start-day-row" type="button" onClick={() => goTo(item.key.startsWith('school-') ? 'Szkoła' : 'Kalendarz')}>
-                <i style={{ background: personColor(item.person as PersonKey) }} />
-                <time>{item.allDay ? 'Cały dzień' : `${formatTime(item.start)} – ${formatTime(item.end)}`}</time>
-                <span className="start-day-person"><b>{item.person === 'family' ? 'Rodzina' : personLabel(item.person as PersonKey)}</b></span>
-                <span className="start-day-title">{item.icon} {item.title}</span>
-                <small>{item.place}</small>
-                <em>›</em>
-              </button>
-            ))}
-          </div>
-        </article>
+  const widgets:Record<string,React.ReactNode>={
+    day:<article className="start1310-card start1310-day" {...tileProps('day')}><header><div><span>📅</span><strong>Plan dnia – dziś</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz cały dzień ›</button></header><div className="start1310-day-list">{dayPlan.length ? dayPlan.map((item)=><button key={`${item.person}-${item.key}`} onClick={()=>goTo(item.source==='school' ? 'Szkoła' : 'Kalendarz')}><i style={{background:personColor(item.person)}}/><span className="mini-person">{members.find((m)=>m.name===item.person)?.photoURL ? <img src={members.find((m)=>m.name===item.person)?.photoURL} alt=""/> : memberEmoji(item.person)}</span><time>{item.allDay ? 'Cały dzień' : `${formatTime(item.start)} – ${formatTime(item.end)}`}</time><strong>{personLabel(item.person)}</strong><span>{item.icon} {item.title}</span><em>›</em></button>) : <p className="start1310-empty">Brak wpisów na dziś.</p>}</div></article>,
+    ends:<article className="start1310-card start1310-ends" {...tileProps('ends')}><header><div><span>🕒</span><strong>Kto kiedy kończy?</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz więcej ›</button></header><div>{members.slice(0,5).map((m)=>{const s=liveStatus(m.name);const last=lastEndFor(m.name);return <button key={m.id} onClick={()=>openFamily(m.name)}><span className="mini-person">{m.photoURL ? <img src={m.photoURL} alt=""/> : memberEmoji(m.name)}</span><strong>{m.name}</strong><time>{last ? formatTime(last) : '—'}</time><small className={`status-dot ${s.tone}`}/><em>{s.label}</em><b>›</b></button>;})}</div></article>,
+    free:<article className="start1310-card start1310-free" {...tileProps('free')}><header><span>👥</span><strong>Wszyscy wolni od</strong></header><b>{allFreeAt}</b><p>Najbliższy wspólny czas dla całej rodziny</p><div aria-hidden="true">⌂ ♡</div></article>,
+    school:<article className="start1310-card start1310-school" {...tileProps('school')}><header><div><span>🎓</span><strong>Szkoła</strong></div><button onClick={()=>goTo('Szkoła')}>Zobacz więcej ›</button></header>{(['Nikodem','Paweł'] as const).map((person)=>{const info=studentSummary(person);return <button className="school-person-summary" key={person} onClick={()=>goTo('Szkoła')}><span className="mini-person">{members.find((m)=>m.name===person)?.photoURL ? <img src={members.find((m)=>m.name===person)?.photoURL} alt=""/> : memberEmoji(person)}</span><span><strong>{person}</strong>{info.active ? <><b>Trwa lekcja: {info.active.title}</b><small>{formatTime(info.active.start)} – {formatTime(info.active.end)}{info.active.place ? ` · ${info.active.place}` : ''}</small></> : <><b>{info.last ? `Koniec lekcji: ${formatTime(info.last.end)}` : 'Brak lekcji dziś'}</b></>}</span></button>;})}{schoolTests[0] && <button className="school-next" onClick={()=>goTo('Szkoła')}><span>📝</span><div><strong>Najbliżej: {formatShortDate(schoolTests[0].date)} · Sprawdzian</strong><small>{schoolTests[0].subject || schoolTests[0].title}</small></div><em>›</em></button>}{!schoolTests[0] && schoolHomework[0] && <button className="school-next" onClick={()=>goTo('Szkoła')}><span>📚</span><div><strong>Zadanie domowe</strong><small>{schoolHomework[0].subject || schoolHomework[0].title}</small></div><em>›</em></button>}</article>,
+    tasks:<article className="start1310-card start1310-tasks" {...tileProps('tasks')}><header><div><span>✅</span><strong>Zadania – najważniejsze</strong></div><button onClick={()=>goTo('Zadania')}>Zobacz wszystkie ›</button></header><div>{priorityTasks.length ? priorityTasks.map((t)=><button key={t.id} onClick={()=>goTo('Zadania')}><span className="fake-check"/><span><strong>{t.title}</strong><small>{personLabel(t.person)}{t.points ? ` · +${t.points} pkt` : ''}</small></span><em>{t.dueDate===todayKey ? 'Dziś' : t.dueDate ? formatShortDate(t.dueDate) : 'Bez terminu'}</em></button>) : <p className="start1310-empty">Brak pilnych zadań ✨</p>}</div></article>,
+    shopping:<article className="start1310-card start1310-shopping" {...tileProps('shopping')}><header><div><span>🛒</span><strong>Zakupy</strong></div><button onClick={()=>goTo('Zakupy')}>Zobacz wszystkie ›</button></header><div>{openShopping.length ? openShopping.map((item)=><button key={item.id} onClick={()=>goTo('Zakupy')}><span className="fake-check"/><span>{SHOPPING_META[item.category].icon}</span><strong>{item.title}</strong><small>{item.quantity ? `${item.quantity} ${item.unit}` : ''}</small></button>) : <p className="start1310-empty">Lista zakupów jest pusta.</p>}</div>{shopping.filter((i)=>!i.done).length>5 && <p className="start1310-more">+ {shopping.filter((i)=>!i.done).length-5} więcej produktów</p>}</article>,
+    health:<article className="start1310-card start1310-health" {...tileProps('health')}><header><div><span>♡</span><strong>Zdrowie</strong></div><button onClick={()=>goTo('Zdrowie')}>Zobacz więcej ›</button></header><div>{upcomingVisits.length ? upcomingVisits.map((r)=><button key={r.id} onClick={()=>goTo('Zdrowie')}><span className="mini-person">{members.find((m)=>m.name===r.person)?.photoURL ? <img src={members.find((m)=>m.name===r.person)?.photoURL} alt=""/> : memberEmoji(r.person)}</span><span>🩺</span><div><strong>{personLabel(r.person)} · {r.specialty || r.title}</strong><small>{r.date===todayKey ? 'Dziś' : formatShortDate(r.date)}{r.time ? `, ${r.time}` : ''}</small></div><em>›</em></button>) : <p className="start1310-empty">Brak zaplanowanych wizyt.</p>}</div><div className={`start1310-med-status ${dueMedicines.length || healthAlerts.some((a)=>a.status==='open') ? 'alert' : 'ok'}`}>{dueMedicines.length || healthAlerts.some((a)=>a.status==='open') ? `🔔 ${dueMedicines.length || healthAlerts.filter((a)=>a.status==='open').length} lek(i) wymagają uwagi` : '✓ Brak leków do podania dziś'}</div></article>,
+    events:<article className="start1310-card start1310-events" {...tileProps('events')}><header><div><span>📅</span><strong>Nadchodzące wydarzenia</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz więcej ›</button></header><div>{upcomingEvents.length ? upcomingEvents.map((o)=><button key={o.key} onClick={()=>goTo('Kalendarz')}><span className="date-box"><b>{o.date.getDate()}</b><small>{o.date.toLocaleDateString('pl-PL',{month:'short'}).replace('.','').toUpperCase()}</small></span><div><strong>{o.source.title}{o.source.person!=='family' ? ` – ${personLabel(o.source.person)}` : ''}</strong><small>{o.source.allDay ? 'Cały dzień' : `${formatTime(o.date)} – ${formatTime(o.endDate)}`}</small></div></button>) : <p className="start1310-empty">Brak nadchodzących wydarzeń.</p>}</div></article>,
+    quick:<article className="start1310-card start1310-quick" {...tileProps('quick')}><header><div><span>⚡</span><strong>Szybkie dodawanie</strong></div></header><div><button onClick={()=>goTo('Kalendarz')}>📅<span>Dodaj wydarzenie</span></button><button onClick={()=>goTo('Zadania')}>✅<span>Dodaj zadanie</span></button><button onClick={()=>goTo('Zakupy')}>🛒<span>Dodaj zakup</span></button><button onClick={()=>goTo('Zdrowie')}>➕<span>Dodaj wizytę</span></button></div></article>,
+  };
 
-        <article className="start-card-v139 start-tasks-card">
-          <header><div><span>✅</span><strong>Najważniejsze zadania</strong></div><button onClick={() => goTo('Zadania')}>Zobacz wszystkie ›</button></header>
-          <div className="start-simple-list">
-            {priorityTasks.length === 0 ? <p className="start-empty-v139">Brak pilnych zadań — super! ✨</p> : priorityTasks.map((item) => (
-              <button key={item.id} type="button" onClick={() => goTo('Zadania')}>
-                <span className="start-task-check" />
-                <span><strong>{item.title}</strong><small>{personLabel(item.person)}{item.points ? ` · +${item.points} pkt` : ''}</small></span>
-                <em>{item.dueDate ? formatShortDate(item.dueDate) : item.priority === 'high' ? 'Pilne' : 'Bez terminu'}</em>
-              </button>
-            ))}
-          </div>
-        </article>
-      </section>
+  return <div className="start-v1310">
+    <header className="start1310-header">
+      <div><h1>Dzień dobry, {name}!</h1><p>{todayLabel}</p></div>
+      <div className="start1310-header-right">
+        <div className="start1310-weather"><span>{weather?.icon || '🌤️'}</span><div><small>Kołobrzeg</small><strong>{weather ? `${weather.temp}°C` : '—°C'}</strong></div>{weather && <p><b>{weather.label}</b><span>↑ {weather.max}° ↓ {weather.min}°</span></p>}</div>
+        <button className="start1310-icon-btn" title="Szukaj" type="button">⌕</button>
+        <div className="start1310-notification-wrap"><button className="start1310-icon-btn" type="button" title="Powiadomienia" onClick={()=>setNotificationsOpen((v)=>!v)}>🔔{notificationItems.length>0 && <i>{notificationItems.length}</i>}</button>{notificationsOpen && <aside className="start1310-notifications"><header><strong>Powiadomienia</strong><button onClick={()=>setNotificationsOpen(false)}>✕</button></header>{notificationItems.length ? notificationItems.map((n)=><button key={n.id} onClick={()=>{setNotificationsOpen(false);goTo(n.page);}}><span>{n.icon}</span><div><strong>{n.title}</strong><small>{n.meta}</small></div></button>) : <p>Wszystko załatwione ✓</p>}<footer><button onClick={()=>{try{sessionStorage.setItem('nr-settings-focus','notifications');}catch{} setNotificationsOpen(false);goTo('Ustawienia');}}>Ustawienia powiadomień</button><button title="Wycisz na godzinę">🔕 Wycisz</button></footer></aside>}</div>
+        <button className="start1310-user" type="button" onClick={()=>openFamily(name)}>{member?.photoURL ? <img src={member.photoURL} alt=""/> : memberEmoji(name)}</button>
+      </div>
+    </header>
 
-      <section className="start-bottom-grid-v139">
-        <article className="start-card-v139 start-shopping-card">
-          <header><div><span>🛒</span><strong>Lista zakupów</strong></div><button onClick={() => goTo('Zakupy')}>Pokaż więcej ›</button></header>
-          <div className="start-shopping-list">
-            {openShopping.length === 0 ? <p className="start-empty-v139">Lista zakupów jest pusta.</p> : openShopping.map((item) => (
-              <button key={item.id} type="button" onClick={() => goTo('Zakupy')}>
-                <span>{SHOPPING_META[item.category].icon}</span>
-                <strong>{item.title}</strong>
-                <small>{item.quantity} {item.unit}</small>
-              </button>
-            ))}
-          </div>
-          <button className="start-add-product" onClick={() => goTo('Zakupy')}>＋ Dodaj produkt</button>
-        </article>
+    <section className="start1310-family-strip">
+      {familyStatus.map(({member:person,status})=><button key={person.id} className={`start1310-person-card ${status.tone}`} onClick={()=>openFamily(person.name)}><span className="start1310-person-photo">{person.photoURL ? <img src={person.photoURL} alt=""/> : memberEmoji(person.name)}</span><div><strong>{person.name}</strong><b><i className={`status-dot ${status.tone}`}/>{status.label}</b><small>{status.detail}</small></div><p><small>Następnie</small><strong>{status.next}</strong></p></button>)}
+    </section>
 
-        <article className="start-card-v139 start-actions-card">
-          <header><div><span>⚡</span><strong>Szybkie akcje</strong></div></header>
-          <div className="start-actions-grid">
-            <button onClick={() => goTo('Zadania')}><span>＋</span><strong>Dodaj zadanie</strong></button>
-            <button onClick={() => goTo('Kalendarz')}><span>📅</span><strong>Dodaj wydarzenie</strong></button>
-            <button onClick={() => goTo('Zakupy')}><span>🛒</span><strong>Dodaj zakup</strong></button>
-            <button onClick={() => goTo('Czat')}><span>💬</span><strong>Napisz do rodziny</strong></button>
-          </div>
-        </article>
-
-        <article className="start-card-v139 start-events-card">
-          <header><div><span>🗓️</span><strong>Nadchodzące wydarzenia</strong></div><button onClick={() => goTo('Kalendarz')}>Zobacz wszystkie ›</button></header>
-          <div className="start-event-list-v139">
-            {upcomingEvents.length === 0 ? <p className="start-empty-v139">Brak nadchodzących wydarzeń.</p> : upcomingEvents.slice(0, 4).map((occurrence) => (
-              <button key={occurrence.key} type="button" onClick={() => goTo('Kalendarz')}>
-                <span className="start-date-badge"><b>{occurrence.date.getDate()}</b><small>{occurrence.date.toLocaleDateString('pl-PL', { month: 'short' }).replace('.', '').toUpperCase()}</small></span>
-                <span><strong>{occurrence.source.title}{occurrence.source.person !== 'family' ? ` – ${personLabel(occurrence.source.person)}` : ''}</strong><small>{occurrence.source.allDay ? 'Cały dzień' : `${formatTime(occurrence.date)}–${formatTime(occurrence.endDate)}`}</small></span>
-                <em>›</em>
-              </button>
-            ))}
-          </div>
-        </article>
-      </section>
-
-      <section className="start-mobile-summary">
-        <button onClick={() => goTo('Zadania')}><span>✅</span><strong>Zadania ({openTasksCount})</strong></button>
-        <button onClick={() => goTo('Zakupy')}><span>🛒</span><strong>Zakupy ({openShoppingCount})</strong></button>
-        <button onClick={() => goTo('Kalendarz')}><span>📅</span><strong>Wydarzenia ({upcomingEvents.length})</strong></button>
-        <button onClick={() => goTo('Czat')}><span>💬</span><strong>Napisz do rodziny</strong></button>
-      </section>
-    </div>
-  );
+    <section className="start1310-widget-grid">
+      {widgetOrder.map((id)=><React.Fragment key={id}>{widgets[id]}</React.Fragment>)}
+    </section>
+    <div className="start1310-layout-tip">Przytrzymaj kafelek, aby przenieść go w inne miejsce.</div>
+  </div>;
 }
 
 /* =========================================================
@@ -3206,7 +3150,11 @@ function SchoolPage({ user, member }: { user: User; member: Member | null }) {
 function FamilyPage({ user, member, goTo }: { user: User; member: Member | null; goTo: (page: Page) => void }) {
   type FamilyTab = 'summary' | 'schedule' | 'tasks' | 'school' | 'health' | 'important';
   const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
-  const [selected, setSelected] = useState<PersonKey>('family');
+  const [selected, setSelected] = useState<PersonKey>(() => {
+    try { const saved=sessionStorage.getItem('nr-family-focus'); return saved && isPersonKey(saved) ? saved : 'family'; }
+    catch { return 'family'; }
+  });
+  useEffect(() => { try { sessionStorage.removeItem('nr-family-focus'); } catch { /* ignore */ } }, []);
   const [tab, setTab] = useState<FamilyTab>('summary');
   const [events, setEvents] = useState<CalendarEventData[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -3503,6 +3451,13 @@ function SettingsPage({ member, theme, setTheme, goTo }: { member: Member | null
     } catch { return 'medium'; }
   });
   const parent = isParent(member);
+  useEffect(() => {
+    try {
+      const focus=sessionStorage.getItem('nr-settings-focus');
+      if (focus==='notifications') requestAnimationFrame(()=>document.getElementById('settings-notifications')?.scrollIntoView({behavior:'smooth',block:'center'}));
+      sessionStorage.removeItem('nr-settings-focus');
+    } catch { /* ignore */ }
+  }, []);
 
   useEffect(() => onSnapshot(collection(db, 'members'), (snapshot) => {
     const next = snapshot.docs.map((memberDoc): FamilyMemberDoc => {
@@ -3599,7 +3554,7 @@ function SettingsPage({ member, theme, setTheme, goTo }: { member: Member | null
           <div className="settings-logo-row"><img src="/nasza-rodzina-logo.svg" alt=""/><div><strong>Nasza Rodzina</strong><small>v{APP_VERSION}</small></div><span>Logo aplikacji</span></div>
         </article>
 
-        <article className="settings-versa-card settings-notifications-card">
+        <article id="settings-notifications" className="settings-versa-card settings-notifications-card">
           <header><span className="settings-card-icon">🔔</span><div><strong>Powiadomienia</strong><small>Wybierz, o czym przypominać</small></div><button className="settings-chevron">›</button></header>
           <div className="settings-toggle-list">
             {([['app','🔔','Powiadomienia w aplikacji','Ważne wydarzenia i zadania'],['email','✉️','Powiadomienia e-mail','Podsumowanie dnia'],['push','📱','Powiadomienia push (Web)','Wymaga zgody przeglądarki'],['medicines','❤️','Przypomnienia o lekach','Zdrowie · leki i wizyty'],['school','🎓','Przypomnienia szkolne','Sprawdziany, zadania, oceny']] as Array<[keyof typeof defaultPrefs,string,string,string]>).map(([key,icon,label,desc])=><button key={key} onClick={()=>void togglePref(key)}><span>{icon}</span><div><strong>{label}</strong><small>{desc}</small></div><i className={prefs[key]?'on':''}><b/></i></button>)}
