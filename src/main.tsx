@@ -22,7 +22,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.6';
+const APP_VERSION = '1.3.7';
 const APP_UPDATED = '30.09.2026';
 
 /* =========================================================
@@ -673,7 +673,7 @@ function FamilyApp({ user }: { user: User }) {
       case 'Czat': return <ChatPage user={user} member={member} />;
       case 'Zdrowie': return <HealthPage user={user} member={member} />;
       case 'Szkoła': return <SchoolPage user={user} member={member} />;
-      case 'Rodzina': return <FamilyPage member={member} goTo={goTo} />;
+      case 'Rodzina': return <FamilyPage user={user} member={member} goTo={goTo} />;
       case 'Ustawienia': return <SettingsPage member={member} theme={theme} setTheme={setTheme} />;
       default: return <StartPage member={member} goTo={goTo} />;
     }
@@ -3122,12 +3122,18 @@ function SchoolPage({ user, member }: { user: User; member: Member | null }) {
    FAMILY
    ========================================================= */
 
-function FamilyPage({ member, goTo }: { member: Member | null; goTo: (page: Page) => void }) {
+function FamilyPage({ user, member, goTo }: { user: User; member: Member | null; goTo: (page: Page) => void }) {
+  type FamilyTab = 'summary' | 'schedule' | 'tasks' | 'school' | 'health' | 'important';
   const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
   const [selected, setSelected] = useState<PersonKey>('family');
+  const [tab, setTab] = useState<FamilyTab>('summary');
   const [events, setEvents] = useState<CalendarEventData[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [school, setSchool] = useState<SchoolRecord[]>([]);
+  const [photoBusy, setPhotoBusy] = useState<string>('');
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const [photoTarget, setPhotoTarget] = useState<FamilyMemberDoc | null>(null);
+  const parent = isParent(member);
 
   useEffect(() => onSnapshot(collection(db, 'members'), (snap) => {
     const next = snap.docs.map((d): FamilyMemberDoc => {
@@ -3163,56 +3169,231 @@ function FamilyPage({ member, goTo }: { member: Member | null; goTo: (page: Page
     setSchool(snap.docs.map((d): SchoolRecord => { const x=d.data(); return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'Nikodem', type:isSchoolType(x.type) ? x.type : 'homework', subject:typeof x.subject === 'string' ? x.subject : '', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', endTime:typeof x.endTime === 'string' ? x.endTime : '', weekday:Number(x.weekday || 0), note:typeof x.note === 'string' ? x.note : '' }; }));
   }), []);
 
-  const now=new Date(); const today=formatDateInput(now); const weekday=now.getDay() === 0 ? 7 : now.getDay();
-  const todayCalendar=useMemo(()=>events.flatMap((e)=>generateOccurrences(e,startOfDay(now),endOfDay(now))).sort((a,b)=>a.date.getTime()-b.date.getTime()), [events, today]);
-  const todaySchool=useMemo(()=>school.filter((r)=>(r.type === 'lesson' || r.type === 'activity') && (r.weekday === weekday || r.date === today)).sort((a,b)=>(a.time || '99:99').localeCompare(b.time || '99:99')), [school, weekday, today]);
+  const now = new Date();
+  const today = formatDateInput(now);
+  const weekday = now.getDay() === 0 ? 7 : now.getDay();
+  const todayCalendar = useMemo(() => events.flatMap((e)=>generateOccurrences(e,startOfDay(now),endOfDay(now))).sort((a,b)=>a.date.getTime()-b.date.getTime()), [events, today]);
+  const todaySchool = useMemo(() => school.filter((r)=>(r.type === 'lesson' || r.type === 'activity') && (r.weekday === weekday || r.date === today)).sort((a,b)=>(a.time || '99:99').localeCompare(b.time || '99:99')), [school, weekday, today]);
+
+  function rowsFor(name: PersonKey) {
+    const cal = todayCalendar.filter((o)=>o.source.person === name || o.source.person === 'family').map((o)=>({
+      start:o.date,
+      end:o.endDate,
+      title:o.source.title,
+      icon:eventActivityIcon(o.source.title),
+      source:'calendar' as const,
+    }));
+    const schoolRows = todaySchool.filter((r)=>r.person === name).map((r)=>({
+      start:parseLocalDate(today,r.time || '08:00'),
+      end:parseLocalDate(today,r.endTime || r.time || '08:45'),
+      title:r.type === 'activity' ? r.title : (r.subject || r.title),
+      icon:subjectIcon(r.subject || r.title),
+      source:'school' as const,
+    }));
+    return [...cal,...schoolRows].sort((a,b)=>a.start.getTime()-b.start.getTime());
+  }
 
   function statusFor(name:string) {
     const key=name as PersonKey;
-    const cal=todayCalendar.filter((o)=>o.source.person === key);
-    const schoolRows=todaySchool.filter((r)=>r.person === key).map((r)=>({ start:parseLocalDate(today,r.time || '08:00'), end:parseLocalDate(today,r.endTime || r.time || '08:45'), title:r.type === 'activity' ? r.title : (r.subject || r.title), icon:subjectIcon(r.subject || r.title) }));
-    const rows=[...cal.map((o)=>({start:o.date,end:o.endDate,title:o.source.title,icon:eventActivityIcon(o.source.title)})),...schoolRows].sort((a,b)=>a.start.getTime()-b.start.getTime());
-    const active=rows.find((r)=>r.start <= now && r.end > now); if (active) return `${active.icon} ${active.title} do ${formatTime(active.end)}`;
-    const next=rows.find((r)=>r.start > now); if (next) return `${next.icon} ${next.title} ${formatTime(next.start)}`;
-    return '🟢 Wolny';
+    const rows=rowsFor(key);
+    const active=rows.find((r)=>r.start <= now && r.end > now);
+    if (active) return `${active.icon} ${active.title} do ${formatTime(active.end)}`;
+    const next=rows.find((r)=>r.start > now);
+    if (next) return `${next.icon} ${next.title} ${formatTime(next.start)}`;
+    return name === 'Layla' ? '🏠 W domu' : '🟢 Wolny';
   }
 
-  const selectedMember=members.find((m)=>m.name === selected);
-  const selectedTasks=tasks.filter((t)=>!t.done && (selected === 'family' ? true : t.person === selected || t.person === 'family')).slice(0,5);
-  const selectedPlan=selected === 'family' ? todayCalendar.slice(0,8) : todayCalendar.filter((o)=>o.source.person === selected || o.source.person === 'family').slice(0,6);
-  const selectedSchool=todaySchool.filter((r)=>selected !== 'family' && r.person === selected).slice(0,7);
-  const upcoming=events.flatMap((e)=>generateOccurrences(e,new Date(),endOfDay(addDays(new Date(),30)))).filter((o)=>o.date >= new Date() && (selected === 'family' || o.source.person === selected || o.source.person === 'family')).sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,4);
-  const isStudent=selected === 'Paweł' || selected === 'Nikodem';
-  const age=ageFromBirthDate(selectedMember?.birthDate);
+  function currentOrEndStatus(name: string) {
+    const rows=rowsFor(name as PersonKey);
+    const active=rows.find((r)=>r.start <= now && r.end > now);
+    if (active) return `${active.title} do ${formatTime(active.end)}`;
+    const last=rows[rows.length-1];
+    if (last && last.source === 'school' && last.end > now) return `Szkoła do ${formatTime(last.end)}`;
+    const next=rows.find((r)=>r.start > now);
+    if (next) return `${next.title} ${formatTime(next.start)}`;
+    return name === 'Layla' ? 'W domu' : 'Wolny';
+  }
+
+  const selectedMember = selected === 'family' ? null : members.find((m)=>m.name === selected) || null;
+  const selectedTasks = tasks.filter((t)=>!t.done && (selected === 'family' ? true : t.person === selected || t.person === 'family')).slice(0,8);
+  const selectedPlanRows = selected === 'family'
+    ? members.flatMap((m)=>rowsFor(m.name as PersonKey).slice(0,3).map((r)=>({ ...r, person:m.name as PersonKey }))).sort((a,b)=>a.start.getTime()-b.start.getTime()).slice(0,10)
+    : rowsFor(selected).map((r)=>({ ...r, person:selected })).slice(0,10);
+  const selectedSchool = school.filter((r)=>selected !== 'family' && r.person === selected);
+  const selectedTodaySchool = selectedSchool.filter((r)=>(r.type === 'lesson' || r.type === 'activity') && (r.weekday === weekday || r.date === today)).sort((a,b)=>(a.time || '99:99').localeCompare(b.time || '99:99'));
+  const selectedHomework = school.filter((r)=>r.type === 'homework' && (selected === 'family' ? true : r.person === selected)).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,6);
+  const selectedGrades = school.filter((r)=>r.type === 'grade' && (selected === 'family' ? true : r.person === selected)).sort((a,b)=>(b.date || '').localeCompare(a.date || '')).slice(0,6);
+  const upcoming = events.flatMap((e)=>generateOccurrences(e,new Date(),endOfDay(addDays(new Date(),30))))
+    .filter((o)=>o.date >= new Date() && (selected === 'family' || o.source.person === selected || o.source.person === 'family'))
+    .sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,6);
+  const isStudent = selected === 'Paweł' || selected === 'Nikodem';
+  const age = ageFromBirthDate(selectedMember?.birthDate);
+
+  function canEditPhoto(target: FamilyMemberDoc) {
+    return parent || target.id === user.uid || target.name === member?.name;
+  }
+
+  function startPhotoChange(target: FamilyMemberDoc, event?: React.MouseEvent) {
+    event?.stopPropagation();
+    if (!canEditPhoto(target)) return;
+    setPhotoTarget(target);
+    requestAnimationFrame(()=>photoInputRef.current?.click());
+  }
+
+  async function squarePhotoDataUrl(file: File) {
+    if (!file.type.startsWith('image/')) throw new Error('Wybierz plik graficzny.');
+    const source = await new Promise<string>((resolve,reject)=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve(String(reader.result || ''));
+      reader.onerror=()=>reject(new Error('Nie udało się odczytać zdjęcia.'));
+      reader.readAsDataURL(file);
+    });
+    const image = await new Promise<HTMLImageElement>((resolve,reject)=>{
+      const img=new Image();
+      img.onload=()=>resolve(img);
+      img.onerror=()=>reject(new Error('Nie udało się otworzyć zdjęcia.'));
+      img.src=source;
+    });
+    const size=360;
+    const canvas=document.createElement('canvas');
+    canvas.width=size; canvas.height=size;
+    const ctx=canvas.getContext('2d');
+    if (!ctx) throw new Error('Brak obsługi obrazu.');
+    const sourceSize=Math.min(image.naturalWidth,image.naturalHeight);
+    const sx=(image.naturalWidth-sourceSize)/2;
+    const sy=(image.naturalHeight-sourceSize)/2;
+    ctx.drawImage(image,sx,sy,sourceSize,sourceSize,0,0,size,size);
+    return canvas.toDataURL('image/jpeg',0.78);
+  }
+
+  async function handlePhotoFile(file?: File) {
+    if (!file || !photoTarget) return;
+    try {
+      setPhotoBusy(photoTarget.id);
+      const photoURL=await squarePhotoDataUrl(file);
+      await updateDoc(doc(db,'members',photoTarget.id), { photoURL, updatedAt:Timestamp.now() });
+    } catch (error) {
+      console.error('Błąd zdjęcia profilowego:',error);
+      alert(error instanceof Error ? error.message : 'Nie udało się zapisać zdjęcia.');
+    } finally {
+      setPhotoBusy('');
+      setPhotoTarget(null);
+      if (photoInputRef.current) photoInputRef.current.value='';
+    }
+  }
+
+  function selectPerson(name: PersonKey) {
+    setSelected(name);
+    setTab('summary');
+  }
+
+  const tabs: Array<[FamilyTab,string,string]> = [
+    ['summary','⌂','Podsumowanie'],
+    ['schedule','▣','Grafik'],
+    ['tasks','☑','Zadania'],
+    ['school','🎓','Szkoła'],
+    ['health','♡','Zdrowie'],
+    ['important','ⓘ','Ważne informacje'],
+  ];
+
+  function renderScheduleRows() {
+    if (selectedPlanRows.length === 0) return <p className="family-versa-empty">Brak planu na dziś.</p>;
+    return <div className="family-today-list">{selectedPlanRows.map((r,index)=><div className={`family-today-row family-tone-${index%5}`} key={`${r.person}-${r.start.getTime()}-${index}`}>
+      <span className="family-mini-avatar">{members.find((m)=>m.name===r.person)?.photoURL ? <img src={members.find((m)=>m.name===r.person)?.photoURL} alt="" /> : memberEmoji(r.person)}</span>
+      <strong>{r.person}</strong>
+      <time>{formatTime(r.start)}–{formatTime(r.end)}</time>
+      <span>{r.icon} {r.title}</span>
+      <em>›</em>
+    </div>)}</div>;
+  }
 
   return (
-    <div className="page-content compact-page family-v130">
-      <ModuleHeader icon="👨‍👩‍👧‍👦" title="Rodzina" text="Profile, plany i szybki dostęp do informacji każdej osoby." />
-      <section className="family-hub-strip">
-        <button className={selected === 'family' ? 'active' : ''} onClick={()=>setSelected('family')}><span className="family-hub-avatar group">👨‍👩‍👧‍👦</span><strong>Cała rodzina</strong><small>Wspólnie</small></button>
-        {members.map((m)=><button key={m.id} className={selected === m.name ? 'active' : ''} onClick={()=>setSelected(m.name as PersonKey)}><span className="family-hub-avatar">{m.photoURL ? <img src={m.photoURL} alt="" /> : memberEmoji(m.name)}</span><strong>{m.name}</strong><small>{statusFor(m.name)}</small></button>)}
+    <div className="page-content compact-page family-versa-page">
+      <input ref={photoInputRef} className="family-photo-input" type="file" accept="image/*" onChange={(e)=>void handlePhotoFile(e.target.files?.[0])} />
+      <section className="family-versa-title">
+        <div><small>Nasza Rodzina</small><h1>👥 Rodzina</h1><p>Profile, plany, zadania i szybki dostęp do informacji każdego z nas.</p></div>
       </section>
 
-      {selected === 'family' ? <>
-        <section className="family-overview-grid">
-          {members.map((m)=><article key={m.id} className="family-status-card"><div className="family-hub-avatar">{m.photoURL ? <img src={m.photoURL} alt="" /> : memberEmoji(m.name)}</div><div><strong>{m.name}</strong><small>{personRole(m.name,m.role)}</small><p>{statusFor(m.name)}</p></div><button onClick={()=>setSelected(m.name as PersonKey)}>Profil ›</button></article>)}
+      <section className="family-member-cards">
+        {members.map((m)=>{
+          const active=selected === m.name;
+          const editable=canEditPhoto(m);
+          return <button type="button" key={m.id} className={`family-member-card ${active ? 'active' : ''}`} onClick={()=>selectPerson(m.name as PersonKey)}>
+            <span className="family-member-photo">{m.photoURL ? <img src={m.photoURL} alt={m.name} /> : memberEmoji(m.name)}</span>
+            {editable && <span role="button" tabIndex={0} className="family-photo-edit" title="Zmień zdjęcie" onClick={(e)=>startPhotoChange(m,e)} onKeyDown={(e)=>{ if (e.key==='Enter' || e.key===' ') { e.preventDefault(); setPhotoTarget(m); requestAnimationFrame(()=>photoInputRef.current?.click()); } }}>✎</span>}
+            {m.name === member?.name && <span className="family-owner-badge">Ty</span>}
+            <div><strong>{m.name}</strong><small>{personRole(m.name,m.role)}</small><p>{photoBusy===m.id ? 'Zapisywanie zdjęcia…' : currentOrEndStatus(m.name)}</p></div>
+          </button>;
+        })}
+      </section>
+
+      <div className="family-view-switch">
+        <button className={selected==='family' ? 'active' : ''} onClick={()=>selectPerson('family')}>👨‍👩‍👧‍👦 Cała rodzina</button>
+        {selected !== 'family' && selectedMember && <div className="family-selected-pill"><span>{selectedMember.photoURL ? <img src={selectedMember.photoURL} alt="" /> : memberEmoji(selected)}</span><strong>{selected}</strong><small>{personRole(selected,selectedMember.role)}{age !== null ? ` · ${age} lat` : ''}</small>{canEditPhoto(selectedMember) && <button type="button" onClick={()=>startPhotoChange(selectedMember)}>Zmień zdjęcie</button>}</div>}
+      </div>
+
+      <nav className="family-versa-tabs">
+        {tabs.map(([key,icon,label])=><button key={key} className={tab===key ? 'active' : ''} onClick={()=>setTab(key)}><span>{icon}</span>{label}</button>)}
+      </nav>
+
+      {tab === 'summary' && <>
+        <section className="family-versa-main-grid">
+          <article className="family-versa-card family-today-card">
+            <header><div><strong>📅 Dziś – {capitalize(now.toLocaleDateString('pl-PL',{weekday:'long',day:'numeric',month:'long'}))}</strong><small>{selected==='family' ? 'Plan całej rodziny' : `Plan: ${selected}`}</small></div><button onClick={()=>goTo('Kalendarz')}>Zobacz cały dzień ›</button></header>
+            {renderScheduleRows()}
+          </article>
+          <article className="family-versa-card family-upcoming-card">
+            <header><div><strong>🗓️ Najbliższe wydarzenia</strong><small>To, o czym warto pamiętać</small></div><button onClick={()=>goTo('Kalendarz')}>Zobacz wszystko ›</button></header>
+            {upcoming.length===0 ? <p className="family-versa-empty">Brak najbliższych wydarzeń.</p> : <div className="family-upcoming-list">{upcoming.map((o)=><div key={o.key}><span>{eventActivityIcon(o.source.title)}</span><div><strong>{o.source.title}</strong><small>{personLabel(o.source.person)} · {capitalize(o.date.toLocaleDateString('pl-PL',{weekday:'short',day:'numeric',month:'short'}))} · {o.source.allDay?'cały dzień':formatTime(o.date)}</small></div><em>›</em></div>)}</div>}
+          </article>
         </section>
-        <section className="family-hub-columns">
-          <article className="family-hub-card"><header><strong>📅 Najbliższe rodzinne wydarzenia</strong><button onClick={()=>goTo('Kalendarz')}>Kalendarz ›</button></header>{upcoming.length === 0 ? <p className="family-empty">Brak wydarzeń.</p> : upcoming.map((o)=><div className="family-hub-row" key={o.key}><span className="date-badge"><b>{o.date.getDate()}</b><small>{o.date.toLocaleDateString('pl-PL',{month:'short'}).replace('.','')}</small></span><div><strong>{o.source.title}</strong><small>{personLabel(o.source.person)} · {o.source.allDay ? 'cały dzień' : formatTime(o.date)}</small></div></div>)}</article>
-          <article className="family-hub-card"><header><strong>✅ Zadania rodziny</strong><button onClick={()=>goTo('Zadania')}>Zadania ›</button></header>{selectedTasks.length === 0 ? <p className="family-empty">Brak otwartych zadań.</p> : selectedTasks.map((t)=><div className="family-hub-row" key={t.id}><span>○</span><div><strong>{t.title}</strong><small>{personLabel(t.person)}{t.dueDate ? ` · ${formatShortDate(t.dueDate)}` : ''}</small></div></div>)}</article>
-        </section>
-      </> : <>
-        <section className="family-profile-hero">
-          <div className="family-profile-avatar large">{selectedMember?.photoURL ? <img src={selectedMember.photoURL} alt="" /> : memberEmoji(selected)}</div>
-          <div className="family-profile-copy"><h2>{selected}</h2><p>{personRole(selected,selectedMember?.role)}{age !== null ? ` · ${age} lat` : ''}</p><span>{statusFor(selected)}</span></div>
-          <div className="family-profile-actions"><button onClick={()=>goTo('Kalendarz')}>📅 Plan dnia</button>{isStudent ? <button onClick={()=>goTo('Szkoła')}>🎒 Szkoła</button> : <button onClick={()=>goTo('Kalendarz')}>💼 Praca / aktywności</button>}<button onClick={()=>goTo('Zadania')}>✅ Zadania</button><button onClick={()=>goTo('Zdrowie')}>❤️ Zdrowie</button></div>
-        </section>
-        <section className="family-hub-columns three">
-          <article className="family-hub-card"><header><strong>🕒 Dzisiejszy plan</strong><button onClick={()=>goTo('Kalendarz')}>Pełny plan ›</button></header>{selectedPlan.length === 0 && selectedSchool.length === 0 ? <p className="family-empty">Brak planu na dziś.</p> : <>{selectedPlan.map((o)=><div className="family-hub-row" key={o.key}><time>{o.source.allDay ? 'Cały dzień' : `${formatTime(o.date)}–${formatTime(o.endDate)}`}</time><div><strong>{eventActivityIcon(o.source.title)} {o.source.title}</strong><small>{o.source.description}</small></div></div>)}{selectedSchool.map((r)=><div className="family-hub-row" key={`school-${r.id}`}><time>{r.time}{r.endTime ? `–${r.endTime}` : ''}</time><div><strong>{subjectIcon(r.subject || r.title)} {r.subject || r.title}</strong><small>{r.type === 'activity' ? r.title : r.note}</small></div></div>)}</>}</article>
-          <article className="family-hub-card"><header><strong>✅ Zadania</strong><button onClick={()=>goTo('Zadania')}>Wszystkie ›</button></header>{selectedTasks.length === 0 ? <p className="family-empty">Brak otwartych zadań.</p> : selectedTasks.map((t)=><div className="family-hub-row" key={t.id}><span>○</span><div><strong>{t.title}</strong><small>{t.dueDate ? formatShortDate(t.dueDate) : 'Bez terminu'}{t.points ? ` · +${t.points} pkt` : ''}</small></div></div>)}</article>
-          <article className="family-hub-card"><header><strong>{isStudent ? '🎒 Szkoła i zajęcia' : '📅 Najbliższe aktywności'}</strong><button onClick={()=>goTo(isStudent ? 'Szkoła' : 'Kalendarz')}>Otwórz ›</button></header>{isStudent ? (selectedSchool.length ? selectedSchool.map((r)=><div className="family-hub-row" key={`mini-${r.id}`}><span>{subjectIcon(r.subject || r.title)}</span><div><strong>{r.subject || r.title}</strong><small>{r.time}{r.endTime ? `–${r.endTime}` : ''}</small></div></div>) : <p className="family-empty">Brak szkolnych wpisów na dziś.</p>) : (upcoming.length ? upcoming.map((o)=><div className="family-hub-row" key={`up-${o.key}`}><span>{eventActivityIcon(o.source.title)}</span><div><strong>{o.source.title}</strong><small>{formatShortDate(formatDateInput(o.date))} · {formatTime(o.date)}</small></div></div>) : <p className="family-empty">Brak najbliższych aktywności.</p>)}</article>
+
+        <section className="family-bottom-grid">
+          <article className="family-versa-card">
+            <header><div><strong>☑ Zadania</strong><small>{selected==='family' ? 'Najbliższe zadania rodziny' : `Zadania: ${selected}`}</small></div><button onClick={()=>goTo('Zadania')}>Zobacz wszystkie ›</button></header>
+            {selectedTasks.length===0 ? <p className="family-versa-empty">Brak otwartych zadań.</p> : <div className="family-simple-list">{selectedTasks.slice(0,5).map((t)=><div key={t.id}><span className="family-task-check">□</span><div><strong>{t.title}</strong><small>{personLabel(t.person)}{t.dueDate?` · ${formatShortDate(t.dueDate)}`:''}{t.points?` · +${t.points} pkt`:''}</small></div></div>)}</div>}
+          </article>
+
+          <article className="family-versa-card">
+            <header><div><strong>⭐ Ostatnie oceny</strong><small>Paweł i Nikodem</small></div><button onClick={()=>goTo('Szkoła')}>Szkoła ›</button></header>
+            {selectedGrades.length===0 ? <p className="family-versa-empty">Brak zapisanych ocen.</p> : <div className="family-grade-list">{selectedGrades.slice(0,5).map((r)=><div key={r.id}><span className="family-mini-avatar">{memberEmoji(r.person)}</span><strong>{r.person}</strong><b>{r.title || r.note || '—'}</b><span>{r.subject || 'Przedmiot'}</span><small>{r.date?formatShortDate(r.date):''}</small></div>)}</div>}
+          </article>
+
+          <article className="family-versa-card family-school-mini">
+            <header><div><strong>🎓 Plan lekcji – dziś</strong><small>{isStudent ? selected : 'Uczniowie'}</small></div><button onClick={()=>goTo('Szkoła')}>Zobacz plan ›</button></header>
+            {selected === 'family' ? <div className="family-school-switch"><span>Nikodem</span><span>Paweł</span></div> : null}
+            {(selected === 'family' ? todaySchool : selectedTodaySchool).slice(0,7).length===0 ? <p className="family-versa-empty">Brak lekcji na dziś.</p> : <ol>{(selected === 'family' ? todaySchool : selectedTodaySchool).slice(0,7).map((r)=><li key={r.id}><time>{r.time}</time><strong>{r.subject || r.title}</strong><small>{r.endTime ? `do ${r.endTime}` : ''}</small></li>)}</ol>}
+          </article>
         </section>
       </>}
+
+      {tab === 'schedule' && <section className="family-versa-card family-full-section">
+        <header><div><strong>▣ Grafik i plan dnia</strong><small>{selected==='family' ? 'Dzisiejszy plan wszystkich członków rodziny' : `Dzisiejszy plan: ${selected}`}</small></div><button onClick={()=>goTo('Kalendarz')}>Otwórz Kalendarz ›</button></header>
+        {renderScheduleRows()}
+      </section>}
+
+      {tab === 'tasks' && <section className="family-versa-card family-full-section">
+        <header><div><strong>☑ Zadania</strong><small>{selected==='family' ? 'Otwarte zadania rodziny' : `Otwarte zadania: ${selected}`}</small></div><button onClick={()=>goTo('Zadania')}>Otwórz Zadania ›</button></header>
+        {selectedTasks.length===0 ? <p className="family-versa-empty">Brak otwartych zadań.</p> : <div className="family-simple-list large">{selectedTasks.map((t)=><div key={t.id}><span className="family-task-check">□</span><div><strong>{t.title}</strong><small>{personLabel(t.person)} · {t.dueDate?formatShortDate(t.dueDate):'bez terminu'}{t.points?` · +${t.points} pkt`:''}</small></div><em>{t.priority==='high'?'Wysoki':t.priority==='low'?'Niski':'Normalny'}</em></div>)}</div>}
+      </section>}
+
+      {tab === 'school' && <section className="family-versa-card family-full-section">
+        <header><div><strong>🎓 Szkoła</strong><small>{selected==='family' ? 'Podgląd Pawła i Nikodema' : isStudent ? `Szkoła: ${selected}` : 'Ten profil nie ma planu szkolnego'}</small></div><button onClick={()=>goTo('Szkoła')}>Otwórz Szkołę ›</button></header>
+        {!isStudent && selected!=='family' ? <p className="family-versa-empty">Dla tego profilu nie ma danych szkolnych.</p> : <div className="family-school-tab-grid"><div><h3>Dzisiejszy plan</h3>{(selected==='family'?todaySchool:selectedTodaySchool).slice(0,8).map((r)=><div className="family-school-row" key={r.id}><time>{r.time}</time><span>{subjectIcon(r.subject || r.title)}</span><strong>{r.subject || r.title}</strong><small>{r.endTime?`do ${r.endTime}`:''}</small></div>)}</div><div><h3>Zadania domowe</h3>{selectedHomework.length===0?<p className="family-versa-empty">Brak zadań.</p>:selectedHomework.map((r)=><div className="family-homework-row" key={r.id}><span>□</span><div><strong>{r.subject || r.title}</strong><small>{r.title}{r.date?` · ${formatShortDate(r.date)}`:''}</small></div></div>)}</div></div>}
+      </section>}
+
+      {tab === 'health' && <section className="family-versa-card family-full-section family-health-link">
+        <span>♡</span><div><h2>Zdrowie</h2><p>Wizyty, leki, wyniki i dokumenty są przechowywane w osobnym module Zdrowie z odpowiednimi uprawnieniami.</p></div><button className="primary-button" onClick={()=>goTo('Zdrowie')}>Otwórz Zdrowie</button>
+      </section>}
+
+      {tab === 'important' && <section className="family-important-grid">
+        {(selected==='family' ? members : selectedMember ? [selectedMember] : []).map((m)=>{
+          const a=ageFromBirthDate(m.birthDate);
+          const openTasks=tasks.filter((t)=>!t.done && (t.person===m.name || t.person==='family')).length;
+          const schoolEndValues=todaySchool.filter((r)=>r.person===m.name).map((r)=>r.endTime).filter(Boolean).sort(); const schoolEnd=schoolEndValues.length ? schoolEndValues[schoolEndValues.length-1] : '';
+          return <article className="family-versa-card" key={m.id}><div className="family-important-title"><span className="family-mini-avatar">{m.photoURL?<img src={m.photoURL} alt=""/>:memberEmoji(m.name)}</span><div><strong>{m.name}</strong><small>{personRole(m.name,m.role)}</small></div></div><dl><div><dt>Aktualnie</dt><dd>{currentOrEndStatus(m.name)}</dd></div>{a!==null&&<div><dt>Wiek</dt><dd>{a} lat</dd></div>}<div><dt>Otwarte zadania</dt><dd>{openTasks}</dd></div>{schoolEnd&&<div><dt>Koniec szkoły</dt><dd>{schoolEnd}</dd></div>}</dl></article>;
+        })}
+      </section>}
     </div>
   );
 }
