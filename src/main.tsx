@@ -22,7 +22,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.4';
+const APP_VERSION = '1.3.5';
 const APP_UPDATED = '30.09.2026';
 
 /* =========================================================
@@ -187,8 +187,11 @@ type HealthRecord = {
   callReminderDate: string;
   documentURL: string;
   privateToParents: boolean;
+  sharedWithPerson: boolean;
   dose: string;
   medicineTime: string;
+  medicineTimes: string[];
+  escalationMinutes: number;
   confirmedDate: string;
   createdAt?: Date;
 };
@@ -196,6 +199,28 @@ type HealthRecord = {
 type HealthForm = Omit<HealthRecord, 'id' | 'createdAt' | 'confirmedDate' | 'documentURL'> & {
   addToCalendar: boolean;
   file: File | null;
+};
+
+type MedicationIntake = {
+  id: string;
+  recordId: string;
+  person: PersonKey;
+  date: string;
+  time: string;
+  confirmedBy: string;
+  confirmedAt?: Date;
+};
+
+type HealthAlert = {
+  id: string;
+  recordId: string;
+  person: PersonKey;
+  date: string;
+  time: string;
+  title: string;
+  dose: string;
+  status: 'open' | 'acknowledged' | 'resolved';
+  createdAt?: Date;
 };
 
 type MedicalContact = {
@@ -2474,25 +2499,54 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
   const [records, setRecords] = useState<HealthRecord[]>([]);
   const [contacts, setContacts] = useState<MedicalContact[]>([]);
   const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
-  const [person, setPerson] = useState<PersonKey>('family');
+  const [intakes, setIntakes] = useState<MedicationIntake[]>([]);
+  const [alerts, setAlerts] = useState<HealthAlert[]>([]);
+  const parent = isParent(member);
+  const ownPerson = isPersonKey(member?.name) ? member!.name as PersonKey : 'family';
+  const [person, setPerson] = useState<PersonKey>(() => parent ? (ownPerson === 'family' ? 'Sebastian' : ownPerson) : ownPerson);
+  const [healthTab, setHealthTab] = useState<'summary' | 'visits' | 'meds' | 'results' | 'documents' | 'contacts' | 'notes'>('summary');
   const [specialtyFilter, setSpecialtyFilter] = useState<string>('all');
   const [showForm, setShowForm] = useState(false);
   const [showContactForm, setShowContactForm] = useState(false);
-  const parent = isParent(member);
-  const emptyForm = (): HealthForm => ({ title: '', person: person === 'family' ? 'Paweł' : person, type: 'visit', date: formatDateInput(new Date()), time: '12:00', doctor: '', location: '', note: '', specialty: '', status: 'planned', referralCode: '', nextControl: '', callReminderDate: '', privateToParents: false, dose: '', medicineTime: '20:00', addToCalendar: true, file: null });
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => typeof Notification === 'undefined' ? 'denied' : Notification.permission);
+
+  const emptyForm = (): HealthForm => ({
+    title: '', person: person === 'family' ? (parent ? 'Paweł' : ownPerson) : person, type: 'visit', date: formatDateInput(new Date()), time: '12:00',
+    doctor: '', location: '', note: '', specialty: '', status: 'planned', referralCode: '', nextControl: '', callReminderDate: '',
+    privateToParents: false, sharedWithPerson: false, dose: '', medicineTime: '08:00', medicineTimes: ['08:00', '20:00'], escalationMinutes: 15,
+    addToCalendar: true, file: null,
+  });
   const [form, setForm] = useState<HealthForm>(emptyForm);
   const [contactForm, setContactForm] = useState({ person:'family' as PersonKey, specialty:'', name:'', doctor:'', phone:'', address:'', note:'' });
 
   useEffect(() => onSnapshot(collection(db, 'members'), (snap) => {
-    const next = snap.docs.map((d) => { const x=d.data(); return { id:d.id, name:String(x.name || 'Rodzina'), role:personRole(String(x.name || ''), typeof x.role === 'string' ? x.role : ''), photoURL:typeof x.photoURL === 'string' ? x.photoURL : undefined, active:x.active !== false, birthDate:typeof x.birthDate === 'string' ? x.birthDate : FAMILY_BIRTHDAYS[String(x.name || '') as PersonKey] }; }).sort((a,b)=>FAMILY_ORDER.indexOf(a.name)-FAMILY_ORDER.indexOf(b.name));
+    const next = snap.docs.map((d) => {
+      const x=d.data();
+      return {
+        id:d.id, name:String(x.name || 'Rodzina'), role:personRole(String(x.name || ''), typeof x.role === 'string' ? x.role : ''),
+        photoURL:typeof x.photoURL === 'string' ? x.photoURL : undefined, active:x.active !== false,
+        birthDate:typeof x.birthDate === 'string' ? x.birthDate : FAMILY_BIRTHDAYS[String(x.name || '') as PersonKey],
+      } as FamilyMemberDoc;
+    }).sort((a,b)=>FAMILY_ORDER.indexOf(a.name)-FAMILY_ORDER.indexOf(b.name));
     setMembers(next);
-  }), []);
+    if (!parent && ownPerson !== 'family') setPerson(ownPerson);
+  }), [parent, ownPerson]);
 
   useEffect(() => onSnapshot(collection(db, 'healthRecords'), (snap) => {
     const next = snap.docs.map((d): HealthRecord => {
       const x = d.data();
+      const legacyTime = typeof x.medicineTime === 'string' ? x.medicineTime : (typeof x.time === 'string' ? x.time : '');
+      const rawTimes = Array.isArray(x.medicineTimes) ? x.medicineTimes.filter((v: unknown) => typeof v === 'string') : [];
       return {
-        id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', type:isHealthType(x.type) ? x.type : 'history', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', doctor:typeof x.doctor === 'string' ? x.doctor : '', location:typeof x.location === 'string' ? x.location : '', note:typeof x.note === 'string' ? x.note : '', specialty:typeof x.specialty === 'string' ? x.specialty : '', status:isHealthStatus(x.status) ? x.status : (x.type === 'visit' ? 'planned' : 'done'), referralCode:typeof x.referralCode === 'string' ? x.referralCode : '', nextControl:typeof x.nextControl === 'string' ? x.nextControl : '', callReminderDate:typeof x.callReminderDate === 'string' ? x.callReminderDate : '', documentURL:typeof x.documentURL === 'string' ? x.documentURL : '', privateToParents:x.privateToParents === true, dose:typeof x.dose === 'string' ? x.dose : '', medicineTime:typeof x.medicineTime === 'string' ? x.medicineTime : (typeof x.time === 'string' ? x.time : ''), confirmedDate:typeof x.confirmedDate === 'string' ? x.confirmedDate : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
+        id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', type:isHealthType(x.type) ? x.type : 'history',
+        date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', doctor:typeof x.doctor === 'string' ? x.doctor : '',
+        location:typeof x.location === 'string' ? x.location : '', note:typeof x.note === 'string' ? x.note : '', specialty:typeof x.specialty === 'string' ? x.specialty : '',
+        status:isHealthStatus(x.status) ? x.status : (x.type === 'visit' ? 'planned' : 'done'), referralCode:typeof x.referralCode === 'string' ? x.referralCode : '',
+        nextControl:typeof x.nextControl === 'string' ? x.nextControl : '', callReminderDate:typeof x.callReminderDate === 'string' ? x.callReminderDate : '',
+        documentURL:typeof x.documentURL === 'string' ? x.documentURL : '', privateToParents:x.privateToParents === true, sharedWithPerson:x.sharedWithPerson === true,
+        dose:typeof x.dose === 'string' ? x.dose : '', medicineTime:legacyTime, medicineTimes:rawTimes.length ? rawTimes : (legacyTime ? [legacyTime] : []),
+        escalationMinutes:Number.isFinite(Number(x.escalationMinutes)) ? Math.max(1, Number(x.escalationMinutes)) : 15,
+        confirmedDate:typeof x.confirmedDate === 'string' ? x.confirmedDate : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
       };
     });
     next.sort((a,b)=>(b.date || '').localeCompare(a.date || '') || (b.createdAt?.getTime() || 0)-(a.createdAt?.getTime() || 0));
@@ -2503,39 +2557,97 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
     setContacts(snap.docs.map((d) => { const x=d.data(); return { id:d.id, person:isPersonKey(x.person) ? x.person : 'family', specialty:String(x.specialty || ''), name:String(x.name || ''), doctor:String(x.doctor || ''), phone:String(x.phone || ''), address:String(x.address || ''), note:String(x.note || '') }; }));
   }), []);
 
-  useEffect(() => {
-    const check = () => {
-      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-      const now = new Date();
-      const today = formatDateInput(now);
-      records.filter((r) => r.type === 'medicine' && r.medicineTime && r.confirmedDate !== today).forEach((r) => {
-        if (!(parent || r.person === member?.name)) return;
-        const due = parseLocalDate(today, r.medicineTime);
-        const minutes = (now.getTime()-due.getTime())/60000;
-        const key = `nr-med-${r.id}-${today}-${parent ? 'parent' : 'person'}`;
-        if (minutes >= 0 && minutes < 5 && !localStorage.getItem(key)) {
-          new Notification(`${r.person} — czas na lek`, { body: `${r.title}${r.dose ? ` · ${r.dose}` : ''}` }); localStorage.setItem(key, '1');
-        }
-        if (parent && minutes >= 15 && !localStorage.getItem(`${key}-late`)) {
-          new Notification(`Brak potwierdzenia leku — ${r.person}`, { body: `Sprawdź, czy ${r.title} został przyjęty.` }); localStorage.setItem(`${key}-late`, '1');
-        }
-      });
-    };
-    check(); const timer=window.setInterval(check,60000); return()=>window.clearInterval(timer);
-  }, [records, parent, member?.name]);
+  useEffect(() => onSnapshot(collection(db, 'healthMedicationIntakes'), (snap) => {
+    setIntakes(snap.docs.map((d): MedicationIntake => {
+      const x=d.data();
+      return { id:d.id, recordId:String(x.recordId || ''), person:isPersonKey(x.person) ? x.person : 'family', date:String(x.date || ''), time:String(x.time || ''), confirmedBy:String(x.confirmedBy || ''), confirmedAt:x.confirmedAt instanceof Timestamp ? x.confirmedAt.toDate() : undefined };
+    }));
+  }), []);
 
-  const allowedRecords = records.filter((r) => !r.privateToParents || parent);
+  useEffect(() => onSnapshot(collection(db, 'healthAlerts'), (snap) => {
+    setAlerts(snap.docs.map((d): HealthAlert => {
+      const x=d.data();
+      return { id:d.id, recordId:String(x.recordId || ''), person:isPersonKey(x.person) ? x.person : 'family', date:String(x.date || ''), time:String(x.time || ''), title:String(x.title || ''), dose:String(x.dose || ''), status:x.status === 'acknowledged' || x.status === 'resolved' ? x.status : 'open', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
+    }));
+  }), []);
+
+  const allowedRecords = records.filter((r) => {
+    if (!r.privateToParents) return parent || r.person === ownPerson || r.person === 'family';
+    if (parent) return true;
+    return r.person === ownPerson && r.sharedWithPerson;
+  });
+  const selectableMembers = parent ? members : members.filter((m) => m.name === ownPerson);
   const personRecords = allowedRecords.filter((r) => person === 'family' || r.person === person);
   const visibleRecords = personRecords.filter((r) => specialtyFilter === 'all' || r.specialty === specialtyFilter);
-  const upcomingVisits = personRecords.filter((r) => r.type === 'visit' && r.date && r.date >= formatDateInput(new Date()) && r.status !== 'cancelled').sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4);
+  const today = formatDateInput(new Date());
+  const upcomingVisits = personRecords.filter((r) => r.type === 'visit' && r.date && r.date >= today && r.status !== 'cancelled').sort((a,b)=>a.date.localeCompare(b.date)).slice(0,5);
   const medicines = personRecords.filter((r) => r.type === 'medicine');
-  const history = visibleRecords.filter((r) => r.type === 'visit' || r.type === 'history' || r.type === 'result').sort((a,b)=>(b.date || '').localeCompare(a.date || '')).slice(0,8);
-  const documents = personRecords.filter((r) => r.type === 'document' || r.type === 'result').slice(0,8);
+  const results = visibleRecords.filter((r) => r.type === 'result').sort((a,b)=>(b.date || '').localeCompare(a.date || ''));
+  const history = visibleRecords.filter((r) => r.type === 'visit' || r.type === 'history' || r.type === 'result').sort((a,b)=>(b.date || '').localeCompare(a.date || '')).slice(0,10);
+  const documents = personRecords.filter((r) => r.type === 'document' || r.type === 'result').slice(0,12);
   const controlItems = personRecords.filter((r) => r.nextControl || r.callReminderDate).slice(0,6);
-  const visibleContacts = contacts.filter((c) => c.person === 'family' || person === 'family' || c.person === person).slice(0,6);
-  const importantPawelDocs = allowedRecords.filter((r) => r.person === 'Paweł' && r.type === 'document' && r.privateToParents).slice(0,4);
+  const visibleContacts = contacts.filter((c) => c.person === 'family' || person === 'family' || c.person === person).slice(0,8);
+  const importantDocs = personRecords.filter((r) => r.type === 'document' && r.privateToParents).slice(0,6);
+  const activeAlerts = alerts.filter((a) => a.status !== 'resolved' && a.date === today && (person === 'family' || a.person === person));
 
-  function openAdd(type: HealthType = 'visit') { setForm({ ...emptyForm(), type, person: person === 'family' ? 'Paweł' : person, privateToParents:type === 'document' && person === 'Paweł' }); setShowForm(true); }
+  function intakeId(recordId: string, date: string, time: string) { return `${recordId}_${date}_${time.replace(':','')}`; }
+  function isDoseConfirmed(recordId: string, time: string, date = today) { return intakes.some((i) => i.recordId === recordId && i.date === date && i.time === time); }
+  function medicineTimes(record: HealthRecord) { return record.medicineTimes.length ? record.medicineTimes : (record.medicineTime ? [record.medicineTime] : []); }
+
+  async function requestNotifications() {
+    if (typeof Notification === 'undefined') return;
+    const result = await Notification.requestPermission();
+    setNotificationPermission(result);
+  }
+
+  useEffect(() => {
+    const check = async () => {
+      const now = new Date();
+      const currentDate = formatDateInput(now);
+      for (const r of records.filter((x) => x.type === 'medicine')) {
+        const times = medicineTimes(r);
+        for (const time of times) {
+          if (isDoseConfirmed(r.id, time, currentDate)) continue;
+          const due = parseLocalDate(currentDate, time);
+          const minutes = (now.getTime() - due.getTime()) / 60000;
+          const selfKey = `nr-med-${r.id}-${currentDate}-${time}-self`;
+          if (member?.name === r.person && minutes >= 0 && minutes < 10 && notificationPermission === 'granted' && !localStorage.getItem(selfKey)) {
+            new Notification('Czas na lek', { body: `${r.title}${r.dose ? ` · ${r.dose}` : ''} · ${time}` });
+            localStorage.setItem(selfKey, '1');
+          }
+          if (minutes >= r.escalationMinutes && minutes < 24 * 60) {
+            const alertId = intakeId(r.id, currentDate, time);
+            const existingAlert = alerts.find((a) => a.id === alertId);
+            if (!existingAlert) {
+              const alertRef = doc(db, 'healthAlerts', alertId);
+              await setDoc(alertRef, { recordId:r.id, person:r.person, date:currentDate, time, title:r.title, dose:r.dose, status:'open', createdAt:Timestamp.now() }, { merge:true });
+            }
+          }
+        }
+      }
+    };
+    void check();
+    const timer=window.setInterval(() => void check(),60000);
+    return()=>window.clearInterval(timer);
+  }, [records, intakes, alerts, member?.name, notificationPermission]);
+
+  useEffect(() => {
+    if (!parent || notificationPermission !== 'granted') return;
+    alerts.filter((a) => a.status === 'open' && a.date === today).forEach((a) => {
+      const key=`nr-parent-alert-${a.id}`;
+      if (!localStorage.getItem(key)) {
+        new Notification(`Brak potwierdzenia leku — ${a.person}`, { body:`${a.title}${a.dose ? ` · ${a.dose}` : ''} · plan ${a.time}` });
+        localStorage.setItem(key,'1');
+      }
+    });
+  }, [alerts, parent, notificationPermission, today]);
+
+  function openAdd(type: HealthType = 'visit') {
+    const base=emptyForm();
+    const selectedPerson = person === 'family' ? (parent ? 'Paweł' : ownPerson) : person;
+    setForm({ ...base, type, person:selectedPerson, privateToParents:type === 'document' && selectedPerson === 'Paweł', medicineTimes:type === 'medicine' ? ['08:00','20:00'] : base.medicineTimes });
+    setShowForm(true);
+  }
 
   async function uploadHealthFile(file: File, recordPerson: PersonKey) {
     const safe=file.name.replace(/[^a-zA-Z0-9._-]/g,'-');
@@ -2551,7 +2663,8 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
       catch { alert('Nie udało się wysłać pliku. Włącz Firebase Storage i sprawdź reguły.'); return; }
     }
     const { addToCalendar, file, ...record }=form;
-    await addDoc(collection(db,'healthRecords'), { ...record, title:form.title.trim(), documentURL, confirmedDate:'', createdBy:user.uid, createdAt:Timestamp.now() });
+    const cleanTimes = form.type === 'medicine' ? Array.from(new Set(form.medicineTimes.filter(Boolean))).sort() : [];
+    await addDoc(collection(db,'healthRecords'), { ...record, medicineTimes:cleanTimes, medicineTime:cleanTimes[0] || form.medicineTime || '', title:form.title.trim(), documentURL, confirmedDate:'', createdBy:user.uid, createdAt:Timestamp.now() });
     if (addToCalendar && form.type === 'visit' && form.date) {
       const start=parseLocalDate(form.date,form.time || '12:00'); const end=new Date(start.getTime()+3600000);
       await addDoc(collection(db,'calendarEvents'), { title:`❤️ ${form.title.trim()}`, person:form.person, date:Timestamp.fromDate(start), endDate:Timestamp.fromDate(end), allDay:false, description:[form.specialty,form.doctor,form.location,form.referralCode ? `Kod skierowania: ${form.referralCode}` : ''].filter(Boolean).join(' · '), repeat:'none', repeatUntil:null, createdBy:user.uid, createdAt:Timestamp.now() });
@@ -2564,42 +2677,110 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
     await addDoc(collection(db,'medicalContacts'), { ...contactForm, createdBy:user.uid, createdAt:Timestamp.now() }); setShowContactForm(false);
   }
 
-  async function confirmMedicine(record: HealthRecord) { await updateDoc(doc(db,'healthRecords',record.id), { confirmedDate:formatDateInput(new Date()), updatedAt:Timestamp.now() }); }
+  async function confirmMedicine(record: HealthRecord, time: string) {
+    const id=intakeId(record.id,today,time);
+    await setDoc(doc(db,'healthMedicationIntakes',id), { recordId:record.id, person:record.person, date:today, time, confirmedBy:user.uid, confirmedAt:Timestamp.now() }, { merge:true });
+    await updateDoc(doc(db,'healthRecords',record.id), { confirmedDate:today, updatedAt:Timestamp.now() });
+    await setDoc(doc(db,'healthAlerts',id), { recordId:record.id, person:record.person, date:today, time, title:record.title, dose:record.dose, status:'resolved', resolvedAt:Timestamp.now() }, { merge:true });
+  }
+
+  async function acknowledgeAlert(alert: HealthAlert) {
+    await updateDoc(doc(db,'healthAlerts',alert.id), { status:'acknowledged', acknowledgedBy:user.uid, acknowledgedAt:Timestamp.now() });
+  }
+
+  async function toggleDocumentShare(record: HealthRecord) {
+    if (!parent) return;
+    await updateDoc(doc(db,'healthRecords',record.id), { sharedWithPerson:!record.sharedWithPerson, updatedAt:Timestamp.now() });
+  }
 
   const selectedMember = members.find((m) => m.name === person);
+  const tabItems: Array<[typeof healthTab, string, string]> = [
+    ['summary','⌂','Podsumowanie'], ['visits','🩺','Wizyty'], ['meds','💊','Leki'], ['results','🧪','Wyniki'], ['documents','📄','Dokumenty'], ['contacts','☎','Kontakty'], ['notes','✎','Notatki'],
+  ];
+
+  const recordList = (type: HealthType | 'notes') => {
+    const list = type === 'notes' ? personRecords.filter((r)=>!!r.note) : personRecords.filter((r)=>r.type === type);
+    if (!list.length) return <p className="health-empty">Brak wpisów w tej sekcji.</p>;
+    return <div className="health-generic-list">{list.map((r)=><article key={r.id}><span className="health-icon-tile">{type === 'notes' ? '✎' : HEALTH_META[r.type].icon}</span><div><strong>{r.title}</strong><small>{[r.date ? formatShortDate(r.date) : '', r.doctor, r.location, r.note].filter(Boolean).join(' · ')}</small></div>{r.documentURL && <a href={r.documentURL} target="_blank" rel="noreferrer">Otwórz</a>}</article>)}</div>;
+  };
 
   return (
-    <div className="page-content compact-page health-v130">
-      <ModuleHeader icon="❤️" title="Zdrowie" text="Kartoteka, wizyty, leki, dokumenty i kontakty całej rodziny." action={<button className="primary-button" onClick={() => openAdd('visit')}>＋ Dodaj wizytę / wpis</button>} />
-
-      <section className="health-person-switch">
-        <button className={person === 'family' ? 'active' : ''} onClick={() => setPerson('family')}><span className="health-avatar">👨‍👩‍👧‍👦</span><strong>Cała rodzina</strong><small>Wspólnie</small></button>
-        {members.map((m) => <button key={m.id} className={person === m.name ? 'active' : ''} onClick={() => setPerson(m.name as PersonKey)}><span className="health-avatar">{m.photoURL ? <img src={m.photoURL} alt="" /> : memberEmoji(m.name)}</span><strong>{m.name}</strong><small>{personRole(m.name,m.role)}</small></button>)}
+    <div className="page-content compact-page health-versa-page">
+      <section className="health-title-row">
+        <div><small>Rodzinne centrum</small><h1><span>❤️</span> Zdrowie</h1><p>Wizyty, leki, wyniki, dokumenty i kontakty całej rodziny.</p></div>
+        <div className="health-title-actions">
+          {notificationPermission !== 'granted' && <button className="secondary-button" onClick={() => void requestNotifications()}>🔔 Włącz powiadomienia</button>}
+          <button className="primary-button health-add-button" onClick={() => openAdd('visit')}>＋ Dodaj wizytę / wpis</button>
+        </div>
       </section>
 
-      {person !== 'family' && <section className="health-profile-bar"><span className="health-profile-avatar">{selectedMember?.photoURL ? <img src={selectedMember.photoURL} alt="" /> : memberEmoji(person)}</span><div><h2>{person}</h2><p>{personRole(person, selectedMember?.role)} · pełna kartoteka zdrowia</p></div><div className="health-profile-tabs"><button>Historia</button><button>Wizyty</button><button>Leki</button><button>Dokumenty</button><button>Wyniki</button></div></section>}
+      {parent && activeAlerts.length > 0 && <section className="health-alert-strip">
+        <div><strong>🚨 Brak potwierdzenia leku</strong><small>{activeAlerts.length} {activeAlerts.length === 1 ? 'powiadomienie wymaga' : 'powiadomienia wymagają'} uwagi rodzica.</small></div>
+        <div className="health-alert-list">{activeAlerts.slice(0,3).map((a)=><button key={a.id} onClick={() => void acknowledgeAlert(a)}><span>{a.person}</span><strong>{a.title}</strong><em>{a.time}</em></button>)}</div>
+      </section>}
 
-      <section className="specialty-chips"><button className={specialtyFilter === 'all' ? 'active' : ''} onClick={() => setSpecialtyFilter('all')}>Chronologia</button>{SPECIALTIES.map((s)=><button key={s} className={specialtyFilter === s ? 'active' : ''} onClick={() => setSpecialtyFilter(s)}>{s}</button>)}</section>
+      <section className="health-family-cards">
+        {selectableMembers.map((m) => <button key={m.id} className={person === m.name ? 'active' : ''} onClick={() => { setPerson(m.name as PersonKey); setHealthTab('summary'); }}>
+          <span className="health-family-photo">{m.photoURL ? <img src={m.photoURL} alt="" /> : memberEmoji(m.name)}</span>
+          <div><strong>{m.name}</strong><small>{personRole(m.name,m.role)}</small></div><em>›</em>
+        </button>)}
+      </section>
 
-      <div className="health-dashboard-grid">
-        <article className="health-card upcoming-health"><header><strong>📅 Najbliższe wizyty{person !== 'family' ? ` — ${person}` : ''}</strong><button onClick={() => openAdd('visit')}>Dodaj +</button></header>{upcomingVisits.length === 0 ? <p className="health-empty">Brak zaplanowanych wizyt.</p> : upcomingVisits.map((r)=><div className="health-list-row" key={r.id}><span className="health-date-tile"><b>{new Date(`${r.date}T12:00`).getDate()}</b><small>{new Date(`${r.date}T12:00`).toLocaleDateString('pl-PL',{month:'short'}).toUpperCase()}</small></span><div><strong>{r.person} — {r.specialty || r.title}</strong><small>{r.doctor || r.location || r.title}</small><p>{r.time}{r.referralCode ? ` · skierowanie: ${r.referralCode}` : ''}</p></div><span className="health-status">{r.status === 'toBook' ? 'Do umówienia' : r.status === 'booked' ? 'Umówiona' : 'Zaplanowana'}</span></div>)}</article>
+      {parent && <div className="health-family-all-row"><button className={person === 'family' ? 'active' : ''} onClick={()=>{setPerson('family');setHealthTab('summary');}}>👨‍👩‍👧‍👦 Cała rodzina</button></div>}
 
-        <article className="health-card"><header><strong>🔔 Przypomnienia</strong></header>{medicines.slice(0,3).map((r)=><div className="health-list-row" key={r.id}><span className="health-icon-tile">💊</span><div><strong>{r.title} — {r.person}</strong><small>{r.medicineTime || r.time}{r.dose ? ` · ${r.dose}` : ''}</small></div><button className={r.confirmedDate === formatDateInput(new Date()) ? 'confirmed-button' : 'medicine-confirm'} onClick={() => void confirmMedicine(r)}>{r.confirmedDate === formatDateInput(new Date()) ? '✓ Przyjęte' : 'Potwierdź'}</button></div>)}{controlItems.map((r)=><div className="health-list-row" key={`control-${r.id}`}><span className="health-icon-tile">☎️</span><div><strong>{r.nextControl ? `Kontrola: ${r.nextControl}` : 'Zadzwoń do rejestracji'}</strong><small>{r.callReminderDate ? `Przypomnienie: ${formatShortDate(r.callReminderDate)}` : r.specialty}</small></div></div>)}</article>
+      {person !== 'family' && <section className="health-profile-bar-versa">
+        <span className="health-profile-avatar-versa">{selectedMember?.photoURL ? <img src={selectedMember.photoURL} alt="" /> : memberEmoji(person)}</span>
+        <div><h2>{person}</h2><p>{personRole(person, selectedMember?.role)} · kartoteka zdrowia</p></div>
+      </section>}
 
-        {person === 'Paweł' && parent && <article className="health-card important-docs"><header><strong>🔒 Ważne dokumenty Pawła</strong><button onClick={() => openAdd('document')}>Dodaj +</button></header>{importantPawelDocs.length === 0 ? <p className="health-empty">Dodaj orzeczenie lub ważny dokument, aby mieć go zawsze pod ręką.</p> : importantPawelDocs.map((r)=><div className="document-row" key={r.id}><span>📁</span><div><strong>{r.title}</strong><small>Tylko rodzice</small></div>{r.documentURL && <a href={r.documentURL} target="_blank" rel="noreferrer">Pokaż lekarzowi</a>}</div>)}</article>}
+      <nav className="health-tabs-versa">
+        {tabItems.map(([key,icon,label])=><button key={key} className={healthTab === key ? 'active' : ''} onClick={()=>setHealthTab(key)}><span>{icon}</span>{label}</button>)}
+      </nav>
 
-        <article className="health-card"><header><strong>🕘 Historia wizyt</strong><small>Od najnowszych do najstarszych</small></header>{history.length === 0 ? <p className="health-empty">Brak historii.</p> : history.map((r)=><div className="timeline-health-row" key={r.id}><time>{r.date ? formatShortDate(r.date) : '—'}</time><span style={{ background:personColor(r.person) }} /><div><strong>{r.specialty || r.title}</strong><small>{r.person}{r.doctor ? ` · ${r.doctor}` : ''}</small><p>{r.note || r.location}</p></div></div>)}</article>
+      {healthTab === 'summary' && <div className="health-summary-grid">
+        <article className="health-card-versa">
+          <header><div><strong>📅 Najbliższe wizyty</strong><small>{person === 'family' ? 'Cała rodzina' : person}</small></div><button onClick={()=>setHealthTab('visits')}>Zobacz wszystkie ›</button></header>
+          {upcomingVisits.length === 0 ? <p className="health-empty">Brak zaplanowanych wizyt.</p> : upcomingVisits.slice(0,3).map((r)=><div className="health-visit-row" key={r.id}><span className="health-date-tile"><b>{new Date(`${r.date}T12:00`).getDate()}</b><small>{new Date(`${r.date}T12:00`).toLocaleDateString('pl-PL',{month:'short'}).toUpperCase()}</small></span><div><strong>{r.specialty || r.title}</strong><small>{[r.time,r.doctor,r.location].filter(Boolean).join(' · ')}</small></div><span>›</span></div>)}
+        </article>
 
-        <article className="health-card"><header><strong>📄 Dokumenty i wyniki</strong><button onClick={() => openAdd('result')}>Dodaj plik +</button></header>{documents.length === 0 ? <p className="health-empty">Brak dokumentów.</p> : documents.map((r)=><div className="document-row" key={r.id}><span>📄</span><div><strong>{r.title}</strong><small>{r.date ? formatShortDate(r.date) : ''} · {r.person}</small></div>{r.documentURL ? <a href={r.documentURL} target="_blank" rel="noreferrer">Otwórz</a> : <span>Bez pliku</span>}</div>)}</article>
+        <article className="health-card-versa reminders-card-versa">
+          <header><div><strong>🔔 Przypomnienia</strong><small>Leki i kontrole</small></div><button onClick={()=>setHealthTab('meds')}>Zobacz wszystkie ›</button></header>
+          {medicines.length === 0 && controlItems.length === 0 ? <p className="health-empty">Brak aktywnych przypomnień.</p> : null}
+          {medicines.slice(0,3).flatMap((r)=>medicineTimes(r).map((time)=><div className="health-reminder-row" key={`${r.id}-${time}`}><span className="health-icon-tile medicine">💊</span><div><strong>{r.title}</strong><small>{r.person} · {time}{r.dose ? ` · ${r.dose}` : ''}</small></div><button className={isDoseConfirmed(r.id,time) ? 'confirmed' : ''} onClick={()=>void confirmMedicine(r,time)}>{isDoseConfirmed(r.id,time) ? '✓ Przyjęte' : 'Potwierdź'}</button></div>))}
+          {controlItems.slice(0,2).map((r)=><div className="health-reminder-row" key={`control-${r.id}`}><span className="health-icon-tile">🩺</span><div><strong>{r.nextControl || 'Kontrola'}</strong><small>{r.callReminderDate ? `Przypomnienie ${formatShortDate(r.callReminderDate)}` : r.specialty}</small></div></div>)}
+        </article>
 
-        <article className="health-card medical-contacts"><header><strong>👥 Kontakty medyczne</strong><button onClick={() => { setContactForm({ person:person === 'family' ? 'family' : person, specialty:'', name:'', doctor:'', phone:'', address:'', note:'' }); setShowContactForm(true); }}>Dodaj +</button></header>{visibleContacts.length === 0 ? <p className="health-empty">Dodaj szpital, poradnię lub lekarza.</p> : visibleContacts.map((c)=><div className="contact-row" key={c.id}><span>🏥</span><div><strong>{c.name}</strong><small>{[c.specialty,c.doctor,c.address].filter(Boolean).join(' · ')}</small></div>{c.phone && <a href={`tel:${c.phone.replace(/\s/g,'')}`}>☎ {c.phone}</a>}</div>)}</article>
-      </div>
+        {person === 'Paweł' && parent && <article className="health-card-versa important-docs-versa">
+          <header><div><strong>🔒 Ważne dokumenty</strong><small>Zawsze pod ręką</small></div><button onClick={()=>openAdd('document')}>Dodaj +</button></header>
+          {importantDocs.length === 0 ? <p className="health-empty">Dodaj orzeczenia, decyzje lub inne ważne dokumenty.</p> : importantDocs.map((r)=><div className="health-document-row" key={r.id}><span>📄</span><div><strong>{r.title}</strong><small>{r.sharedWithPerson ? 'Udostępniony właścicielowi profilu' : 'Tylko rodzice'}</small></div><div>{r.documentURL && <a href={r.documentURL} target="_blank" rel="noreferrer">Otwórz</a>}<button onClick={()=>void toggleDocumentShare(r)}>{r.sharedWithPerson ? 'Cofnij dostęp' : 'Udostępnij'}</button></div></div>)}
+        </article>}
+
+        <article className="health-card-versa">
+          <header><div><strong>🧪 Ostatnie wyniki</strong><small>Najświeższe wpisy</small></div><button onClick={()=>setHealthTab('results')}>Zobacz wszystkie ›</button></header>
+          {results.length === 0 ? <p className="health-empty">Brak wyników.</p> : results.slice(0,4).map((r)=><div className="health-result-row" key={r.id}><span>📄</span><div><strong>{r.title}</strong><small>{r.date ? formatShortDate(r.date) : ''}</small></div><em>{r.note || 'Zapisano'}</em></div>)}
+        </article>
+
+        <article className="health-card-versa quick-health-actions">
+          <header><div><strong>⭐ Szybkie akcje</strong><small>Dodaj nowy wpis</small></div></header>
+          <div><button onClick={()=>openAdd('visit')}><span>＋</span><strong>Dodaj wizytę</strong></button><button onClick={()=>openAdd('medicine')}><span>💊</span><strong>Dodaj lek</strong></button><button onClick={()=>openAdd('result')}><span>📄</span><strong>Dodaj wynik</strong></button><button onClick={()=>openAdd('document')}><span>📁</span><strong>Dodaj dokument</strong></button></div>
+        </article>
+      </div>}
+
+      {healthTab !== 'summary' && <section className="health-section-card">
+        <header><div><h2>{tabItems.find(([k])=>k===healthTab)?.[2]}</h2><p>{person === 'family' ? 'Widok całej rodziny' : `Profil: ${person}`}</p></div>{healthTab === 'visits' && <button className="primary-button" onClick={()=>openAdd('visit')}>＋ Dodaj wizytę</button>}{healthTab === 'meds' && <button className="primary-button" onClick={()=>openAdd('medicine')}>＋ Dodaj lek</button>}{healthTab === 'results' && <button className="primary-button" onClick={()=>openAdd('result')}>＋ Dodaj wynik</button>}{healthTab === 'documents' && <button className="primary-button" onClick={()=>openAdd('document')}>＋ Dodaj dokument</button>}{healthTab === 'contacts' && <button className="primary-button" onClick={()=>{setContactForm({person:person==='family'?'family':person,specialty:'',name:'',doctor:'',phone:'',address:'',note:''});setShowContactForm(true);}}>＋ Dodaj kontakt</button>}</header>
+        {healthTab === 'visits' && recordList('visit')}
+        {healthTab === 'results' && recordList('result')}
+        {healthTab === 'documents' && <div className="health-documents-full">{documents.length===0?<p className="health-empty">Brak dokumentów.</p>:documents.map((r)=><article key={r.id}><span>📄</span><div><strong>{r.title}</strong><small>{r.privateToParents ? (r.sharedWithPerson ? 'Rodzice + właściciel profilu' : 'Tylko rodzice') : 'Widoczny zgodnie z profilem'} · {r.date ? formatShortDate(r.date) : ''}</small></div>{r.documentURL&&<a href={r.documentURL} target="_blank" rel="noreferrer">Otwórz</a>}{parent&&r.privateToParents&&<button onClick={()=>void toggleDocumentShare(r)}>{r.sharedWithPerson?'Cofnij udostępnienie':'Udostępnij właścicielowi'}</button>}</article>)}</div>}
+        {healthTab === 'contacts' && <div className="health-generic-list">{visibleContacts.length===0?<p className="health-empty">Brak kontaktów medycznych.</p>:visibleContacts.map((c)=><article key={c.id}><span className="health-icon-tile">🏥</span><div><strong>{c.name}</strong><small>{[c.specialty,c.doctor,c.address].filter(Boolean).join(' · ')}</small></div>{c.phone&&<a href={`tel:${c.phone.replace(/\s/g,'')}`}>{c.phone}</a>}</article>)}</div>}
+        {healthTab === 'notes' && recordList('notes')}
+        {healthTab === 'meds' && <div className="medicine-schedule-list">{medicines.length===0?<p className="health-empty">Brak leków stałych.</p>:medicines.map((r)=><article key={r.id}><header><span className="health-icon-tile medicine">💊</span><div><strong>{r.title}</strong><small>{r.person}{r.dose?` · ${r.dose}`:''}</small></div><em>eskalacja po {r.escalationMinutes} min</em></header><div className="medicine-times-grid">{medicineTimes(r).map((time)=><button key={time} className={isDoseConfirmed(r.id,time)?'confirmed':''} onClick={()=>void confirmMedicine(r,time)}><strong>{time}</strong><span>{isDoseConfirmed(r.id,time)?'✓ Przyjęte':'Potwierdź dawkę'}</span></button>)}</div></article>)}</div>}
+      </section>}
 
       {showForm && <Modal title={`❤️ ${HEALTH_META[form.type].label}`} onClose={() => setShowForm(false)} wide>
         <form className="form-grid" onSubmit={save}>
           <label className="field"><span>Osoba</span><PersonSelect includeFamily={false} value={form.person} onChange={(value)=>setForm((f)=>({...f,person:value}))} /></label>
           <label className="field"><span>Rodzaj</span><select value={form.type} onChange={(e)=>setForm((f)=>({...f,type:e.target.value as HealthType}))}>{(Object.keys(HEALTH_META) as HealthType[]).map((t)=><option key={t} value={t}>{HEALTH_META[t].icon} {HEALTH_META[t].label}</option>)}</select></label>
-          <label className="field field-wide"><span>Nazwa / opis</span><input value={form.title} onChange={(e)=>setForm((f)=>({...f,title:e.target.value}))} placeholder="Np. neurolog — kontrola" required /></label>
+          <label className="field field-wide"><span>Nazwa / opis</span><input value={form.title} onChange={(e)=>setForm((f)=>({...f,title:e.target.value}))} placeholder={form.type === 'medicine' ? 'Np. lek stały' : 'Np. neurolog — kontrola'} required /></label>
           <label className="field"><span>Specjalizacja</span><select value={form.specialty} onChange={(e)=>setForm((f)=>({...f,specialty:e.target.value}))}><option value="">—</option>{SPECIALTIES.map((s)=><option key={s}>{s}</option>)}</select></label>
           <label className="field"><span>Status</span><select value={form.status} onChange={(e)=>setForm((f)=>({...f,status:e.target.value as HealthStatus}))}><option value="planned">Zaplanowana</option><option value="toBook">Do umówienia</option><option value="booked">Umówiona</option><option value="done">Odbyta</option><option value="cancelled">Anulowana</option></select></label>
           <label className="field"><span>Data</span><input type="date" value={form.date} onChange={(e)=>setForm((f)=>({...f,date:e.target.value}))} /></label>
@@ -2609,10 +2790,14 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
           <label className="field"><span>Kod skierowania</span><input value={form.referralCode} onChange={(e)=>setForm((f)=>({...f,referralCode:e.target.value}))} /></label>
           <label className="field"><span>Kontrola / orientacyjny termin</span><input value={form.nextControl} onChange={(e)=>setForm((f)=>({...f,nextControl:e.target.value}))} placeholder="Np. za 6 miesięcy" /></label>
           <label className="field"><span>Przypomnij, aby zadzwonić</span><input type="date" value={form.callReminderDate} onChange={(e)=>setForm((f)=>({...f,callReminderDate:e.target.value}))} /></label>
-          {form.type === 'medicine' && <><label className="field"><span>Dawka</span><input value={form.dose} onChange={(e)=>setForm((f)=>({...f,dose:e.target.value}))} /></label><label className="field"><span>Godzina leku</span><input type="time" value={form.medicineTime} onChange={(e)=>setForm((f)=>({...f,medicineTime:e.target.value}))} /></label></>}
+          {form.type === 'medicine' && <>
+            <label className="field"><span>Dawka</span><input value={form.dose} onChange={(e)=>setForm((f)=>({...f,dose:e.target.value}))} placeholder="Np. 1 tabletka" /></label>
+            <label className="field"><span>Eskalacja do rodzica po</span><select value={form.escalationMinutes} onChange={(e)=>setForm((f)=>({...f,escalationMinutes:Number(e.target.value)}))}><option value={5}>5 min</option><option value={10}>10 min</option><option value={15}>15 min</option><option value={30}>30 min</option><option value={60}>60 min</option></select></label>
+            <div className="field field-wide medicine-times-editor"><span>Godziny przyjmowania</span><div>{form.medicineTimes.map((time,index)=><label key={index}><input type="time" value={time} onChange={(e)=>setForm((f)=>({...f,medicineTimes:f.medicineTimes.map((v,i)=>i===index?e.target.value:v)}))} /><button type="button" onClick={()=>setForm((f)=>({...f,medicineTimes:f.medicineTimes.filter((_,i)=>i!==index)}))}>✕</button></label>)}<button type="button" className="secondary-button" onClick={()=>setForm((f)=>({...f,medicineTimes:[...f.medicineTimes,'20:00']}))}>＋ Dodaj godzinę</button></div></div>
+          </>}
           <label className="field field-wide"><span>Notatka / zalecenia</span><textarea rows={3} value={form.note} onChange={(e)=>setForm((f)=>({...f,note:e.target.value}))} /></label>
           <label className="field field-wide"><span>Plik (PDF / zdjęcie)</span><input type="file" accept="image/*,.pdf" onChange={(e)=>setForm((f)=>({...f,file:e.target.files?.[0] || null}))} /></label>
-          {parent && form.person === 'Paweł' && form.type === 'document' && <label className="checkbox-field field-wide"><input type="checkbox" checked={form.privateToParents} onChange={(e)=>setForm((f)=>({...f,privateToParents:e.target.checked}))} /><span>🔒 Widoczne tylko dla rodziców</span></label>}
+          {parent && form.type === 'document' && <><label className="checkbox-field field-wide"><input type="checkbox" checked={form.privateToParents} onChange={(e)=>setForm((f)=>({...f,privateToParents:e.target.checked}))} /><span>🔒 Widoczne tylko dla rodziców</span></label>{form.privateToParents&&<label className="checkbox-field field-wide"><input type="checkbox" checked={form.sharedWithPerson} onChange={(e)=>setForm((f)=>({...f,sharedWithPerson:e.target.checked}))} /><span>Udostępnij także właścicielowi profilu</span></label>}</>}
           {form.type === 'visit' && <label className="checkbox-field field-wide"><input type="checkbox" checked={form.addToCalendar} onChange={(e)=>setForm((f)=>({...f,addToCalendar:e.target.checked}))} /><span>Dodaj również do rodzinnego Kalendarza</span></label>}
           <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={()=>setShowForm(false)}>Anuluj</button><button className="primary-button">✓ Zapisz</button></div>
         </form>
