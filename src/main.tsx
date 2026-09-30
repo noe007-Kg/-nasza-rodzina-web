@@ -22,7 +22,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.3';
+const APP_VERSION = '1.3.4';
 const APP_UPDATED = '30.09.2026';
 
 /* =========================================================
@@ -2297,22 +2297,36 @@ function ChatPage({ user, member }: { user: User; member: Member | null }) {
   const [selectedUid, setSelectedUid] = useState<string>('');
   const [messageMenu, setMessageMenu] = useState<ChatMessage | null>(null);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [search, setSearch] = useState('');
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => onSnapshot(collection(db, 'members'), (snap) => {
     const next = snap.docs.map((d) => {
       const x = d.data();
-      return { id:d.id, name:String(x.name || 'Rodzina'), role:personRole(String(x.name || ''), typeof x.role === 'string' ? x.role : ''), photoURL:typeof x.photoURL === 'string' ? x.photoURL : undefined, active:x.active !== false };
-    }).sort((a,b) => FAMILY_ORDER.indexOf(a.name)-FAMILY_ORDER.indexOf(b.name));
+      return {
+        id: d.id,
+        name: String(x.name || 'Rodzina'),
+        role: personRole(String(x.name || ''), typeof x.role === 'string' ? x.role : ''),
+        photoURL: typeof x.photoURL === 'string' ? x.photoURL : undefined,
+        active: x.active !== false,
+      };
+    }).sort((a, b) => FAMILY_ORDER.indexOf(a.name) - FAMILY_ORDER.indexOf(b.name));
     setMembers(next);
   }), []);
 
   useEffect(() => onSnapshot(collection(db, 'familyMessages'), (snap) => {
     const loaded = snap.docs.map((d): ChatMessage => {
       const x = d.data();
-      return { id: d.id, text: String(x.text || ''), name: String(x.name || 'Rodzina'), uid: String(x.uid || ''), channel: typeof x.channel === 'string' ? x.channel : 'family', createdAt: x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
+      return {
+        id: d.id,
+        text: String(x.text || ''),
+        name: String(x.name || 'Rodzina'),
+        uid: String(x.uid || ''),
+        channel: typeof x.channel === 'string' ? x.channel : 'family',
+        createdAt: x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
+      };
     }).sort((a, b) => (a.createdAt?.getTime() || 0) - (b.createdAt?.getTime() || 0));
-    setMessages(loaded.slice(-300));
+    setMessages(loaded.slice(-400));
   }), []);
 
   const channel = mode === 'family' ? 'family' : selectedUid ? privateChannel(user.uid, selectedUid) : '';
@@ -2320,12 +2334,21 @@ function ChatPage({ user, member }: { user: User; member: Member | null }) {
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [visible.length, channel]);
 
   const selectedMember = members.find((m) => m.id === selectedUid);
+  const privateMembers = members.filter((m) => m.id !== user.uid && m.name.toLowerCase().includes(search.trim().toLowerCase()));
 
   async function send(e: React.FormEvent) {
-    e.preventDefault(); if (!text.trim() || !channel) return;
+    e.preventDefault();
+    if (!text.trim() || !channel) return;
     const body = replyTo ? `↩ ${replyTo.name}: ${replyTo.text.slice(0, 60)}\n${text.trim()}` : text.trim();
-    await addDoc(collection(db, 'familyMessages'), { text: body, name: member?.name || 'Rodzina', uid: user.uid, channel, createdAt: Timestamp.now() });
-    setText(''); setReplyTo(null);
+    await addDoc(collection(db, 'familyMessages'), {
+      text: body,
+      name: member?.name || 'Rodzina',
+      uid: user.uid,
+      channel,
+      createdAt: Timestamp.now(),
+    });
+    setText('');
+    setReplyTo(null);
   }
 
   async function removeMessage(message: ChatMessage) {
@@ -2339,35 +2362,98 @@ function ChatPage({ user, member }: { user: User; member: Member | null }) {
     return [...messages].reverse().find((m) => m.channel === ch);
   };
 
+  const lastFamily = [...messages].reverse().find((m) => m.channel === 'family');
+
+  function openFamily() {
+    setMode('family');
+    setSelectedUid('');
+  }
+
+  function openPrivate(uid?: string) {
+    setMode('private');
+    if (uid) setSelectedUid(uid);
+  }
+
   return (
-    <div className="page-content compact-page chat-page chat-v130">
-      <ModuleHeader icon="💬" title="Czat" text="Czat rodzinny i prywatne rozmowy 1:1." />
-      <section className="chat-layout-v130">
-        <aside className="chat-conversations">
-          <div className="chat-mode-tabs"><button className={mode === 'family' ? 'active' : ''} onClick={() => { setMode('family'); setSelectedUid(''); }}>Rodzina</button><button className={mode === 'private' ? 'active' : ''} onClick={() => setMode('private')}>Prywatne</button></div>
-          {mode === 'family' ? <button className="conversation-row active"><span className="conversation-group-avatar">👨‍👩‍👧‍👦</span><div><strong>Czat rodzinny</strong><small>{[...messages].reverse().find((m) => m.channel === 'family')?.text || 'Wspólna rozmowa całej rodziny'}</small></div></button> : <div className="private-list">{members.filter((m) => m.id !== user.uid).map((person) => { const last=lastForChannel(person.id); return <button key={person.id} className={`conversation-row ${selectedUid === person.id ? 'active' : ''}`} onClick={() => setSelectedUid(person.id)}><span className="chat-avatar">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span><div><strong>{person.name}</strong><small>{last ? last.text : 'Rozpocznij rozmowę'}</small></div><time>{last?.createdAt ? formatTime(last.createdAt) : ''}</time></button>; })}</div>}
+    <div className="page-content compact-page chat-page chat-v134">
+      <section className="chat-page-heading">
+        <div><small>Rodzinne centrum</small><h1>💬 Czat</h1><p>Rozmowy z całą rodziną i prywatne wiadomości 1:1.</p></div>
+      </section>
+
+      <section className="chat-mode-tabs-v134" aria-label="Tryb rozmowy">
+        <button className={mode === 'family' ? 'active' : ''} onClick={openFamily}>👥 Rodzina</button>
+        <button className={mode === 'private' ? 'active' : ''} onClick={() => openPrivate()}>👤 Prywatne</button>
+      </section>
+
+      <section className="chat-layout-v134">
+        <aside className="chat-conversations-v134">
+          <div className="chat-search-v134"><span>⌕</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Szukaj rozmów…" /></div>
+
+          <button className={`conversation-row-v134 ${mode === 'family' ? 'active' : ''}`} onClick={openFamily}>
+            <span className="conversation-group-avatar-v134">👨‍👩‍👧‍👦</span>
+            <div><strong>Czat rodzinny</strong><small>{lastFamily?.text || 'Wspólna rozmowa całej rodziny'}</small></div>
+            <time>{lastFamily?.createdAt ? formatTime(lastFamily.createdAt) : ''}</time>
+          </button>
+
+          <div className="private-conversation-list-v134">
+            {privateMembers.map((person) => {
+              const last = lastForChannel(person.id);
+              return (
+                <button key={person.id} className={`conversation-row-v134 ${mode === 'private' && selectedUid === person.id ? 'active' : ''}`} onClick={() => openPrivate(person.id)}>
+                  <span className="chat-avatar-v134">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span>
+                  <div><strong>{person.name}</strong><small>{last ? last.text : 'Rozpocznij rozmowę'}</small></div>
+                  <time>{last?.createdAt ? formatTime(last.createdAt) : ''}</time>
+                </button>
+              );
+            })}
+          </div>
         </aside>
 
-        <section className="chat-shell">
-          <header className="chat-room-header"><span className="chat-avatar large">{mode === 'family' ? '👨‍👩‍👧‍👦' : selectedMember?.photoURL ? <img src={selectedMember.photoURL} alt="" /> : selectedMember ? memberEmoji(selectedMember.name) : '💬'}</span><div><strong>{mode === 'family' ? 'Czat rodzinny' : selectedMember?.name || 'Wybierz osobę'}</strong><small>{mode === 'family' ? members.map((m) => m.name).join(', ') : selectedMember ? `${selectedMember.role} · ${selectedMember.active ? 'online' : 'offline'}` : 'Prywatna rozmowa 1:1'}</small></div></header>
-          <div className="chat-messages">
+        <section className="chat-shell-v134">
+          <header className="chat-room-header-v134">
+            <span className="chat-avatar-v134 large">{mode === 'family' ? '👨‍👩‍👧‍👦' : selectedMember?.photoURL ? <img src={selectedMember.photoURL} alt="" /> : selectedMember ? memberEmoji(selectedMember.name) : '💬'}</span>
+            <div>
+              <strong>{mode === 'family' ? 'Czat rodzinny' : selectedMember?.name || 'Wybierz osobę'}</strong>
+              <small>{mode === 'family' ? `${members.length || 5} uczestników` : selectedMember ? 'Prywatna rozmowa 1:1' : 'Wybierz członka rodziny z listy'}</small>
+            </div>
+          </header>
+
+          <div className="chat-messages-v134">
             {!channel ? <EmptyState icon="👤" text="Wybierz osobę z listy prywatnych rozmów." /> : visible.length === 0 ? <EmptyState icon="💬" text="Napisz pierwszą wiadomość." /> : visible.map((message, index) => {
               const previous = visible[index - 1];
               const showIdentity = !previous || previous.uid !== message.uid;
               const person = members.find((m) => m.id === message.uid);
-              return <div key={message.id} className={`chat-message-line ${message.uid === user.uid ? 'mine' : ''}`} onContextMenu={(e) => { e.preventDefault(); setMessageMenu(message); }}>
-                {message.uid !== user.uid && <span className={`chat-avatar ${showIdentity ? '' : 'ghost'}`}>{showIdentity ? (person?.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(message.name)) : ''}</span>}
-                <div className={`chat-bubble ${message.uid === user.uid ? 'mine' : ''}`}>{showIdentity && message.uid !== user.uid && <strong>{message.name}</strong>}<p>{message.text}</p><small>{message.createdAt ? formatTime(message.createdAt) : ''}{message.uid === user.uid ? ' ✓✓' : ''}</small><button className="message-more" onClick={() => setMessageMenu(message)}>⋯</button></div>
-              </div>;
+              return (
+                <div key={message.id} className={`chat-message-line-v134 ${message.uid === user.uid ? 'mine' : ''}`}>
+                  {message.uid !== user.uid && <span className={`chat-avatar-v134 message-avatar ${showIdentity ? '' : 'ghost'}`}>{showIdentity ? (person?.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(message.name)) : ''}</span>}
+                  <div className={`chat-bubble-v134 ${message.uid === user.uid ? 'mine' : ''}`}>
+                    {showIdentity && message.uid !== user.uid && <strong>{message.name}</strong>}
+                    <p>{message.text}</p>
+                    <small>{message.createdAt ? formatTime(message.createdAt) : ''}{message.uid === user.uid ? '  ✓✓' : ''}</small>
+                    <button className="message-more-v134" type="button" aria-label="Opcje wiadomości" onClick={() => setMessageMenu(message)}>⋯</button>
+                  </div>
+                </div>
+              );
             })}
             <div ref={endRef} />
           </div>
-          {replyTo && <div className="reply-banner"><span>Odpowiadasz: <strong>{replyTo.name}</strong> — {replyTo.text.slice(0,80)}</span><button onClick={() => setReplyTo(null)}>✕</button></div>}
-          <form className="chat-compose" onSubmit={send}><button type="button" title="Załącznik">📎</button><input value={text} onChange={(e) => setText(e.target.value)} placeholder={channel ? 'Napisz wiadomość…' : 'Najpierw wybierz rozmowę'} disabled={!channel} /><button type="button" onClick={() => setText((v) => `${v} 😊`)}>😊</button><button className="primary-button" disabled={!channel}>Wyślij</button></form>
+
+          {replyTo && <div className="reply-banner-v134"><span>Odpowiadasz: <strong>{replyTo.name}</strong> — {replyTo.text.slice(0, 80)}</span><button onClick={() => setReplyTo(null)}>✕</button></div>}
+
+          <form className="chat-compose-v134" onSubmit={send}>
+            <input value={text} onChange={(e) => setText(e.target.value)} placeholder={channel ? 'Napisz wiadomość…' : 'Najpierw wybierz rozmowę'} disabled={!channel} />
+            <button className="chat-send-v134" disabled={!channel || !text.trim()}>Wyślij</button>
+          </form>
         </section>
       </section>
 
-      {messageMenu && <div className="quick-product-menu-backdrop" onClick={() => setMessageMenu(null)}><div className="message-menu" onClick={(e) => e.stopPropagation()}><div className="reaction-row"><button onClick={() => setText((v) => `${v} ❤️`)}>❤️</button><button onClick={() => setText((v) => `${v} 👍`)}>👍</button><button onClick={() => setText((v) => `${v} 😂`)}>😂</button></div><button onClick={() => { setReplyTo(messageMenu); setMessageMenu(null); }}>↩ Odpowiedz</button><button onClick={() => { void navigator.clipboard?.writeText(messageMenu.text); setMessageMenu(null); }}>📋 Kopiuj</button>{(messageMenu.uid === user.uid || isParent(member)) && <button className="danger" onClick={() => void removeMessage(messageMenu)}>🗑️ Usuń</button>}</div></div>}
+      {messageMenu && <div className="chat-menu-backdrop-v134" onClick={() => setMessageMenu(null)}>
+        <div className="message-menu-v134" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => { setReplyTo(messageMenu); setMessageMenu(null); }}>↩ Odpowiedz</button>
+          <button onClick={() => { void navigator.clipboard?.writeText(messageMenu.text); setMessageMenu(null); }}>📋 Kopiuj</button>
+          {(messageMenu.uid === user.uid || isParent(member)) && <button className="danger" onClick={() => void removeMessage(messageMenu)}>🗑️ Usuń</button>}
+        </div>
+      </div>}
     </div>
   );
 }
