@@ -22,7 +22,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.8';
+const APP_VERSION = '1.3.9';
 const APP_UPDATED = '30.09.2026';
 
 /* =========================================================
@@ -933,83 +933,164 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
     return '🟢 Wolny';
   }
 
+  const todayLabel = capitalize(now.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' }));
+  const openTasksCount = tasks.filter((item) => !item.done).length;
+  const openShoppingCount = shopping.filter((item) => !item.done).length;
+
+  const dayPlan = [
+    ...todayOccurrences.map((occurrence) => ({
+      key: `cal-${occurrence.key}`,
+      start: occurrence.date,
+      end: occurrence.endDate,
+      title: occurrence.source.title,
+      person: occurrence.source.person,
+      place: occurrence.source.description || (occurrence.source.person === 'family' ? 'Rodzina' : ''),
+      icon: eventActivityIcon(occurrence.source.title),
+      allDay: occurrence.source.allDay,
+    })),
+    ...todaySchoolItems.map((record) => ({
+      key: `school-${record.id}`,
+      start: schoolStart(record),
+      end: schoolEnd(record),
+      title: record.type === 'activity' ? record.title : (record.subject || record.title),
+      person: record.person,
+      place: record.note || 'Szkoła',
+      icon: subjectIcon(record.subject || record.title),
+      allDay: false,
+    })),
+  ].sort((a, b) => a.start.getTime() - b.start.getTime()).slice(0, 8);
+
   return (
-    <div className="page-content start-dashboard-page start-v130">
-      <section className="start-top-row">
-        <div className="family-quick-strip" aria-label="Profile rodziny">
+    <div className="page-content start-dashboard-page start-v139">
+      <header className="start-app-header">
+        <div><small>Rodzinne centrum</small><strong>Nasza Rodzina</strong></div>
+        <div className="start-header-actions">
+          <button type="button" aria-label="Szukaj" title="Szukaj">⌕</button>
+          <button type="button" aria-label="Powiadomienia" title="Powiadomienia">🔔</button>
+          <div className="start-current-user">
+            <div><strong>{name}</strong><small>{member?.role || 'Rodzina'}</small></div>
+            <span>{member?.photoURL ? <img src={member.photoURL} alt="" /> : memberEmoji(name)}</span>
+          </div>
+          <button type="button" className="start-logout" onClick={() => void signOut(auth)}>Wyloguj</button>
+        </div>
+      </header>
+
+      <section className="start-family-weather-row">
+        <div className="start-family-switcher" aria-label="Profile rodziny">
+          <button className="start-person-tile all" type="button" onClick={() => goTo('Rodzina')}>
+            <span className="start-person-avatar all">👨‍👩‍👧‍👦</span>
+            <strong>Wszyscy</strong><small>Cała rodzina</small>
+          </button>
           {members.slice(0, 5).map((person) => (
-            <button key={person.id} className="quick-person" type="button" onClick={() => goTo('Rodzina')} title={`Profil: ${person.name}`}>
-              <span className="quick-avatar">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span>
-              <span className={`online-dot ${person.active ? 'on' : ''}`} />
+            <button key={person.id} className="start-person-tile" type="button" onClick={() => goTo('Rodzina')} title={`Profil: ${person.name}`}>
+              <span className="start-person-avatar">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span>
+              <span className={`start-online-dot ${person.active ? 'on' : ''}`} />
               <strong>{person.name}</strong><small>{personRole(person.name, person.role)}</small>
             </button>
           ))}
         </div>
-        <div className="start-weather" title="Pogoda: Open-Meteo">
-          <span className="weather-icon">{weather?.icon || '🌤️'}</span>
-          <div className="weather-main"><strong>Kołobrzeg</strong><b>{weather ? `${weather.temp}°C` : '—°C'}</b><small>{weather?.label || 'Pobieranie pogody…'}</small></div>
-          <div className="weather-side">
-            <div className="weather-date"><strong>{capitalize(new Date().toLocaleDateString('pl-PL', { weekday: 'long' }))}</strong><small>{new Date().toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })}</small></div>
-            {weather && <div className="weather-details"><span>↑ {weather.max}°C</span><span>↓ {weather.min}°C</span><span>≋ {weather.wind} km/h</span></div>}
-          </div>
+
+        <div className="start-weather-v139" title="Pogoda: Open-Meteo">
+          <div className="weather-city">Kołobrzeg</div>
+          <div className="weather-center"><span>{weather?.icon || '🌤️'}</span><strong>{weather ? `${weather.temp}°C` : '—°C'}</strong></div>
+          <small>{todayLabel}</small>
+          {weather && <div className="weather-mini"><span>↑ {weather.max}°C</span><span>↓ {weather.min}°C</span><span>≋ {weather.wind} km/h</span></div>}
         </div>
       </section>
 
-      <section className="start-welcome-banner">
-        <div className="start-welcome-copy"><h1>Cześć, <span>{name}!</span> 👋</h1><p>Miło Cię znowu widzieć.<br />Dobrego dnia dla całej rodziny!</p></div>
+      <section className="start-hero-v139">
+        <div className="start-hero-copy-v139">
+          <small>Dzień dobry 👋</small>
+          <h1>Cześć,<br /><span>{name}!</span></h1>
+          <p>Miło Cię znowu widzieć.<br />Dobrego dnia dla całej rodziny!</p>
+          <button type="button" onClick={() => goTo('Kalendarz')}>👨‍👩‍👧‍👦 Wszyscy wolni od <strong>{allFreeAt}</strong> ›</button>
+        </div>
+        <div className="start-hero-family-art" aria-hidden="true">
+          <span>👨‍👩‍👧‍👦</span>
+          <p>„Małe kroki,<br />wielkie rzeczy<br />w naszej rodzinie.”</p>
+        </div>
       </section>
 
-      <section className="family-free-banner">
-        <div><span className="free-family-icon">👨‍👩‍👧‍👦</span><div><small>Rodzinny czas</small><strong>Wszyscy wolni od {allFreeAt}</strong><p>Liczymy sztywne godziny zakończenia pracy, szkoły i zajęć.</p></div></div>
-        <button onClick={() => goTo('Kalendarz')}>Pełny plan dnia ›</button>
+      <section className="start-today-bar">
+        <div><span>📅</span><strong>Dziś – {todayLabel}</strong></div>
+        <button type="button" onClick={() => goTo('Kalendarz')}>Pełny plan dnia ›</button>
       </section>
 
-      <section className="today-people-grid">
-        {members.slice(0, 5).map((person) => {
-          const personEvents = planForPerson(person.name).slice(0, 5);
-          return <article className="today-person-card" key={person.id} style={{ borderTopColor: personColor(person.name as PersonKey) }}>
-            <header><span className="mini-avatar">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span><div><strong>{person.name}</strong><small>{personStatus(person.name)}</small></div></header>
-            <div className="mini-timeline">
-              {personEvents.length === 0 ? <p>Brak zaplanowanych zajęć</p> : personEvents.map((o) => <div key={o.key}><time>{o.allDay ? 'Cały dzień' : `${formatTime(o.start)}–${formatTime(o.end)}`}</time><span>{o.icon} {o.title}</span></div>)}
-            </div>
-          </article>;
-        })}
-      </section>
-
-      <section className="home-focus-grid home-focus-grid-v130">
-        <article className="focus-card">
-          <header><div><span className="focus-title-icon purple">✓</span><strong>Najważniejsze zadania</strong></div><button onClick={() => goTo('Zadania')}>Zobacz wszystkie ›</button></header>
-          <div className="focus-list">
-            {priorityTasks.length === 0 ? <p className="focus-empty">Brak pilnych zadań — super! ✨</p> : priorityTasks.map((item) => (
-              <button className="focus-row" key={item.id} onClick={() => goTo('Zadania')}>
-                <span className="focus-check" />
-                <span className="focus-main"><strong>{item.title}</strong><small>{personLabel(item.person)}{item.points ? ` · +${item.points} pkt` : ''}</small></span>
-                <span className="focus-meta">{item.dueDate ? formatShortDate(item.dueDate) : item.priority === 'high' ? 'Pilne' : 'Bez terminu'}</span>
+      <section className="start-main-grid-v139">
+        <article className="start-card-v139 start-day-plan-card">
+          <header><div><span>🗓️</span><strong>Plan dnia – wszyscy</strong></div><button onClick={() => goTo('Kalendarz')}>Zobacz cały dzień ›</button></header>
+          <div className="start-day-list">
+            {dayPlan.length === 0 ? <p className="start-empty-v139">Dziś nie ma jeszcze wpisów w planie.</p> : dayPlan.map((item) => (
+              <button key={item.key} className="start-day-row" type="button" onClick={() => goTo(item.key.startsWith('school-') ? 'Szkoła' : 'Kalendarz')}>
+                <i style={{ background: personColor(item.person as PersonKey) }} />
+                <time>{item.allDay ? 'Cały dzień' : `${formatTime(item.start)} – ${formatTime(item.end)}`}</time>
+                <span className="start-day-person"><b>{item.person === 'family' ? 'Rodzina' : personLabel(item.person as PersonKey)}</b></span>
+                <span className="start-day-title">{item.icon} {item.title}</span>
+                <small>{item.place}</small>
+                <em>›</em>
               </button>
             ))}
           </div>
         </article>
 
-        <article className="focus-card">
-          <header><div><span className="focus-title-icon pink">📅</span><strong>Nadchodzące wydarzenia</strong></div><button onClick={() => goTo('Kalendarz')}>Zobacz wszystkie ›</button></header>
-          <div className="focus-list">
-            {upcomingEvents.length === 0 ? <p className="focus-empty">Brak nadchodzących wydarzeń.</p> : upcomingEvents.map((occurrence) => {
-              const completed = sameDay(occurrence.date, now) && occurrence.endDate < now;
-              return <button className={`focus-row event-focus-row ${completed ? 'completed-today' : ''}`} key={occurrence.key} onClick={() => goTo('Kalendarz')}>
-                <span className="date-badge"><b>{occurrence.date.getDate()}</b><small>{occurrence.date.toLocaleDateString('pl-PL', { month: 'short' }).replace('.', '').toUpperCase()}</small></span>
-                <span className="focus-main"><strong>{occurrence.source.title}</strong><small>{occurrence.source.allDay ? 'Cały dzień' : `${formatTime(occurrence.date)}–${formatTime(occurrence.endDate)}`} · {personLabel(occurrence.source.person)}</small></span>
-                <span className="focus-meta">{completed ? '✓ Zakończone' : '›'}</span>
-              </button>;
-            })}
+        <article className="start-card-v139 start-tasks-card">
+          <header><div><span>✅</span><strong>Najważniejsze zadania</strong></div><button onClick={() => goTo('Zadania')}>Zobacz wszystkie ›</button></header>
+          <div className="start-simple-list">
+            {priorityTasks.length === 0 ? <p className="start-empty-v139">Brak pilnych zadań — super! ✨</p> : priorityTasks.map((item) => (
+              <button key={item.id} type="button" onClick={() => goTo('Zadania')}>
+                <span className="start-task-check" />
+                <span><strong>{item.title}</strong><small>{personLabel(item.person)}{item.points ? ` · +${item.points} pkt` : ''}</small></span>
+                <em>{item.dueDate ? formatShortDate(item.dueDate) : item.priority === 'high' ? 'Pilne' : 'Bez terminu'}</em>
+              </button>
+            ))}
+          </div>
+        </article>
+      </section>
+
+      <section className="start-bottom-grid-v139">
+        <article className="start-card-v139 start-shopping-card">
+          <header><div><span>🛒</span><strong>Lista zakupów</strong></div><button onClick={() => goTo('Zakupy')}>Pokaż więcej ›</button></header>
+          <div className="start-shopping-list">
+            {openShopping.length === 0 ? <p className="start-empty-v139">Lista zakupów jest pusta.</p> : openShopping.map((item) => (
+              <button key={item.id} type="button" onClick={() => goTo('Zakupy')}>
+                <span>{SHOPPING_META[item.category].icon}</span>
+                <strong>{item.title}</strong>
+                <small>{item.quantity} {item.unit}</small>
+              </button>
+            ))}
+          </div>
+          <button className="start-add-product" onClick={() => goTo('Zakupy')}>＋ Dodaj produkt</button>
+        </article>
+
+        <article className="start-card-v139 start-actions-card">
+          <header><div><span>⚡</span><strong>Szybkie akcje</strong></div></header>
+          <div className="start-actions-grid">
+            <button onClick={() => goTo('Zadania')}><span>＋</span><strong>Dodaj zadanie</strong></button>
+            <button onClick={() => goTo('Kalendarz')}><span>📅</span><strong>Dodaj wydarzenie</strong></button>
+            <button onClick={() => goTo('Zakupy')}><span>🛒</span><strong>Dodaj zakup</strong></button>
+            <button onClick={() => goTo('Czat')}><span>💬</span><strong>Napisz do rodziny</strong></button>
           </div>
         </article>
 
-        <article className="focus-card shopping-preview-card">
-          <header><div><span className="focus-title-icon orange">🛒</span><strong>Lista zakupów</strong></div><button onClick={() => goTo('Zakupy')}>Pokaż więcej ›</button></header>
-          <div className="focus-list">
-            {openShopping.length === 0 ? <p className="focus-empty">Lista zakupów jest pusta.</p> : openShopping.map((item) => <button className="focus-row" key={item.id} onClick={() => goTo('Zakupy')}><span>{SHOPPING_META[item.category].icon}</span><span className="focus-main"><strong>{item.title}</strong><small>{SHOPPING_META[item.category].label}</small></span><span className="focus-meta">{item.quantity} {item.unit}</span></button>)}
+        <article className="start-card-v139 start-events-card">
+          <header><div><span>🗓️</span><strong>Nadchodzące wydarzenia</strong></div><button onClick={() => goTo('Kalendarz')}>Zobacz wszystkie ›</button></header>
+          <div className="start-event-list-v139">
+            {upcomingEvents.length === 0 ? <p className="start-empty-v139">Brak nadchodzących wydarzeń.</p> : upcomingEvents.slice(0, 4).map((occurrence) => (
+              <button key={occurrence.key} type="button" onClick={() => goTo('Kalendarz')}>
+                <span className="start-date-badge"><b>{occurrence.date.getDate()}</b><small>{occurrence.date.toLocaleDateString('pl-PL', { month: 'short' }).replace('.', '').toUpperCase()}</small></span>
+                <span><strong>{occurrence.source.title}{occurrence.source.person !== 'family' ? ` – ${personLabel(occurrence.source.person)}` : ''}</strong><small>{occurrence.source.allDay ? 'Cały dzień' : `${formatTime(occurrence.date)}–${formatTime(occurrence.endDate)}`}</small></span>
+                <em>›</em>
+              </button>
+            ))}
           </div>
         </article>
+      </section>
+
+      <section className="start-mobile-summary">
+        <button onClick={() => goTo('Zadania')}><span>✅</span><strong>Zadania ({openTasksCount})</strong></button>
+        <button onClick={() => goTo('Zakupy')}><span>🛒</span><strong>Zakupy ({openShoppingCount})</strong></button>
+        <button onClick={() => goTo('Kalendarz')}><span>📅</span><strong>Wydarzenia ({upcomingEvents.length})</strong></button>
+        <button onClick={() => goTo('Czat')}><span>💬</span><strong>Napisz do rodziny</strong></button>
       </section>
     </div>
   );
