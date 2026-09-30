@@ -992,11 +992,18 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
   const allFreeInfo=useMemo(()=>{
     const incomplete=visibleFamilyMembers.some((m)=>planForPerson(m.name).filter((r)=>!r.allDay).length===0);
     if(incomplete) return { time:'—', countdown:'Brak pełnego planu', latestPerson:'' };
-    let latest:Date | null=null; let latestPerson='';
-    visibleFamilyMembers.forEach((m)=>planForPerson(m.name).forEach((r)=>{
-      if(r.allDay || r.end<=now) return;
-      if(!latest || r.end>latest){ latest=r.end; latestPerson=m.name; }
-    }));
+    let latest:Date | undefined;
+    let latestPerson='';
+    for (const familyMember of visibleFamilyMembers) {
+      const rows=planForPerson(familyMember.name);
+      for (const row of rows) {
+        if(row.allDay || row.end<=now) continue;
+        if(!latest || row.end>latest){
+          latest=row.end;
+          latestPerson=familyMember.name;
+        }
+      }
+    }
     if(!latest) return { time:'Teraz', countdown:'Wszyscy wolni teraz', latestPerson:'' };
     const total=Math.max(0,Math.ceil((latest.getTime()-now.getTime())/60000));
     const hours=Math.floor(total/60); const minutes=total%60;
