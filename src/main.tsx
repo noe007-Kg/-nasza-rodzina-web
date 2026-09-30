@@ -22,12 +22,19 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.10';
+const APP_VERSION = '1.3.11';
 const APP_UPDATED = '30.09.2026';
 
 /* =========================================================
    TYPES
    ========================================================= */
+
+type MemberPermissions = {
+  viewFamilySchedule: boolean;
+  viewFamilyTasks: boolean;
+  viewFamilySchool: boolean;
+  viewFamilyHealth: boolean;
+};
 
 type Member = {
   name?: string;
@@ -35,6 +42,7 @@ type Member = {
   photoURL?: string;
   active?: boolean;
   canLogin?: boolean;
+  permissions?: Partial<MemberPermissions>;
 };
 
 type Page =
@@ -188,6 +196,7 @@ type HealthRecord = {
   documentURL: string;
   privateToParents: boolean;
   sharedWithPerson: boolean;
+  blocksSchoolDay: boolean;
   dose: string;
   medicineTime: string;
   medicineTimes: string[];
@@ -263,6 +272,7 @@ type FamilyMemberDoc = {
   photoURL?: string;
   active?: boolean;
   birthDate?: string;
+  permissions?: Partial<MemberPermissions>;
 };
 
 /* =========================================================
@@ -278,6 +288,28 @@ const FAMILY_BIRTHDAYS: Partial<Record<PersonKey, string>> = {
   Layla: '2025-10-10',
 };
 const PARENT_NAMES = new Set(['Sebastian', 'Dominika']);
+
+const DEFAULT_MEMBER_PERMISSIONS: MemberPermissions = {
+  viewFamilySchedule: true,
+  viewFamilyTasks: true,
+  viewFamilySchool: false,
+  viewFamilyHealth: false,
+};
+
+function normalizeMemberPermissions(value: unknown): MemberPermissions {
+  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return {
+    viewFamilySchedule: typeof raw.viewFamilySchedule === 'boolean' ? raw.viewFamilySchedule : DEFAULT_MEMBER_PERMISSIONS.viewFamilySchedule,
+    viewFamilyTasks: typeof raw.viewFamilyTasks === 'boolean' ? raw.viewFamilyTasks : DEFAULT_MEMBER_PERMISSIONS.viewFamilyTasks,
+    viewFamilySchool: typeof raw.viewFamilySchool === 'boolean' ? raw.viewFamilySchool : DEFAULT_MEMBER_PERMISSIONS.viewFamilySchool,
+    viewFamilyHealth: typeof raw.viewFamilyHealth === 'boolean' ? raw.viewFamilyHealth : DEFAULT_MEMBER_PERMISSIONS.viewFamilyHealth,
+  };
+}
+
+function effectiveMemberPermissions(member: Member | null | undefined): MemberPermissions {
+  if (isParent(member)) return { viewFamilySchedule:true, viewFamilyTasks:true, viewFamilySchool:true, viewFamilyHealth:true };
+  return normalizeMemberPermissions(member?.permissions);
+}
 
 function isParent(member: Member | null | undefined) {
   const name = member?.name || '';
@@ -646,17 +678,9 @@ function FamilyApp({ user }: { user: User }) {
     try { localStorage.setItem('nr-theme', theme); } catch { /* ignore */ }
   }, [theme]);
 
-  useEffect(() => {
-    async function loadMember() {
-      try {
-        const snapshot = await getDoc(doc(db, 'members', user.uid));
-        if (snapshot.exists()) setMember(snapshot.data() as Member);
-      } catch (error) {
-        console.error('Błąd profilu:', error);
-      }
-    }
-    void loadMember();
-  }, [user.uid]);
+  useEffect(() => onSnapshot(doc(db, 'members', user.uid), (snapshot) => {
+    if (snapshot.exists()) setMember(snapshot.data() as Member);
+  }, (error) => console.error('Błąd profilu:', error)), [user.uid]);
 
   function goTo(next: Page) {
     setPage(next);
@@ -667,7 +691,7 @@ function FamilyApp({ user }: { user: User }) {
   function renderPage() {
     switch (page) {
       case 'Start': return <StartPage member={member} goTo={goTo} />;
-      case 'Kalendarz': return <CalendarPage user={user} goTo={goTo} />;
+      case 'Kalendarz': return <CalendarPage user={user} member={member} goTo={goTo} />;
       case 'Zadania': return <TasksPage user={user} member={member} />;
       case 'Zakupy': return <ShoppingPage user={user} member={member} />;
       case 'Czat': return <ChatPage user={user} member={member} />;
@@ -748,19 +772,39 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
   const [shopping, setShopping] = useState<ShoppingItem[]>([]);
   const [healthRecords, setHealthRecords] = useState<HealthRecord[]>([]);
   const [healthAlerts, setHealthAlerts] = useState<HealthAlert[]>([]);
+  const [healthIntakes, setHealthIntakes] = useState<MedicationIntake[]>([]);
   const [weather, setWeather] = useState<{ temp: number; max: number; min: number; wind: number; label: string; icon: string } | null>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [clock, setClock] = useState(() => new Date());
+  const [editMode, setEditMode] = useState(false);
+  const [widgetMenu, setWidgetMenu] = useState<string | null>(null);
+  const access = effectiveMemberPermissions(member);
   const defaultWidgetOrder = ['day','ends','free','school','tasks','shopping','health','events','quick'];
-  const layoutKey=`nr-start-order:${auth.currentUser?.uid || member?.name || 'family'}`;
+  const userLayoutId = auth.currentUser?.uid || member?.name || 'family';
+  const layoutKey=`nr-start-order:${userLayoutId}`;
+  const hiddenKey=`nr-start-hidden:${userLayoutId}`;
   const [widgetOrder, setWidgetOrder] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem(layoutKey);
       const parsed = saved ? JSON.parse(saved) : null;
-      return Array.isArray(parsed) && parsed.length === defaultWidgetOrder.length ? parsed : defaultWidgetOrder;
+      if (!Array.isArray(parsed)) return defaultWidgetOrder;
+      const valid = parsed.filter((id): id is string => typeof id === 'string' && defaultWidgetOrder.includes(id));
+      return [...valid, ...defaultWidgetOrder.filter((id) => !valid.includes(id))];
     } catch { return defaultWidgetOrder; }
+  });
+  const [hiddenWidgets, setHiddenWidgets] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(hiddenKey);
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string' && defaultWidgetOrder.includes(id)) : [];
+    } catch { return []; }
   });
   const widgetOrderRef = useRef<string[]>(widgetOrder);
   useEffect(() => { widgetOrderRef.current = widgetOrder; }, [widgetOrder]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(new Date()), 30 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   const dragRef = useRef<{
     id:string; pointerId:number; startX:number; startY:number; offsetX:number; offsetY:number;
     timer:number; active:boolean; source:HTMLElement; ghost:HTMLElement | null;
@@ -777,6 +821,7 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
         photoURL: typeof x.photoURL === 'string' ? x.photoURL : undefined,
         active: x.active !== false,
         birthDate: typeof x.birthDate === 'string' ? x.birthDate : FAMILY_BIRTHDAYS[personName as PersonKey],
+        permissions: normalizeMemberPermissions(x.permissions),
       };
     });
     next.sort((a, b) => FAMILY_ORDER.indexOf(a.name) - FAMILY_ORDER.indexOf(b.name));
@@ -827,7 +872,7 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
       const x=d.data();
       const legacyTime=typeof x.medicineTime === 'string' ? x.medicineTime : (typeof x.time === 'string' ? x.time : '');
       const rawTimes=Array.isArray(x.medicineTimes) ? x.medicineTimes.filter((v:unknown)=>typeof v === 'string') as string[] : [];
-      return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', type:isHealthType(x.type) ? x.type : 'history', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', doctor:typeof x.doctor === 'string' ? x.doctor : '', location:typeof x.location === 'string' ? x.location : '', note:typeof x.note === 'string' ? x.note : '', specialty:typeof x.specialty === 'string' ? x.specialty : '', status:isHealthStatus(x.status) ? x.status : (x.type === 'visit' ? 'planned' : 'done'), referralCode:typeof x.referralCode === 'string' ? x.referralCode : '', nextControl:typeof x.nextControl === 'string' ? x.nextControl : '', callReminderDate:typeof x.callReminderDate === 'string' ? x.callReminderDate : '', documentURL:typeof x.documentURL === 'string' ? x.documentURL : '', privateToParents:x.privateToParents === true, sharedWithPerson:x.sharedWithPerson === true, dose:typeof x.dose === 'string' ? x.dose : '', medicineTime:legacyTime, medicineTimes:rawTimes.length ? rawTimes : (legacyTime ? [legacyTime] : []), escalationMinutes:Number.isFinite(Number(x.escalationMinutes)) ? Math.max(1,Number(x.escalationMinutes)) : 15, confirmedDate:typeof x.confirmedDate === 'string' ? x.confirmedDate : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
+      return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', type:isHealthType(x.type) ? x.type : 'history', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', doctor:typeof x.doctor === 'string' ? x.doctor : '', location:typeof x.location === 'string' ? x.location : '', note:typeof x.note === 'string' ? x.note : '', specialty:typeof x.specialty === 'string' ? x.specialty : '', status:isHealthStatus(x.status) ? x.status : (x.type === 'visit' ? 'planned' : 'done'), referralCode:typeof x.referralCode === 'string' ? x.referralCode : '', nextControl:typeof x.nextControl === 'string' ? x.nextControl : '', callReminderDate:typeof x.callReminderDate === 'string' ? x.callReminderDate : '', documentURL:typeof x.documentURL === 'string' ? x.documentURL : '', privateToParents:x.privateToParents === true, sharedWithPerson:x.sharedWithPerson === true, blocksSchoolDay:x.blocksSchoolDay === true, dose:typeof x.dose === 'string' ? x.dose : '', medicineTime:legacyTime, medicineTimes:rawTimes.length ? rawTimes : (legacyTime ? [legacyTime] : []), escalationMinutes:Number.isFinite(Number(x.escalationMinutes)) ? Math.max(1,Number(x.escalationMinutes)) : 15, confirmedDate:typeof x.confirmedDate === 'string' ? x.confirmedDate : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
     }));
   }), []);
 
@@ -835,6 +880,13 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
     setHealthAlerts(snap.docs.map((d): HealthAlert => {
       const x=d.data();
       return { id:d.id, recordId:String(x.recordId || ''), person:isPersonKey(x.person) ? x.person : 'family', date:String(x.date || ''), time:String(x.time || ''), title:String(x.title || ''), dose:String(x.dose || ''), status:x.status === 'acknowledged' || x.status === 'resolved' ? x.status : 'open', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
+    }));
+  }), []);
+
+  useEffect(() => onSnapshot(collection(db, 'healthMedicationIntakes'), (snap) => {
+    setHealthIntakes(snap.docs.map((d): MedicationIntake => {
+      const x=d.data();
+      return { id:d.id, recordId:String(x.recordId || ''), person:isPersonKey(x.person) ? x.person : 'family', date:String(x.date || ''), time:String(x.time || ''), confirmedBy:String(x.confirmedBy || ''), confirmedAt:x.confirmedAt instanceof Timestamp ? x.confirmedAt.toDate() : undefined };
     }));
   }), []);
 
@@ -853,28 +905,55 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
     return ()=>{controller.abort();window.clearInterval(timer);};
   },[]);
 
-  const now=new Date();
+  const now=clock;
+  const clockTick=clock.getTime();
   const todayKey=formatDateInput(now);
   const todayWeekday=now.getDay()===0 ? 7 : now.getDay();
   const todayStart=startOfDay(now); const todayEnd=endOfDay(now);
   const todayOccurrences=useMemo(()=>events.flatMap((event)=>generateOccurrences(event,todayStart,todayEnd)).sort((a,b)=>a.date.getTime()-b.date.getTime()),[events,todayKey]);
   const todaySchoolItems=useMemo(()=>schoolRecords.filter((r)=>(r.type==='lesson' || r.type==='activity') && (r.weekday===todayWeekday || (!!r.date && r.date===todayKey))).sort((a,b)=>(a.time || '99:99').localeCompare(b.time || '99:99')),[schoolRecords,todayWeekday,todayKey]);
+  const todayHealthVisits=useMemo(()=>healthRecords.filter((r)=>r.type==='visit' && r.status!=='cancelled' && r.date===todayKey),[healthRecords,todayKey]);
 
   function schoolStart(record:SchoolRecord){ return parseLocalDate(todayKey,record.time || '08:00'); }
   function schoolEnd(record:SchoolRecord){ const start=schoolStart(record); const end=parseLocalDate(todayKey,record.endTime || record.time || '08:45'); return end>start ? end : new Date(start.getTime()+45*60000); }
+  function healthStart(record:HealthRecord){ return parseLocalDate(todayKey,record.time || '12:00'); }
+  function healthEnd(record:HealthRecord){ return new Date(healthStart(record).getTime()+60*60000); }
+  function isMedicalText(value:string){ const normalized=normalizeProduct(value); return ['lekar','dentyst','neurolog','kardiolog','ortoped','pediatr','wizyta','szpital','poradn','badani'].some((word)=>normalized.includes(word)); }
+  function rowsOverlap(a:{start:Date;end:Date},b:{start:Date;end:Date}){ return a.start < b.end && a.end > b.start; }
+  function titlesClose(a:string,b:string){ const aa=normalizeProduct(a).replace(/[^a-z0-9 ]/g,' ').trim(); const bb=normalizeProduct(b).replace(/[^a-z0-9 ]/g,' ').trim(); return !!aa && !!bb && (aa.includes(bb) || bb.includes(aa)); }
 
-  type StartPlanRow={ key:string; person:PersonKey; start:Date; end:Date; title:string; icon:string; place:string; source:'calendar'|'school'; allDay:boolean };
+  type StartPlanRow={ key:string; person:PersonKey; start:Date; end:Date; title:string; icon:string; place:string; source:'calendar'|'school'|'health'; allDay:boolean; priority:number };
   function planForPerson(personName:string):StartPlanRow[] {
     const key=personName as PersonKey;
-    const calendarRows=todayOccurrences.filter((o)=>o.source.person===key || o.source.person==='family').map((o):StartPlanRow=>({key:o.key,person:key,start:o.date,end:o.endDate,title:o.source.title,icon:eventActivityIcon(o.source.title),place:o.source.description || '',source:'calendar',allDay:o.source.allDay}));
-    const schoolRows=todaySchoolItems.filter((r)=>r.person===key).map((r):StartPlanRow=>({key:`school-${r.id}`,person:key,start:schoolStart(r),end:schoolEnd(r),title:r.type==='activity' ? r.title : (r.subject || r.title),icon:subjectIcon(r.subject || r.title),place:r.note || 'Szkoła',source:'school',allDay:false}));
-    return [...calendarRows,...schoolRows].sort((a,b)=>a.start.getTime()-b.start.getTime());
+    const healthRows=todayHealthVisits.filter((r)=>r.person===key).map((r):StartPlanRow=>({
+      key:`health-${r.id}`, person:key, start:healthStart(r), end:healthEnd(r), title:r.title || r.specialty || 'Wizyta lekarska', icon:'🩺',
+      place:[r.specialty,r.doctor,r.location].filter(Boolean).join(' · '), source:'health', allDay:false, priority:110,
+    }));
+    const blocksSchoolDay=todayHealthVisits.some((r)=>r.person===key && r.blocksSchoolDay);
+    let schoolRows=todaySchoolItems.filter((r)=>r.person===key).map((r):StartPlanRow=>({
+      key:`school-${r.id}`, person:key, start:schoolStart(r), end:schoolEnd(r), title:r.type==='activity' ? r.title : (r.subject || r.title),
+      icon:subjectIcon(r.subject || r.title), place:r.note || 'Szkoła', source:'school', allDay:false, priority:r.type==='activity' ? 85 : 80,
+    }));
+    if (blocksSchoolDay) schoolRows=[];
+    else schoolRows=schoolRows.filter((school)=>!healthRows.some((visit)=>rowsOverlap(school,visit)));
+
+    let calendarRows=todayOccurrences.filter((o)=>o.source.person===key || o.source.person==='family').map((o):StartPlanRow=>({
+      key:o.key, person:key, start:o.date, end:o.endDate, title:o.source.title, icon:eventActivityIcon(o.source.title), place:o.source.description || '',
+      source:'calendar', allDay:o.source.allDay, priority:isMedicalText(`${o.source.title} ${o.source.description}`) ? 105 : (o.source.allDay ? 20 : 60),
+    }));
+    calendarRows=calendarRows.filter((row)=>!healthRows.some((visit)=>Math.abs(row.start.getTime()-visit.start.getTime())<10*60000 && titlesClose(row.title,visit.title)));
+    if (key==='Paweł' || key==='Nikodem') {
+      calendarRows=calendarRows.filter((row)=>row.allDay || row.priority>=100 || !schoolRows.some((school)=>rowsOverlap(row,school)));
+      schoolRows=schoolRows.filter((school)=>!calendarRows.some((row)=>row.priority>=100 && rowsOverlap(row,school)));
+    }
+    return [...healthRows,...calendarRows,...schoolRows].sort((a,b)=>a.start.getTime()-b.start.getTime() || b.priority-a.priority);
   }
 
   function liveStatus(personName:string) {
     const rows=planForPerson(personName).filter((r)=>!r.allDay);
-    const active=rows.find((r)=>r.start<=now && r.end>now);
-    const next=rows.find((r)=>r.start>now);
+    const activeRows=rows.filter((r)=>r.start<=now && r.end>now).sort((a,b)=>b.priority-a.priority || b.start.getTime()-a.start.getTime());
+    const active=activeRows[0];
+    const next=rows.filter((r)=>r.start>now).sort((a,b)=>a.start.getTime()-b.start.getTime() || b.priority-a.priority)[0];
     if (active) {
       return { tone:'busy', label:active.title, detail:active.place || `do ${formatTime(active.end)}`, until:`do ${formatTime(active.end)}`, next:next ? `${next.title} ${formatTime(next.start)}` : 'Później wolny' };
     }
@@ -886,38 +965,83 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
     return { tone:'free', label:personName==='Layla' ? 'W domu' : 'Wolny', detail:'Brak planów', until:'', next:'Brak kolejnych zajęć' };
   }
 
-  const familyStatus=members.slice(0,5).map((m)=>({member:m,status:liveStatus(m.name)}));
+  const visibleFamilyMembers=(isParent(member) || access.viewFamilySchedule)
+    ? members.slice(0,5)
+    : members.filter((m)=>m.name===member?.name).slice(0,1);
+  const familyStatus=visibleFamilyMembers.map((m)=>({member:m,status:liveStatus(m.name)}));
   const allFreeAt=useMemo(()=>{
     const ends:Date[]=[];
-    members.forEach((m)=>planForPerson(m.name).forEach((r)=>{ if(!r.allDay && r.end>now) ends.push(r.end); }));
+    visibleFamilyMembers.forEach((m)=>planForPerson(m.name).forEach((r)=>{ if(!r.allDay && r.end>now) ends.push(r.end); }));
     if(!ends.length) return 'Teraz';
     const latest=ends.reduce((max,d)=>d>max ? d : max,ends[0]);
     return latest<=now ? 'Teraz' : formatTime(latest);
-  },[todayOccurrences,todaySchoolItems,members,todayKey]);
+  },[todayOccurrences,todaySchoolItems,todayHealthVisits,visibleFamilyMembers.map((m)=>m.id).join('|'),todayKey,clockTick]);
 
   const dayPlan=useMemo(()=>{
-    const calendarRows=todayOccurrences.map((o):StartPlanRow=>({ key:o.key, person:o.source.person, start:o.date, end:o.endDate, title:o.source.title, icon:eventActivityIcon(o.source.title), place:o.source.description || '', source:'calendar', allDay:o.source.allDay }));
-    const schoolRows=todaySchoolItems.map((r):StartPlanRow=>({ key:`school-${r.id}`, person:r.person, start:schoolStart(r), end:schoolEnd(r), title:r.type==='activity' ? r.title : (r.subject || r.title), icon:subjectIcon(r.subject || r.title), place:r.note || 'Szkoła', source:'school', allDay:false }));
-    return [...calendarRows,...schoolRows].sort((a,b)=>a.start.getTime()-b.start.getTime()).slice(0,7);
-  },[todayOccurrences,todaySchoolItems,todayKey]);
+    const rows:StartPlanRow[]=[];
+    const familySeen=new Set<string>();
+    visibleFamilyMembers.forEach((m)=>{
+      planForPerson(m.name).forEach((row)=>{
+        const familyOccurrence=row.source==='calendar' && todayOccurrences.find((o)=>o.key===row.key)?.source.person==='family';
+        if(familyOccurrence){
+          if(familySeen.has(row.key)) return;
+          familySeen.add(row.key);
+          rows.push({...row,person:'family'});
+        } else rows.push(row);
+      });
+    });
+    return rows.sort((a,b)=>a.allDay===b.allDay ? (a.start.getTime()-b.start.getTime() || b.priority-a.priority) : (a.allDay ? -1 : 1)).slice(0,7);
+  },[todayOccurrences,todaySchoolItems,todayHealthVisits,visibleFamilyMembers.map((m)=>m.id).join('|'),todayKey,clockTick]);
 
-  const priorityTasks=useMemo(()=>tasks.filter((t)=>!t.done).sort((a,b)=>(({high:0,normal:1,low:2}[a.priority]-{high:0,normal:1,low:2}[b.priority]) || (a.dueDate || '9999').localeCompare(b.dueDate || '9999'))).slice(0,4),[tasks]);
+  const priorityTasks=useMemo(()=>tasks.filter((t)=>!t.done && (isParent(member) || access.viewFamilyTasks || t.person===member?.name || t.person==='family')).sort((a,b)=>(({high:0,normal:1,low:2}[a.priority]-{high:0,normal:1,low:2}[b.priority]) || (a.dueDate || '9999').localeCompare(b.dueDate || '9999'))).slice(0,4),[tasks,member?.name,access.viewFamilyTasks]);
   const openShopping=shopping.filter((i)=>!i.done).slice(0,5);
-  const upcomingEvents=useMemo(()=>events.flatMap((e)=>generateOccurrences(e,startOfDay(now),endOfDay(addDays(now,45)))).filter((o)=>o.endDate>=now).sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,4),[events,todayKey]);
-  const upcomingVisits=useMemo(()=>healthRecords.filter((r)=>r.type==='visit' && r.status!=='cancelled' && r.date>=todayKey).sort((a,b)=>(`${a.date} ${a.time}`).localeCompare(`${b.date} ${b.time}`)).slice(0,2),[healthRecords,todayKey]);
-  const dueMedicines=useMemo(()=>healthRecords.filter((r)=>r.type==='medicine' && (r.medicineTimes.length || r.medicineTime)).filter((r)=>r.confirmedDate!==todayKey),[healthRecords,todayKey]);
-  const schoolTests=useMemo(()=>schoolRecords.filter((r)=>r.type==='test' && r.date>=todayKey).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,2),[schoolRecords,todayKey]);
-  const schoolHomework=useMemo(()=>schoolRecords.filter((r)=>r.type==='homework' && (!r.date || r.date>=todayKey)).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,2),[schoolRecords,todayKey]);
+  const upcomingEvents=useMemo(()=>events.flatMap((e)=>generateOccurrences(e,startOfDay(now),endOfDay(addDays(now,45)))).filter((o)=>o.endDate>=now && (isParent(member) || access.viewFamilySchedule || o.source.person===member?.name || o.source.person==='family')).sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,4),[events,todayKey,clockTick,member?.name,access.viewFamilySchedule]);
+  const visibleHealthRecords=useMemo(()=>healthRecords.filter((r)=>isParent(member) || access.viewFamilyHealth || r.person===member?.name || r.person==='family'),[healthRecords,member?.name,access.viewFamilyHealth]);
+  const upcomingVisits=useMemo(()=>visibleHealthRecords.filter((r)=>r.type==='visit' && r.status!=='cancelled' && r.date>=todayKey).sort((a,b)=>(`${a.date} ${a.time}`).localeCompare(`${b.date} ${b.time}`)).slice(0,2),[visibleHealthRecords,todayKey]);
+  const dueMedicineDoses=useMemo(()=>visibleHealthRecords.filter((r)=>r.type==='medicine').flatMap((r)=>{
+    const times=r.medicineTimes.length ? r.medicineTimes : (r.medicineTime ? [r.medicineTime] : []);
+    return times.filter((time)=>parseLocalDate(todayKey,time).getTime()<=now.getTime()).filter((time)=>!healthIntakes.some((i)=>i.recordId===r.id && i.date===todayKey && i.time===time)).map((time)=>({record:r,time}));
+  }),[visibleHealthRecords,healthIntakes,todayKey,clockTick]);
+  const visibleSchoolRecords=useMemo(()=>schoolRecords.filter((r)=>isParent(member) || access.viewFamilySchool || r.person===member?.name),[schoolRecords,member?.name,access.viewFamilySchool]);
+  const schoolTests=useMemo(()=>visibleSchoolRecords.filter((r)=>r.type==='test' && r.date>=todayKey).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,2),[visibleSchoolRecords,todayKey]);
+  const schoolHomework=useMemo(()=>visibleSchoolRecords.filter((r)=>r.type==='homework' && (!r.date || r.date>=todayKey)).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,2),[visibleSchoolRecords,todayKey]);
   const todayLabel=capitalize(now.toLocaleDateString('pl-PL',{weekday:'long',day:'numeric',month:'long',year:'numeric'}));
 
+  type StartNotice={id:string;icon:string;title:string;meta:string;page:Page;level:'critical'|'important'|'info';score:number};
+  const tomorrowKey=formatDateInput(addDays(now,1));
+  const urgentItems=useMemo(()=>{
+    const list:StartNotice[]=[];
+    const canSeeHealth=(person:PersonKey)=>isParent(member) || access.viewFamilyHealth || person===member?.name || person==='family';
+    healthAlerts.filter((a)=>a.status==='open' && canSeeHealth(a.person)).forEach((a)=>list.push({id:`h-${a.id}`,icon:'🚨',title:`Brak potwierdzenia leku: ${a.title}`,meta:`${personLabel(a.person)} · ${a.time || 'do potwierdzenia'}`,page:'Zdrowie',level:'critical',score:100}));
+    dueMedicineDoses.forEach(({record,time})=>{
+      const alreadyAlerted=healthAlerts.some((a)=>a.status==='open' && a.recordId===record.id && a.date===todayKey && a.time===time);
+      if(!alreadyAlerted) list.push({id:`dose-${record.id}-${time}`,icon:'💊',title:`Lek do przyjęcia: ${record.title}`,meta:`${personLabel(record.person)} · plan ${time}${record.dose?` · ${record.dose}`:''}`,page:'Zdrowie',level:'important',score:84});
+    });
+    upcomingVisits.filter((r)=>r.date===todayKey && !!r.time).forEach((r)=>{
+      const start=parseLocalDate(r.date,r.time); const minutes=(start.getTime()-now.getTime())/60000;
+      if(minutes>=0 && minutes<=120) list.push({id:`visit-${r.id}`,icon:'🩺',title:`Wizyta: ${r.specialty || r.title}`,meta:`${personLabel(r.person)} · ${r.time}${r.location ? ` · ${r.location}` : ''}`,page:'Zdrowie',level:minutes<=60?'critical':'important',score:minutes<=60?95:85});
+    });
+    priorityTasks.filter((t)=>t.dueDate && t.dueDate<=todayKey).forEach((t)=>list.push({id:`task-${t.id}`,icon:'✅',title:t.title,meta:`${personLabel(t.person)} · ${t.dueDate<todayKey?'po terminie':'na dziś'}`,page:'Zadania',level:t.dueDate<todayKey||t.priority==='high'?'critical':'important',score:t.dueDate<todayKey?92:(t.priority==='high'?82:70)}));
+    schoolTests.filter((r)=>r.date===todayKey || r.date===tomorrowKey).forEach((r)=>list.push({id:`test-${r.id}`,icon:'🎓',title:`Sprawdzian: ${r.subject || r.title}`,meta:`${personLabel(r.person)} · ${r.date===todayKey?'dzisiaj':'jutro'}`,page:'Szkoła',level:r.date===todayKey?'critical':'important',score:r.date===todayKey?88:76}));
+    upcomingEvents.filter((o)=>!o.source.allDay && o.date.getTime()>=now.getTime() && o.date.getTime()-now.getTime()<=60*60000).forEach((o)=>{
+      const duplicateVisit=upcomingVisits.some((r)=>r.person===o.source.person && r.date===formatDateInput(o.date) && (!!r.time && Math.abs(parseLocalDate(r.date,r.time).getTime()-o.date.getTime())<10*60000) && titlesClose(r.title,o.source.title));
+      if(!duplicateVisit) list.push({id:`event-${o.key}`,icon:'📅',title:o.source.title,meta:`${o.source.person==='family'?'Rodzina':personLabel(o.source.person)} · za ${Math.max(1,Math.round((o.date.getTime()-now.getTime())/60000))} min`,page:'Kalendarz',level:'info',score:60});
+    });
+    const seen=new Set<string>();
+    return list.sort((a,b)=>b.score-a.score).filter((item)=>{const key=`${normalizeProduct(item.title)}|${normalizeProduct(item.meta)}`; if(seen.has(key)) return false; seen.add(key); return true;}).slice(0,5);
+  },[healthAlerts,dueMedicineDoses,upcomingVisits,priorityTasks,schoolTests,upcomingEvents,todayKey,tomorrowKey,clockTick,member?.name,access.viewFamilyHealth]);
+
   const notificationItems=useMemo(()=>{
-    const list:Array<{id:string;icon:string;title:string;meta:string;page:Page}>=[];
-    healthAlerts.filter((a)=>a.status==='open').slice(0,3).forEach((a)=>list.push({id:`h-${a.id}`,icon:'❤️',title:`Lek: ${a.title}`,meta:`${personLabel(a.person)} · ${a.time || 'do potwierdzenia'}`,page:'Zdrowie'}));
-    tasks.filter((t)=>!t.done && (t.approvalStatus==='pending' || t.dueDate===todayKey)).slice(0,3).forEach((t)=>list.push({id:`t-${t.id}`,icon:'✅',title:t.title,meta:`${personLabel(t.person)} · ${t.approvalStatus==='pending' ? 'do zatwierdzenia' : 'dzisiaj'}`,page:'Zadania'}));
-    schoolTests.slice(0,2).forEach((r)=>list.push({id:`s-${r.id}`,icon:'🎓',title:`Sprawdzian: ${r.subject || r.title}`,meta:`${personLabel(r.person)} · ${formatShortDate(r.date)}`,page:'Szkoła'}));
-    upcomingEvents.filter((o)=>o.date.getTime()-now.getTime()<=24*3600000).slice(0,2).forEach((o)=>list.push({id:`e-${o.key}`,icon:'📅',title:o.source.title,meta:`${o.source.person==='family' ? 'Rodzina' : personLabel(o.source.person)} · ${formatTime(o.date)}`,page:'Kalendarz'}));
-    return list.slice(0,8);
-  },[healthAlerts,tasks,schoolTests,upcomingEvents,todayKey]);
+    const list:StartNotice[]=[...urgentItems];
+    tasks.filter((t)=>!t.done && t.approvalStatus==='pending' && (isParent(member) || access.viewFamilyTasks || t.person===member?.name)).forEach((t)=>list.push({id:`approval-${t.id}`,icon:'✅',title:t.title,meta:`${personLabel(t.person)} · do zatwierdzenia`,page:'Zadania',level:'info',score:50}));
+    schoolTests.forEach((r)=>list.push({id:`s-${r.id}`,icon:'🎓',title:`Sprawdzian: ${r.subject || r.title}`,meta:`${personLabel(r.person)} · ${formatShortDate(r.date)}`,page:'Szkoła',level:'info',score:45}));
+    upcomingEvents.filter((o)=>o.date.getTime()-now.getTime()<=24*3600000).forEach((o)=>{
+      const duplicateVisit=upcomingVisits.some((r)=>r.person===o.source.person && r.date===formatDateInput(o.date) && (!!r.time && Math.abs(parseLocalDate(r.date,r.time).getTime()-o.date.getTime())<10*60000) && titlesClose(r.title,o.source.title));
+      if(!duplicateVisit) list.push({id:`e-${o.key}`,icon:'📅',title:o.source.title,meta:`${o.source.person==='family' ? 'Rodzina' : personLabel(o.source.person)} · ${o.source.allDay?'cały dzień':formatTime(o.date)}`,page:'Kalendarz',level:'info',score:40});
+    });
+    const seen=new Set<string>();
+    return list.sort((a,b)=>b.score-a.score).filter((item)=>{const key=`${normalizeProduct(item.title.replace(/^brak potwierdzenia leku:\s*/i,''))}|${normalizeProduct(item.meta)}`; if(seen.has(key)) return false; seen.add(key); return true;}).slice(0,8);
+  },[urgentItems,tasks,schoolTests,upcomingEvents,upcomingVisits,todayKey,clockTick,member?.name,access.viewFamilyTasks]);
 
   function openFamily(person?:string) {
     try { sessionStorage.setItem('nr-family-focus', person && isPersonKey(person) ? person : 'family'); } catch { /* ignore */ }
@@ -936,6 +1060,37 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
     try { localStorage.setItem(layoutKey,JSON.stringify(next)); } catch { /* ignore */ }
   }
 
+  function persistHidden(next:string[]) {
+    setHiddenWidgets(next);
+    try { localStorage.setItem(hiddenKey,JSON.stringify(next)); } catch { /* ignore */ }
+  }
+
+  function hideWidget(id:string) {
+    persistHidden(Array.from(new Set([...hiddenWidgets,id])));
+    setWidgetMenu(null);
+  }
+
+  function restoreWidget(id:string) {
+    persistHidden(hiddenWidgets.filter((item)=>item!==id));
+    setWidgetMenu(null);
+  }
+
+  function restoreWidgetPosition(id:string) {
+    const current=widgetOrderRef.current.filter((item)=>item!==id);
+    const wanted=defaultWidgetOrder.indexOf(id);
+    const before=defaultWidgetOrder.slice(0,wanted).filter((item)=>current.includes(item));
+    const insertAt=before.length ? current.indexOf(before[before.length-1])+1 : 0;
+    current.splice(Math.max(0,insertAt),0,id);
+    persistOrder(current);
+    setWidgetMenu(null);
+  }
+
+  function resetDashboardLayout() {
+    persistOrder([...defaultWidgetOrder]);
+    persistHidden([]);
+    setWidgetMenu(null);
+  }
+
   function beginTilePress(id:string,e:React.PointerEvent<HTMLElement>) {
     if (e.pointerType==='mouse' && e.button!==0) return;
     const source=e.currentTarget;
@@ -950,6 +1105,8 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
       document.body.appendChild(ghost);
       source.classList.add('start-drag-source');
       holder.ghost=ghost; holder.active=true;
+      setEditMode(true);
+      setWidgetMenu(null);
       document.body.classList.add('start-is-dragging');
       if (navigator.vibrate) navigator.vibrate(20);
     },430);
@@ -1005,17 +1162,22 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
     const last=rows[rows.length-1];
     return { active, last };
   };
+  const dashboardStudents: Array<'Paweł'|'Nikodem'> = (isParent(member) || access.viewFamilySchool)
+    ? ['Nikodem','Paweł']
+    : (member?.name==='Paweł' || member?.name==='Nikodem' ? [member.name] : []);
+  const visibleHealthAlerts=healthAlerts.filter((a)=>a.status==='open' && (isParent(member) || access.viewFamilyHealth || a.person===member?.name));
+  const widgetLabels:Record<string,string>={day:'Plan dnia',ends:'Kto kiedy kończy',free:'Wszyscy wolni od',school:'Szkoła',tasks:'Zadania',shopping:'Zakupy',health:'Zdrowie',events:'Wydarzenia',quick:'Szybkie dodawanie'};
 
   const widgets:Record<string,React.ReactNode>={
-    day:<article className="start1310-card start1310-day" {...tileProps('day')}><header><div><span>📅</span><strong>Plan dnia – dziś</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz cały dzień ›</button></header><div className="start1310-day-list">{dayPlan.length ? dayPlan.map((item)=><button key={`${item.person}-${item.key}`} onClick={()=>goTo(item.source==='school' ? 'Szkoła' : 'Kalendarz')}><i style={{background:personColor(item.person)}}/><span className="mini-person">{members.find((m)=>m.name===item.person)?.photoURL ? <img src={members.find((m)=>m.name===item.person)?.photoURL} alt=""/> : memberEmoji(item.person)}</span><time>{item.allDay ? 'Cały dzień' : `${formatTime(item.start)} – ${formatTime(item.end)}`}</time><strong>{personLabel(item.person)}</strong><span>{item.icon} {item.title}</span><em>›</em></button>) : <p className="start1310-empty">Brak wpisów na dziś.</p>}</div></article>,
-    ends:<article className="start1310-card start1310-ends" {...tileProps('ends')}><header><div><span>🕒</span><strong>Kto kiedy kończy?</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz więcej ›</button></header><div>{members.slice(0,5).map((m)=>{const s=liveStatus(m.name);const last=lastEndFor(m.name);return <button key={m.id} onClick={()=>openFamily(m.name)}><span className="mini-person">{m.photoURL ? <img src={m.photoURL} alt=""/> : memberEmoji(m.name)}</span><strong>{m.name}</strong><time>{last ? formatTime(last) : '—'}</time><small className={`status-dot ${s.tone}`}/><em>{s.label}</em><b>›</b></button>;})}</div></article>,
-    free:<article className="start1310-card start1310-free" {...tileProps('free')}><header><span>👥</span><strong>Wszyscy wolni od</strong></header><b>{allFreeAt}</b><p>Najbliższy wspólny czas dla całej rodziny</p><div aria-hidden="true">⌂ ♡</div></article>,
-    school:<article className="start1310-card start1310-school" {...tileProps('school')}><header><div><span>🎓</span><strong>Szkoła</strong></div><button onClick={()=>goTo('Szkoła')}>Zobacz więcej ›</button></header>{(['Nikodem','Paweł'] as const).map((person)=>{const info=studentSummary(person);return <button className="school-person-summary" key={person} onClick={()=>goTo('Szkoła')}><span className="mini-person">{members.find((m)=>m.name===person)?.photoURL ? <img src={members.find((m)=>m.name===person)?.photoURL} alt=""/> : memberEmoji(person)}</span><span><strong>{person}</strong>{info.active ? <><b>Trwa lekcja: {info.active.title}</b><small>{formatTime(info.active.start)} – {formatTime(info.active.end)}{info.active.place ? ` · ${info.active.place}` : ''}</small></> : <><b>{info.last ? `Koniec lekcji: ${formatTime(info.last.end)}` : 'Brak lekcji dziś'}</b></>}</span></button>;})}{schoolTests[0] && <button className="school-next" onClick={()=>goTo('Szkoła')}><span>📝</span><div><strong>Najbliżej: {formatShortDate(schoolTests[0].date)} · Sprawdzian</strong><small>{schoolTests[0].subject || schoolTests[0].title}</small></div><em>›</em></button>}{!schoolTests[0] && schoolHomework[0] && <button className="school-next" onClick={()=>goTo('Szkoła')}><span>📚</span><div><strong>Zadanie domowe</strong><small>{schoolHomework[0].subject || schoolHomework[0].title}</small></div><em>›</em></button>}</article>,
-    tasks:<article className="start1310-card start1310-tasks" {...tileProps('tasks')}><header><div><span>✅</span><strong>Zadania – najważniejsze</strong></div><button onClick={()=>goTo('Zadania')}>Zobacz wszystkie ›</button></header><div>{priorityTasks.length ? priorityTasks.map((t)=><button key={t.id} onClick={()=>goTo('Zadania')}><span className="fake-check"/><span><strong>{t.title}</strong><small>{personLabel(t.person)}{t.points ? ` · +${t.points} pkt` : ''}</small></span><em>{t.dueDate===todayKey ? 'Dziś' : t.dueDate ? formatShortDate(t.dueDate) : 'Bez terminu'}</em></button>) : <p className="start1310-empty">Brak pilnych zadań ✨</p>}</div></article>,
-    shopping:<article className="start1310-card start1310-shopping" {...tileProps('shopping')}><header><div><span>🛒</span><strong>Zakupy</strong></div><button onClick={()=>goTo('Zakupy')}>Zobacz wszystkie ›</button></header><div>{openShopping.length ? openShopping.map((item)=><button key={item.id} onClick={()=>goTo('Zakupy')}><span className="fake-check"/><span>{SHOPPING_META[item.category].icon}</span><strong>{item.title}</strong><small>{item.quantity ? `${item.quantity} ${item.unit}` : ''}</small></button>) : <p className="start1310-empty">Lista zakupów jest pusta.</p>}</div>{shopping.filter((i)=>!i.done).length>5 && <p className="start1310-more">+ {shopping.filter((i)=>!i.done).length-5} więcej produktów</p>}</article>,
-    health:<article className="start1310-card start1310-health" {...tileProps('health')}><header><div><span>♡</span><strong>Zdrowie</strong></div><button onClick={()=>goTo('Zdrowie')}>Zobacz więcej ›</button></header><div>{upcomingVisits.length ? upcomingVisits.map((r)=><button key={r.id} onClick={()=>goTo('Zdrowie')}><span className="mini-person">{members.find((m)=>m.name===r.person)?.photoURL ? <img src={members.find((m)=>m.name===r.person)?.photoURL} alt=""/> : memberEmoji(r.person)}</span><span>🩺</span><div><strong>{personLabel(r.person)} · {r.specialty || r.title}</strong><small>{r.date===todayKey ? 'Dziś' : formatShortDate(r.date)}{r.time ? `, ${r.time}` : ''}</small></div><em>›</em></button>) : <p className="start1310-empty">Brak zaplanowanych wizyt.</p>}</div><div className={`start1310-med-status ${dueMedicines.length || healthAlerts.some((a)=>a.status==='open') ? 'alert' : 'ok'}`}>{dueMedicines.length || healthAlerts.some((a)=>a.status==='open') ? `🔔 ${dueMedicines.length || healthAlerts.filter((a)=>a.status==='open').length} lek(i) wymagają uwagi` : '✓ Brak leków do podania dziś'}</div></article>,
-    events:<article className="start1310-card start1310-events" {...tileProps('events')}><header><div><span>📅</span><strong>Nadchodzące wydarzenia</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz więcej ›</button></header><div>{upcomingEvents.length ? upcomingEvents.map((o)=><button key={o.key} onClick={()=>goTo('Kalendarz')}><span className="date-box"><b>{o.date.getDate()}</b><small>{o.date.toLocaleDateString('pl-PL',{month:'short'}).replace('.','').toUpperCase()}</small></span><div><strong>{o.source.title}{o.source.person!=='family' ? ` – ${personLabel(o.source.person)}` : ''}</strong><small>{o.source.allDay ? 'Cały dzień' : `${formatTime(o.date)} – ${formatTime(o.endDate)}`}</small></div></button>) : <p className="start1310-empty">Brak nadchodzących wydarzeń.</p>}</div></article>,
-    quick:<article className="start1310-card start1310-quick" {...tileProps('quick')}><header><div><span>⚡</span><strong>Szybkie dodawanie</strong></div></header><div><button onClick={()=>goTo('Kalendarz')}>📅<span>Dodaj wydarzenie</span></button><button onClick={()=>goTo('Zadania')}>✅<span>Dodaj zadanie</span></button><button onClick={()=>goTo('Zakupy')}>🛒<span>Dodaj zakup</span></button><button onClick={()=>goTo('Zdrowie')}>➕<span>Dodaj wizytę</span></button></div></article>,
+    day:<article className="start1310-card start1310-day"><header><div><span>📅</span><strong>Plan dnia – dziś</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz cały dzień ›</button></header><div className="start1310-day-list">{dayPlan.length ? dayPlan.map((item)=><button key={`${item.person}-${item.key}`} onClick={()=>goTo(item.source==='school' ? 'Szkoła' : 'Kalendarz')}><i style={{background:personColor(item.person)}}/><span className="mini-person">{members.find((m)=>m.name===item.person)?.photoURL ? <img src={members.find((m)=>m.name===item.person)?.photoURL} alt=""/> : memberEmoji(item.person)}</span><time>{item.allDay ? 'Cały dzień' : `${formatTime(item.start)} – ${formatTime(item.end)}`}</time><strong>{personLabel(item.person)}</strong><span>{item.icon} {item.title}</span><em>›</em></button>) : <p className="start1310-empty">Brak wpisów na dziś.</p>}</div></article>,
+    ends:<article className="start1310-card start1310-ends"><header><div><span>🕒</span><strong>Kto kiedy kończy?</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz więcej ›</button></header><div>{visibleFamilyMembers.map((m)=>{const s=liveStatus(m.name);const last=lastEndFor(m.name);return <button key={m.id} onClick={()=>openFamily(m.name)}><span className="mini-person">{m.photoURL ? <img src={m.photoURL} alt=""/> : memberEmoji(m.name)}</span><strong>{m.name}</strong><time>{last ? formatTime(last) : '—'}</time><small className={`status-dot ${s.tone}`}/><em>{s.label}</em><b>›</b></button>;})}</div></article>,
+    free:<article className="start1310-card start1310-free"><header><span>👥</span><strong>Wszyscy wolni od</strong></header><b>{allFreeAt}</b><p>Najbliższy wspólny czas dla całej rodziny</p><div aria-hidden="true">⌂ ♡</div></article>,
+    school:<article className="start1310-card start1310-school"><header><div><span>🎓</span><strong>Szkoła</strong></div><button onClick={()=>goTo('Szkoła')}>Zobacz więcej ›</button></header>{dashboardStudents.map((person)=>{const info=studentSummary(person);return <button className="school-person-summary" key={person} onClick={()=>goTo('Szkoła')}><span className="mini-person">{members.find((m)=>m.name===person)?.photoURL ? <img src={members.find((m)=>m.name===person)?.photoURL} alt=""/> : memberEmoji(person)}</span><span><strong>{person}</strong>{info.active ? <><b>Trwa lekcja: {info.active.title}</b><small>{formatTime(info.active.start)} – {formatTime(info.active.end)}{info.active.place ? ` · ${info.active.place}` : ''}</small></> : <><b>{info.last ? `Koniec lekcji: ${formatTime(info.last.end)}` : 'Brak lekcji dziś'}</b></>}</span></button>;})}{schoolTests[0] && <button className="school-next" onClick={()=>goTo('Szkoła')}><span>📝</span><div><strong>Najbliżej: {formatShortDate(schoolTests[0].date)} · Sprawdzian</strong><small>{schoolTests[0].subject || schoolTests[0].title}</small></div><em>›</em></button>}{!schoolTests[0] && schoolHomework[0] && <button className="school-next" onClick={()=>goTo('Szkoła')}><span>📚</span><div><strong>Zadanie domowe</strong><small>{schoolHomework[0].subject || schoolHomework[0].title}</small></div><em>›</em></button>}</article>,
+    tasks:<article className="start1310-card start1310-tasks"><header><div><span>✅</span><strong>Zadania – najważniejsze</strong></div><button onClick={()=>goTo('Zadania')}>Zobacz wszystkie ›</button></header><div>{priorityTasks.length ? priorityTasks.map((t)=><button key={t.id} onClick={()=>goTo('Zadania')}><span className="fake-check"/><span><strong>{t.title}</strong><small>{personLabel(t.person)}{t.points ? ` · +${t.points} pkt` : ''}</small></span><em>{t.dueDate===todayKey ? 'Dziś' : t.dueDate ? formatShortDate(t.dueDate) : 'Bez terminu'}</em></button>) : <p className="start1310-empty">Brak pilnych zadań ✨</p>}</div></article>,
+    shopping:<article className="start1310-card start1310-shopping"><header><div><span>🛒</span><strong>Zakupy</strong></div><button onClick={()=>goTo('Zakupy')}>Zobacz wszystkie ›</button></header><div>{openShopping.length ? openShopping.map((item)=><button key={item.id} onClick={()=>goTo('Zakupy')}><span className="fake-check"/><span>{SHOPPING_META[item.category].icon}</span><strong>{item.title}</strong><small>{item.quantity ? `${item.quantity} ${item.unit}` : ''}</small></button>) : <p className="start1310-empty">Lista zakupów jest pusta.</p>}</div>{shopping.filter((i)=>!i.done).length>5 && <p className="start1310-more">+ {shopping.filter((i)=>!i.done).length-5} więcej produktów</p>}</article>,
+    health:<article className="start1310-card start1310-health"><header><div><span>♡</span><strong>Zdrowie</strong></div><button onClick={()=>goTo('Zdrowie')}>Zobacz więcej ›</button></header><div>{upcomingVisits.length ? upcomingVisits.map((r)=><button key={r.id} onClick={()=>goTo('Zdrowie')}><span className="mini-person">{members.find((m)=>m.name===r.person)?.photoURL ? <img src={members.find((m)=>m.name===r.person)?.photoURL} alt=""/> : memberEmoji(r.person)}</span><span>🩺</span><div><strong>{personLabel(r.person)} · {r.specialty || r.title}</strong><small>{r.date===todayKey ? 'Dziś' : formatShortDate(r.date)}{r.time ? `, ${r.time}` : ''}</small></div><em>›</em></button>) : <p className="start1310-empty">Brak zaplanowanych wizyt.</p>}</div><div className={`start1310-med-status ${dueMedicineDoses.length || visibleHealthAlerts.length ? 'alert' : 'ok'}`}>{dueMedicineDoses.length || visibleHealthAlerts.length ? `🔔 ${dueMedicineDoses.length || visibleHealthAlerts.length} lek(i) wymagają uwagi` : '✓ Brak leków do podania dziś'}</div></article>,
+    events:<article className="start1310-card start1310-events"><header><div><span>📅</span><strong>Nadchodzące wydarzenia</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz więcej ›</button></header><div>{upcomingEvents.length ? upcomingEvents.map((o)=><button key={o.key} onClick={()=>goTo('Kalendarz')}><span className="date-box"><b>{o.date.getDate()}</b><small>{o.date.toLocaleDateString('pl-PL',{month:'short'}).replace('.','').toUpperCase()}</small></span><div><strong>{o.source.title}{o.source.person!=='family' ? ` – ${personLabel(o.source.person)}` : ''}</strong><small>{o.source.allDay ? 'Cały dzień' : `${formatTime(o.date)} – ${formatTime(o.endDate)}`}</small></div></button>) : <p className="start1310-empty">Brak nadchodzących wydarzeń.</p>}</div></article>,
+    quick:<article className="start1310-card start1310-quick"><header><div><span>⚡</span><strong>Szybkie dodawanie</strong></div></header><div><button onClick={()=>goTo('Kalendarz')}>📅<span>Dodaj wydarzenie</span></button><button onClick={()=>goTo('Zadania')}>✅<span>Dodaj zadanie</span></button><button onClick={()=>goTo('Zakupy')}>🛒<span>Dodaj zakup</span></button><button onClick={()=>goTo('Zdrowie')}>➕<span>Dodaj wizytę</span></button></div></article>,
   };
 
   return <div className="start-v1310">
@@ -1033,10 +1195,25 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
       {familyStatus.map(({member:person,status})=><button key={person.id} className={`start1310-person-card ${status.tone}`} onClick={()=>openFamily(person.name)}><span className="start1310-person-photo">{person.photoURL ? <img src={person.photoURL} alt=""/> : memberEmoji(person.name)}</span><div><strong>{person.name}</strong><b><i className={`status-dot ${status.tone}`}/>{status.label}</b><small>{status.detail}</small></div><p><small>Następnie</small><strong>{status.next}</strong></p></button>)}
     </section>
 
-    <section className="start1310-widget-grid">
-      {widgetOrder.map((id)=><React.Fragment key={id}>{widgets[id]}</React.Fragment>)}
+    {urgentItems.length>0 && <section className="start1311-urgent-strip">
+      <header><div><span>⚠️</span><strong>Najważniejsze teraz</strong></div><small>{urgentItems.length} {urgentItems.length===1?'sprawa wymaga':'spraw wymaga'} uwagi</small></header>
+      <div>{urgentItems.slice(0,3).map((item)=><button key={item.id} className={item.level} onClick={()=>goTo(item.page)}><span>{item.icon}</span><div><strong>{item.title}</strong><small>{item.meta}</small></div><em>›</em></button>)}</div>
+    </section>}
+
+    <section className={`start1311-edit-bar ${editMode?'editing':''}`}>
+      <small>Dane aktualne: {formatTime(now)}</small>
+      <div>{editMode && hiddenWidgets.length>0 && <button className="secondary-button" onClick={()=>setWidgetMenu(widgetMenu==='__hidden' ? null : '__hidden')}>＋ Dodaj kafelek ({hiddenWidgets.length})</button>}<button className={editMode?'primary-button':'secondary-button'} onClick={()=>{setEditMode((v)=>!v);setWidgetMenu(null);}}>{editMode?'✓ Gotowe':'✥ Edytuj pulpit'}</button>{editMode&&<button className="secondary-button" onClick={resetDashboardLayout}>↺ Przywróć układ</button>}</div>
+      {editMode && widgetMenu==='__hidden' && hiddenWidgets.length>0 && <aside className="start1311-hidden-menu">{hiddenWidgets.map((id)=><button key={id} onClick={()=>restoreWidget(id)}>＋ {widgetLabels[id] || id}</button>)}</aside>}
     </section>
-    <div className="start1310-layout-tip">Przytrzymaj kafelek, aby przenieść go w inne miejsce.</div>
+
+    <section className={`start1310-widget-grid ${editMode?'is-editing':''}`}>
+      {widgetOrder.filter((id)=>!hiddenWidgets.includes(id)).map((id)=><div key={id} className={`start1311-widget-shell widget-${id}`} {...tileProps(id)}>
+        {editMode && <button className="start1311-widget-menu-button" type="button" aria-label={`Opcje: ${widgetLabels[id] || id}`} onPointerDown={(e)=>e.stopPropagation()} onClick={(e)=>{e.stopPropagation();setWidgetMenu((current)=>current===id?null:id);}}>⋮</button>}
+        {editMode && widgetMenu===id && <aside className="start1311-widget-menu" onPointerDown={(e)=>e.stopPropagation()}><button onClick={()=>hideWidget(id)}>👁️ Ukryj z pulpitu</button><button onClick={()=>restoreWidgetPosition(id)}>↺ Przywróć pozycję</button></aside>}
+        {widgets[id]}
+      </div>)}
+    </section>
+    <div className="start1310-layout-tip">Przytrzymaj kafelek — będzie poruszał się razem z palcem. W trybie edycji użyj ⋮, aby go ukryć.</div>
   </div>;
 }
 
@@ -1088,7 +1265,10 @@ function DetailRow({ label, value }: { label: string; value: string }) {
    CALENDAR 2.1
    ========================================================= */
 
-function CalendarPage({ user, goTo }: { user: User; goTo: (page: Page) => void }) {
+function CalendarPage({ user, member, goTo }: { user: User; member: Member | null; goTo: (page: Page) => void }) {
+  const calendarAccess = effectiveMemberPermissions(member);
+  const calendarParent = isParent(member);
+  const ownCalendarPerson = isPersonKey(member?.name) ? member!.name as PersonKey : 'family';
   const [view, setView] = useState<CalendarView>('week');
   const [focusDate, setFocusDate] = useState(() => new Date());
   const [events, setEvents] = useState<CalendarEventData[]>([]);
@@ -1114,6 +1294,7 @@ function CalendarPage({ user, goTo }: { user: User; goTo: (page: Page) => void }
         photoURL: typeof data.photoURL === 'string' ? data.photoURL : undefined,
         active: data.active !== false,
         birthDate: typeof data.birthDate === 'string' ? data.birthDate : undefined,
+        permissions: normalizeMemberPermissions(data.permissions),
       };
     });
     loaded.sort((a, b) => FAMILY_ORDER.indexOf(a.name) - FAMILY_ORDER.indexOf(b.name));
@@ -1160,9 +1341,19 @@ function CalendarPage({ user, goTo }: { user: User; goTo: (page: Page) => void }
     return { start: startOfDay(monthDays[0]), end: endOfDay(monthDays[monthDays.length - 1]) };
   }, [view, focusDate, weekStart, monthDays]);
 
-  const visibleEvents = useMemo(() => events.filter((event) => (
-    selectedPerson === 'family' || event.person === selectedPerson || event.person === 'family'
-  )), [events, selectedPerson]);
+  const calendarPeople = (calendarParent || calendarAccess.viewFamilySchedule)
+    ? (['Sebastian','Dominika','Paweł','Nikodem','Layla'] as PersonKey[])
+    : (ownCalendarPerson === 'family' ? [] : [ownCalendarPerson]);
+
+  useEffect(() => {
+    if (!calendarParent && !calendarAccess.viewFamilySchedule && selectedPerson !== 'family' && selectedPerson !== ownCalendarPerson) setSelectedPerson(ownCalendarPerson);
+  }, [calendarParent,calendarAccess.viewFamilySchedule,ownCalendarPerson,selectedPerson]);
+
+  const visibleEvents = useMemo(() => events.filter((event) => {
+    const allowed = calendarParent || calendarAccess.viewFamilySchedule || event.person === ownCalendarPerson || event.person === 'family';
+    if (!allowed) return false;
+    return selectedPerson === 'family' || event.person === selectedPerson || event.person === 'family';
+  }), [events, selectedPerson, calendarParent, calendarAccess.viewFamilySchedule, ownCalendarPerson]);
 
   const occurrences = useMemo(() => visibleEvents
     .flatMap((event) => generateOccurrences(event, range.start, range.end))
@@ -1373,7 +1564,7 @@ function CalendarPage({ user, goTo }: { user: User; goTo: (page: Page) => void }
                 <button type="button" className={selectedPerson === 'family' ? 'active' : ''} onClick={() => setSelectedPerson('family')}>
                   <span className="calendar-filter-dot family" /> <strong>Wydarzenia rodzinne</strong><em>✓</em>
                 </button>
-                {(['Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla'] as PersonKey[]).map((person) => (
+                {calendarPeople.map((person) => (
                   <button type="button" key={person} className={selectedPerson === person ? 'active' : ''} onClick={() => setSelectedPerson(person)}>
                     <span className="calendar-filter-avatar">{personAvatar(person)}</span><strong>{person}</strong><em>✓</em>
                   </button>
@@ -1726,6 +1917,7 @@ function TasksPage({ user, member }: { user: User; member: Member | null }) {
   const [form, setForm] = useState<TaskForm>({ title: '', person: 'family', dueDate: '', priority: 'normal', note: '', points: 5, requireApproval: true, repeat: 'none' });
   const [filter, setFilter] = useState<'all' | 'today' | 'upcoming' | 'pending' | 'done'>('all');
   const parent = isParent(member);
+  const taskAccess = effectiveMemberPermissions(member);
   const today = formatDateInput(new Date());
   const tomorrow = formatDateInput(addDays(new Date(), 1));
 
@@ -1752,30 +1944,32 @@ function TasksPage({ user, member }: { user: User; member: Member | null }) {
     setItems(next);
   }), []);
 
-  const visible = useMemo(() => items.filter((item) => {
+  const accessibleItems = useMemo(() => items.filter((item)=>parent || taskAccess.viewFamilyTasks || item.person===member?.name || item.person==='family'),[items,parent,taskAccess.viewFamilyTasks,member?.name]);
+
+  const visible = useMemo(() => accessibleItems.filter((item) => {
     if (filter === 'today') return !item.done && item.dueDate === today;
     if (filter === 'upcoming') return !item.done && !!item.dueDate && item.dueDate > today;
     if (filter === 'pending') return item.approvalStatus === 'pending';
     if (filter === 'done') return item.done;
     return true;
-  }), [items, filter, today]);
+  }), [accessibleItems, filter, today]);
 
   const pointsByPerson = useMemo(() => {
     const result: Record<string, number> = {};
-    for (const item of items) {
+    for (const item of accessibleItems) {
       if (item.done && (item.approvalStatus === 'approved' || !item.requireApproval)) {
         result[item.person] = (result[item.person] || 0) + item.points;
       }
     }
     return result;
-  }, [items]);
+  }, [accessibleItems]);
 
   const totals = useMemo(() => ({
-    today: items.filter((i) => !i.done && i.dueDate === today).length,
-    pending: items.filter((i) => i.approvalStatus === 'pending').length,
-    done: items.filter((i) => i.done).length,
+    today: accessibleItems.filter((i) => !i.done && i.dueDate === today).length,
+    pending: accessibleItems.filter((i) => i.approvalStatus === 'pending').length,
+    done: accessibleItems.filter((i) => i.done).length,
     points: Object.values(pointsByPerson).reduce((a, b) => a + b, 0),
-  }), [items, pointsByPerson, today]);
+  }), [accessibleItems, pointsByPerson, today]);
 
   const groupedSections = useMemo(() => {
     const next: Array<{ key: string; title: string; subtitle: string; items: TaskItem[] }> = [];
@@ -1802,11 +1996,11 @@ function TasksPage({ user, member }: { user: User; member: Member | null }) {
   }, [visible, filter, today, tomorrow]);
 
   const statCounts = useMemo(() => ({
-    created: items.length,
-    completed: items.filter((item) => item.done).length,
-    pending: items.filter((item) => item.approvalStatus === 'pending').length,
-    assignedPoints: items.reduce((sum, item) => sum + item.points, 0),
-  }), [items]);
+    created: accessibleItems.length,
+    completed: accessibleItems.filter((item) => item.done).length,
+    pending: accessibleItems.filter((item) => item.approvalStatus === 'pending').length,
+    assignedPoints: accessibleItems.reduce((sum, item) => sum + item.points, 0),
+  }), [accessibleItems]);
 
   const quickList = TASK_TEMPLATES.slice(0, 4);
 
@@ -2530,6 +2724,7 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
   const [intakes, setIntakes] = useState<MedicationIntake[]>([]);
   const [alerts, setAlerts] = useState<HealthAlert[]>([]);
   const parent = isParent(member);
+  const healthAccess = effectiveMemberPermissions(member);
   const ownPerson = isPersonKey(member?.name) ? member!.name as PersonKey : 'family';
   const [person, setPerson] = useState<PersonKey>(() => parent ? (ownPerson === 'family' ? 'Sebastian' : ownPerson) : ownPerson);
   const [healthTab, setHealthTab] = useState<'summary' | 'visits' | 'meds' | 'results' | 'documents' | 'contacts' | 'notes'>('summary');
@@ -2541,7 +2736,7 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
   const emptyForm = (): HealthForm => ({
     title: '', person: person === 'family' ? (parent ? 'Paweł' : ownPerson) : person, type: 'visit', date: formatDateInput(new Date()), time: '12:00',
     doctor: '', location: '', note: '', specialty: '', status: 'planned', referralCode: '', nextControl: '', callReminderDate: '',
-    privateToParents: false, sharedWithPerson: false, dose: '', medicineTime: '08:00', medicineTimes: ['08:00', '20:00'], escalationMinutes: 15,
+    privateToParents: false, sharedWithPerson: false, blocksSchoolDay: false, dose: '', medicineTime: '08:00', medicineTimes: ['08:00', '20:00'], escalationMinutes: 15,
     addToCalendar: true, file: null,
   });
   const [form, setForm] = useState<HealthForm>(emptyForm);
@@ -2571,7 +2766,7 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
         location:typeof x.location === 'string' ? x.location : '', note:typeof x.note === 'string' ? x.note : '', specialty:typeof x.specialty === 'string' ? x.specialty : '',
         status:isHealthStatus(x.status) ? x.status : (x.type === 'visit' ? 'planned' : 'done'), referralCode:typeof x.referralCode === 'string' ? x.referralCode : '',
         nextControl:typeof x.nextControl === 'string' ? x.nextControl : '', callReminderDate:typeof x.callReminderDate === 'string' ? x.callReminderDate : '',
-        documentURL:typeof x.documentURL === 'string' ? x.documentURL : '', privateToParents:x.privateToParents === true, sharedWithPerson:x.sharedWithPerson === true,
+        documentURL:typeof x.documentURL === 'string' ? x.documentURL : '', privateToParents:x.privateToParents === true, sharedWithPerson:x.sharedWithPerson === true, blocksSchoolDay:x.blocksSchoolDay === true,
         dose:typeof x.dose === 'string' ? x.dose : '', medicineTime:legacyTime, medicineTimes:rawTimes.length ? rawTimes : (legacyTime ? [legacyTime] : []),
         escalationMinutes:Number.isFinite(Number(x.escalationMinutes)) ? Math.max(1, Number(x.escalationMinutes)) : 15,
         confirmedDate:typeof x.confirmedDate === 'string' ? x.confirmedDate : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
@@ -2600,11 +2795,14 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
   }), []);
 
   const allowedRecords = records.filter((r) => {
-    if (!r.privateToParents) return parent || r.person === ownPerson || r.person === 'family';
-    if (parent) return true;
-    return r.person === ownPerson && r.sharedWithPerson;
+    if (r.privateToParents) {
+      if (parent) return true;
+      return r.person === ownPerson && r.sharedWithPerson;
+    }
+    if (parent || healthAccess.viewFamilyHealth) return true;
+    return r.person === ownPerson || r.person === 'family';
   });
-  const selectableMembers = parent ? members : members.filter((m) => m.name === ownPerson);
+  const selectableMembers = (parent || healthAccess.viewFamilyHealth) ? members : members.filter((m) => m.name === ownPerson);
   const personRecords = allowedRecords.filter((r) => person === 'family' || r.person === person);
   const visibleRecords = personRecords.filter((r) => specialtyFilter === 'all' || r.specialty === specialtyFilter);
   const today = formatDateInput(new Date());
@@ -2826,7 +3024,10 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
           <label className="field field-wide"><span>Notatka / zalecenia</span><textarea rows={3} value={form.note} onChange={(e)=>setForm((f)=>({...f,note:e.target.value}))} /></label>
           <label className="field field-wide"><span>Plik (PDF / zdjęcie)</span><input type="file" accept="image/*,.pdf" onChange={(e)=>setForm((f)=>({...f,file:e.target.files?.[0] || null}))} /></label>
           {parent && form.type === 'document' && <><label className="checkbox-field field-wide"><input type="checkbox" checked={form.privateToParents} onChange={(e)=>setForm((f)=>({...f,privateToParents:e.target.checked}))} /><span>🔒 Widoczne tylko dla rodziców</span></label>{form.privateToParents&&<label className="checkbox-field field-wide"><input type="checkbox" checked={form.sharedWithPerson} onChange={(e)=>setForm((f)=>({...f,sharedWithPerson:e.target.checked}))} /><span>Udostępnij także właścicielowi profilu</span></label>}</>}
-          {form.type === 'visit' && <label className="checkbox-field field-wide"><input type="checkbox" checked={form.addToCalendar} onChange={(e)=>setForm((f)=>({...f,addToCalendar:e.target.checked}))} /><span>Dodaj również do rodzinnego Kalendarza</span></label>}
+          {form.type === 'visit' && <>
+            <label className="checkbox-field field-wide"><input type="checkbox" checked={form.blocksSchoolDay} onChange={(e)=>setForm((f)=>({...f,blocksSchoolDay:e.target.checked}))} /><span>🏥 Nieobecność w szkole tego dnia (np. wyjazd do lekarza)</span></label>
+            <label className="checkbox-field field-wide"><input type="checkbox" checked={form.addToCalendar} onChange={(e)=>setForm((f)=>({...f,addToCalendar:e.target.checked}))} /><span>Dodaj również do rodzinnego Kalendarza</span></label>
+          </>}
           <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={()=>setShowForm(false)}>Anuluj</button><button className="primary-button">✓ Zapisz</button></div>
         </form>
       </Modal>}
@@ -2876,6 +3077,7 @@ function SchoolPage({ user, member }: { user: User; member: Member | null }) {
   const [records, setRecords] = useState<SchoolRecord[]>([]);
   const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
   const parent = isParent(member);
+  const schoolAccess = effectiveMemberPermissions(member);
   const ownStudent = member?.name === 'Paweł' || member?.name === 'Nikodem' ? member.name as 'Paweł' | 'Nikodem' : null;
   const [selectedStudent, setSelectedStudent] = useState<SchoolStudentFilter>(ownStudent || 'Paweł');
   const [tab, setTab] = useState<SchoolTab>('summary');
@@ -2914,11 +3116,11 @@ function SchoolPage({ user, member }: { user: User; member: Member | null }) {
   }), []);
 
   useEffect(() => {
-    if (!parent && ownStudent) setSelectedStudent(ownStudent);
-  }, [parent, ownStudent]);
+    if (!parent && !schoolAccess.viewFamilySchool && ownStudent) setSelectedStudent(ownStudent);
+  }, [parent, schoolAccess.viewFamilySchool, ownStudent]);
 
-  const students: Array<'Paweł' | 'Nikodem'> = parent ? ['Paweł','Nikodem'] : ownStudent ? [ownStudent] : ['Paweł','Nikodem'];
-  const selectedPeople: Array<'Paweł' | 'Nikodem'> = selectedStudent === 'all' ? students : [selectedStudent];
+  const students: Array<'Paweł' | 'Nikodem'> = (parent || schoolAccess.viewFamilySchool) ? ['Paweł','Nikodem'] : ownStudent ? [ownStudent] : [];
+  const selectedPeople: Array<'Paweł' | 'Nikodem'> = selectedStudent === 'all' ? students : (students.includes(selectedStudent as 'Paweł'|'Nikodem') ? [selectedStudent as 'Paweł'|'Nikodem'] : students.slice(0,1));
   const selectedRecords = records.filter((r)=>selectedPeople.includes(r.person as 'Paweł' | 'Nikodem'));
 
   function photoFor(person: 'Paweł' | 'Nikodem') {
@@ -3438,6 +3640,8 @@ function SettingsPage({ member, theme, setTheme, goTo }: { member: Member | null
     catch { return defaultPrefs; }
   });
   const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [permissionMemberId, setPermissionMemberId] = useState('');
   const [accent, setAccent] = useState<'blue'|'violet'|'pink'|'green'|'orange'>(() => {
     try {
       const saved = localStorage.getItem('nr-accent');
@@ -3469,6 +3673,7 @@ function SettingsPage({ member, theme, setTheme, goTo }: { member: Member | null
         photoURL: typeof data.photoURL === 'string' ? data.photoURL : undefined,
         active: data.active !== false,
         birthDate: typeof data.birthDate === 'string' ? data.birthDate : undefined,
+        permissions: normalizeMemberPermissions(data.permissions),
       };
     });
     next.sort((a,b)=>FAMILY_ORDER.indexOf(a.name)-FAMILY_ORDER.indexOf(b.name));
@@ -3493,6 +3698,18 @@ function SettingsPage({ member, theme, setTheme, goTo }: { member: Member | null
     const next={...prefs,[key]:nextValue};
     setPrefs(next);
     try { localStorage.setItem('nr-notifications-v138',JSON.stringify(next)); } catch { /* ignore */ }
+  }
+
+  function openPermissions() {
+    if (!parent) { alert('Uprawnieniami członków rodziny zarządza rodzic / administrator.'); return; }
+    const firstEditable=members.find((person)=>!PARENT_NAMES.has(person.name)) || members[0];
+    setPermissionMemberId(firstEditable?.id || '');
+    setPermissionsOpen(true);
+  }
+
+  async function setMemberPermission(key:keyof MemberPermissions,value:boolean) {
+    if (!parent || !permissionMemberId) return;
+    await updateDoc(doc(db,'members',permissionMemberId), { [`permissions.${key}`]:value, updatedAt:Timestamp.now() });
   }
 
   function integrationInfo(name:string) {
@@ -3573,7 +3790,7 @@ function SettingsPage({ member, theme, setTheme, goTo }: { member: Member | null
             <header><span className="settings-card-icon">🛡️</span><div><strong>Prywatność i bezpieczeństwo</strong><small>Dostęp do danych</small></div></header>
             <div className="settings-menu-list compact">
               <button><span>👥</span><b>Dane rodzinne</b><small>Zarządzaj swoimi danymi</small><em>›</em></button>
-              <button><span>👤</span><b>Uprawnienia i role</b><small>{parent?'Rodzic · pełny dostęp':'Dostęp ograniczony'}</small><em>›</em></button>
+              <button onClick={openPermissions}><span>👤</span><b>Uprawnienia i role</b><small>{parent?'Zarządzaj dostępem rodziny':'Dostęp ustala rodzic'}</small><em>›</em></button>
               <button><span>☁️</span><b>Kopie zapasowe</b><small>Etap integracji</small><em>›</em></button>
               <button className="danger" onClick={()=>alert('Usuwanie konta wymaga dodatkowego potwierdzenia i zostanie dodane w etapie bezpieczeństwa.')}><span>🗑️</span><b>Usuń swoje konto</b><small>Trwałe usunięcie danych</small><em>›</em></button>
             </div>
@@ -3585,6 +3802,25 @@ function SettingsPage({ member, theme, setTheme, goTo }: { member: Member | null
           </article>
         </div>
       </section>
+
+      {permissionsOpen && <Modal title="🛡️ Uprawnienia i role" subtitle="Prywatność rodzinna" onClose={()=>setPermissionsOpen(false)} wide>
+        <div className="permission-editor">
+          <div className="permission-members">{members.map((person)=><button type="button" key={person.id} className={permissionMemberId===person.id?'active':''} onClick={()=>setPermissionMemberId(person.id)}><span className="settings-member-avatar">{person.photoURL?<img src={person.photoURL} alt=""/>:memberEmoji(person.name)}</span><strong>{person.name}</strong><small>{personRole(person.name,person.role)}</small></button>)}</div>
+          {(()=>{
+            const selected=members.find((person)=>person.id===permissionMemberId);
+            if(!selected) return <p>Wybierz członka rodziny.</p>;
+            if(PARENT_NAMES.has(selected.name)) return <div className="permission-parent-note"><strong>✓ {selected.name} ma pełny dostęp rodzica</strong><small>Rodzice mają dostęp do modułów rodzinnych i ustawień administracyjnych.</small></div>;
+            const permissions=normalizeMemberPermissions(selected.permissions);
+            const options:Array<[keyof MemberPermissions,string,string,string]>=[
+              ['viewFamilySchedule','📅','Grafik całej rodziny','Statusy, godziny zakończenia i wspólny plan dnia'],
+              ['viewFamilyTasks','✅','Zadania całej rodziny','Podgląd zadań innych członków rodziny'],
+              ['viewFamilySchool','🎓','Szkoła rodzeństwa','Plan, zadania i sprawdziany drugiego dziecka'],
+              ['viewFamilyHealth','❤️','Zdrowie rodziny','Niepoufne wizyty i informacje zdrowotne innych osób'],
+            ];
+            return <><div className="settings-toggle-list permission-toggle-list">{options.map(([key,icon,label,desc])=><button type="button" key={key} onClick={()=>void setMemberPermission(key,!permissions[key])}><span>{icon}</span><div><strong>{label}</strong><small>{desc}</small></div><i className={permissions[key]?'on':''}><b/></i></button>)}</div><div className="permission-sensitive-note"><strong>🔒 Prywatne dokumenty medyczne</strong><small>Orzeczenia i dokumenty oznaczone „tylko rodzice” pozostają niewidoczne niezależnie od ustawień powyżej. Udostępnia się je osobno przy konkretnym dokumencie.</small></div></>;
+          })()}
+        </div>
+      </Modal>}
     </div>
   );
 }
