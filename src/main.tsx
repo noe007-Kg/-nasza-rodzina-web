@@ -22,7 +22,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.7';
+const APP_VERSION = '1.3.8';
 const APP_UPDATED = '30.09.2026';
 
 /* =========================================================
@@ -674,7 +674,7 @@ function FamilyApp({ user }: { user: User }) {
       case 'Zdrowie': return <HealthPage user={user} member={member} />;
       case 'Szkoła': return <SchoolPage user={user} member={member} />;
       case 'Rodzina': return <FamilyPage user={user} member={member} goTo={goTo} />;
-      case 'Ustawienia': return <SettingsPage member={member} theme={theme} setTheme={setTheme} />;
+      case 'Ustawienia': return <SettingsPage member={member} theme={theme} setTheme={setTheme} goTo={goTo} />;
       default: return <StartPage member={member} goTo={goTo} />;
     }
   }
@@ -3402,48 +3402,152 @@ function FamilyPage({ user, member, goTo }: { user: User; member: Member | null;
    SETTINGS
    ========================================================= */
 
-function SettingsPage({ member, theme, setTheme }: { member: Member | null; theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void }) {
-  const defaultPrefs = { medicines:true, visits:true, tasks:true, school:true, chat:true };
+function SettingsPage({ member, theme, setTheme, goTo }: { member: Member | null; theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void; goTo: (page: Page) => void }) {
+  const defaultPrefs = { app:true, email:false, push:true, medicines:true, school:true };
   const [prefs, setPrefs] = useState<Record<keyof typeof defaultPrefs, boolean>>(() => {
-    try { return { ...defaultPrefs, ...JSON.parse(localStorage.getItem('nr-notifications') || '{}') }; }
+    try { return { ...defaultPrefs, ...JSON.parse(localStorage.getItem('nr-notifications-v138') || '{}') }; }
     catch { return defaultPrefs; }
   });
-  const parent=isParent(member);
+  const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
+  const [accent, setAccent] = useState<'blue'|'violet'|'pink'|'green'|'orange'>(() => {
+    try {
+      const saved = localStorage.getItem('nr-accent');
+      return saved === 'violet' || saved === 'pink' || saved === 'green' || saved === 'orange' ? saved : 'blue';
+    } catch { return 'blue'; }
+  });
+  const [textSize, setTextSize] = useState<'small'|'medium'|'large'>(() => {
+    try {
+      const saved = localStorage.getItem('nr-text-size');
+      return saved === 'small' || saved === 'large' ? saved : 'medium';
+    } catch { return 'medium'; }
+  });
+  const parent = isParent(member);
+
+  useEffect(() => onSnapshot(collection(db, 'members'), (snapshot) => {
+    const next = snapshot.docs.map((memberDoc): FamilyMemberDoc => {
+      const data = memberDoc.data();
+      return {
+        id: memberDoc.id,
+        name: String(data.name || 'Rodzina'),
+        role: personRole(String(data.name || ''), typeof data.role === 'string' ? data.role : ''),
+        photoURL: typeof data.photoURL === 'string' ? data.photoURL : undefined,
+        active: data.active !== false,
+        birthDate: typeof data.birthDate === 'string' ? data.birthDate : undefined,
+      };
+    });
+    next.sort((a,b)=>FAMILY_ORDER.indexOf(a.name)-FAMILY_ORDER.indexOf(b.name));
+    setMembers(next);
+  }), []);
+
+  useEffect(() => {
+    document.documentElement.dataset.accent = accent;
+    try { localStorage.setItem('nr-accent', accent); } catch { /* ignore */ }
+  }, [accent]);
+
+  useEffect(() => {
+    document.documentElement.dataset.textSize = textSize;
+    try { localStorage.setItem('nr-text-size', textSize); } catch { /* ignore */ }
+  }, [textSize]);
 
   async function togglePref(key:keyof typeof defaultPrefs) {
     const nextValue=!prefs[key];
-    if (nextValue && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+    if (key === 'push' && nextValue && typeof Notification !== 'undefined' && Notification.permission === 'default') {
       try { await Notification.requestPermission(); } catch { /* browser may block */ }
     }
-    const next={...prefs,[key]:nextValue}; setPrefs(next);
-    try { localStorage.setItem('nr-notifications',JSON.stringify(next)); } catch { /* ignore */ }
+    const next={...prefs,[key]:nextValue};
+    setPrefs(next);
+    try { localStorage.setItem('nr-notifications-v138',JSON.stringify(next)); } catch { /* ignore */ }
   }
 
   function integrationInfo(name:string) {
-    alert(`${name}: miejsce integracji jest przygotowane w projekcie. Pełna synchronizacja wymaga bezpiecznej autoryzacji/API i nie jest jeszcze aktywna w tej paczce.`);
+    alert(`${name}: miejsce integracji jest przygotowane. Pełne połączenie zrobimy w etapie integracji po zakończeniu wszystkich zakładek.`);
   }
 
+  const accountEmail = auth.currentUser?.email || 'E-mail konta';
+  const roleLabel = personRole(member?.name || '', member?.role);
+  const accentOptions: Array<['blue'|'violet'|'pink'|'green'|'orange', string]> = [
+    ['blue','#3b9cff'],['violet','#8b67ff'],['pink','#ff5aa8'],['green','#4acb8a'],['orange','#ff9a46']
+  ];
+
   return (
-    <div className="page-content compact-page settings-v130">
-      <ModuleHeader icon="⚙️" title="Ustawienia" text="Konto, wygląd, powiadomienia, synchronizacja i bezpieczeństwo." />
-      <section className="settings-dashboard">
-        <article className="settings-section account-settings"><header><span>👤</span><div><strong>Twoje konto</strong><small>Profil zalogowanej osoby</small></div></header><div className="settings-profile"><span className="family-profile-avatar">{member?.photoURL ? <img src={member.photoURL} alt="" /> : memberEmoji(member?.name || '')}</span><div><strong>{member?.name || 'Użytkownik'}</strong><small>{personRole(member?.name || '',member?.role)}</small></div><span className="setting-badge green">Aktywne</span></div></article>
+    <div className="page-content compact-page settings-versa-page">
+      <section className="settings-versa-heading">
+        <div className="settings-title-copy"><span className="settings-title-icon">⚙️</span><div><small>Nasza Rodzina</small><h1>Ustawienia</h1><p>Konto, wygląd, powiadomienia, synchronizacja i bezpieczeństwo.</p></div></div>
+        <div className="settings-brand-mini"><img src="/nasza-rodzina-logo.svg" alt="Nasza Rodzina"/><span>Nasza Rodzina v{APP_VERSION}</span></div>
+      </section>
 
-        <article className="settings-section"><header><span>🎨</span><div><strong>Motyw aplikacji</strong><small>Wygląd zapisuje się na tym urządzeniu</small></div></header><div className="theme-choice big"><button className={theme === 'light' ? 'active' : ''} onClick={()=>setTheme('light')}>☀️ <span><b>Jasny</b><small>Kolorowy i czytelny</small></span></button><button className={theme === 'dark' ? 'active' : ''} onClick={()=>setTheme('dark')}>🌙 <span><b>Ciemny</b><small>Delikatny dla oczu</small></span></button></div></article>
+      <section className="settings-versa-grid">
+        <article className="settings-versa-card settings-account-card">
+          <header><span className="settings-card-icon">👤</span><div><strong>Profil i konto</strong><small>Zalogowana osoba</small></div><button className="settings-chevron" onClick={()=>goTo('Rodzina')}>›</button></header>
+          <div className="settings-account-profile">
+            <span className="settings-main-avatar">{member?.photoURL ? <img src={member.photoURL} alt=""/> : memberEmoji(member?.name || '')}<i>📷</i></span>
+            <div><strong>{member?.name || 'Użytkownik'}</strong><small>{roleLabel}{parent ? ' · Administrator' : ''}</small><em>● Aktywne</em></div>
+            <button onClick={()=>goTo('Rodzina')}>Edytuj profil</button>
+          </div>
+          <div className="settings-menu-list">
+            <button onClick={()=>goTo('Rodzina')}><span>📷</span><b>Zmień zdjęcie</b><em>›</em></button>
+            <button onClick={()=>goTo('Rodzina')}><span>👥</span><b>Imię i rola</b><small>{member?.name || ''} · {roleLabel}</small><em>›</em></button>
+            <button><span>✉️</span><b>E-mail</b><small>{accountEmail}</small></button>
+            <button onClick={()=>alert('Zmianę hasła dodamy w etapie bezpieczeństwa konta.')}><span>🔗</span><b>Hasło</b><small>Zmień</small><em>›</em></button>
+            <button className="danger" onClick={()=>void signOut(auth)}><span>↪️</span><b>Wyloguj z konta</b></button>
+          </div>
+        </article>
 
-        <article className="settings-section notifications-settings"><header><span>🔔</span><div><strong>Powiadomienia</strong><small>Wybierz, o czym aplikacja ma przypominać</small></div></header>{([['medicines','💊','Leki'],['visits','🩺','Wizyty'],['tasks','✅','Zadania'],['school','🎒','Szkoła'],['chat','💬','Czat']] as Array<[keyof typeof defaultPrefs,string,string]>).map(([key,icon,label])=><button className="settings-toggle-row" key={key} onClick={()=>void togglePref(key)}><span>{icon}</span><strong>{label}</strong><i className={prefs[key] ? 'toggle-on' : 'toggle-off'}>{prefs[key] ? 'Wł.' : 'Wył.'}</i></button>)}<p className="settings-footnote">Powiadomienia działające po zamknięciu strony wymagają późniejszej konfiguracji Web Push.</p></article>
+        <article className="settings-versa-card settings-family-card">
+          <header><span className="settings-card-icon">👥</span><div><strong>Członkowie rodziny</strong><small>Profile i role</small></div><button className="settings-chevron" onClick={()=>goTo('Rodzina')}>›</button></header>
+          <div className="settings-family-list">
+            {members.map((person)=><button key={person.id} onClick={()=>goTo('Rodzina')}>
+              <span className="settings-member-avatar">{person.photoURL?<img src={person.photoURL} alt=""/>:memberEmoji(person.name)}</span>
+              <div><strong>{person.name}</strong><small>{personRole(person.name,person.role)}{person.name===member?.name ? ' · Ty' : ''}</small></div>
+              <i className={person.active === false ? 'offline' : ''}>{person.active === false ? 'Nieaktywne' : 'Aktywne'}</i><em>›</em>
+            </button>)}
+          </div>
+          <button className="settings-wide-action" onClick={()=>goTo('Rodzina')}>Otwórz profile rodziny</button>
+        </article>
 
-        <article className="settings-section calendars-settings"><header><span>📅</span><div><strong>Połączone kalendarze</strong><small>Nasza Rodzina pozostaje kalendarzem domyślnym</small></div></header>{[['Google Calendar','G'],['Apple Calendar / iCloud',''],['Outlook / Microsoft 365','O'],['iCalendar (.ics)','ICS']].map(([name,icon])=><button className="integration-row" key={name} onClick={()=>integrationInfo(name)}><span>{icon}</span><div><strong>{name}</strong><small>Do podłączenia</small></div><em>›</em></button>)}</article>
+        <article className="settings-versa-card settings-appearance-card">
+          <header><span className="settings-card-icon">🎨</span><div><strong>Wygląd aplikacji</strong><small>Motyw i czytelność</small></div></header>
+          <div className="settings-theme-pair">
+            <button className={theme==='light'?'active':''} onClick={()=>setTheme('light')}><span>☀️</span><strong>Jasny</strong></button>
+            <button className={theme==='dark'?'active':''} onClick={()=>setTheme('dark')}><span>🌙</span><strong>Ciemny</strong></button>
+          </div>
+          <label>Motyw kolorystyczny</label>
+          <div className="settings-accent-row">{accentOptions.map(([key,color])=><button key={key} aria-label={key} className={accent===key?'active':''} style={{background:color}} onClick={()=>setAccent(key)} />)}</div>
+          <label>Rozmiar tekstu</label>
+          <div className="settings-text-size"><button className={textSize==='small'?'active':''} onClick={()=>setTextSize('small')}>A <span>Mały</span></button><button className={textSize==='medium'?'active':''} onClick={()=>setTextSize('medium')}>A <span>Średni</span></button><button className={textSize==='large'?'active':''} onClick={()=>setTextSize('large')}>A <span>Duży</span></button></div>
+          <div className="settings-logo-row"><img src="/nasza-rodzina-logo.svg" alt=""/><div><strong>Nasza Rodzina</strong><small>v{APP_VERSION}</small></div><span>Logo aplikacji</span></div>
+        </article>
 
-        <article className="settings-section"><header><span>👨‍👩‍👧‍👦</span><div><strong>Uprawnienia rodzinne</strong><small>Role i dostęp do danych</small></div></header><div className="permission-summary"><span className={parent ? 'parent-role' : 'child-role'}>{parent ? '👑 Rodzic — pełny dostęp' : '👤 Członek rodziny — dostęp ograniczony'}</span><p>Rodzice zarządzają punktami, profilami dzieci oraz szczególnie wrażliwymi dokumentami.</p></div></article>
+        <article className="settings-versa-card settings-notifications-card">
+          <header><span className="settings-card-icon">🔔</span><div><strong>Powiadomienia</strong><small>Wybierz, o czym przypominać</small></div><button className="settings-chevron">›</button></header>
+          <div className="settings-toggle-list">
+            {([['app','🔔','Powiadomienia w aplikacji','Ważne wydarzenia i zadania'],['email','✉️','Powiadomienia e-mail','Podsumowanie dnia'],['push','📱','Powiadomienia push (Web)','Wymaga zgody przeglądarki'],['medicines','❤️','Przypomnienia o lekach','Zdrowie · leki i wizyty'],['school','🎓','Przypomnienia szkolne','Sprawdziany, zadania, oceny']] as Array<[keyof typeof defaultPrefs,string,string,string]>).map(([key,icon,label,desc])=><button key={key} onClick={()=>void togglePref(key)}><span>{icon}</span><div><strong>{label}</strong><small>{desc}</small></div><i className={prefs[key]?'on':''}><b/></i></button>)}
+          </div>
+        </article>
 
-        <article className="settings-section"><header><span>🔐</span><div><strong>Prywatność i bezpieczeństwo</strong><small>Dane rodzinne są dostępne po zalogowaniu</small></div></header><div className="settings-info-list"><span>🔒 Ważne dokumenty Pawła: tylko rodzice</span><span>🗂️ Dokumenty zdrowotne: zgodnie z rolą</span><span>🔑 Hasła do zewnętrznych usług nie są zapisywane w aplikacji</span></div></article>
+        <article className="settings-versa-card settings-calendars-card">
+          <header><span className="settings-card-icon">📅</span><div><strong>Synchronizacja kalendarzy</strong><small>Zewnętrzne źródła</small></div><button className="settings-chevron">›</button></header>
+          <div className="settings-integrations-list">
+            {[['Google Calendar','G','Połącz kalendarz rodzinny'],['Apple Calendar / iCloud','','Połącz kalendarz rodzinny'],['Outlook / Microsoft 365','O','Połącz kalendarz rodzinny'],['ICS (inny kalendarz)','ICS','Import / eksport']].map(([name,icon,desc])=><button key={name} onClick={()=>integrationInfo(name)}><span>{icon}</span><div><strong>{name}</strong><small>{desc}</small></div><em>Połącz</em></button>)}
+          </div>
+        </article>
 
-        <article className="settings-section"><header><span>📁</span><div><strong>Dane i pliki</strong><small>Zdjęcia, dokumenty i własne ikonki</small></div></header><div className="settings-info-list"><span>🖼️ Własne zdjęcia produktów — Firebase Storage</span><span>📄 Dokumenty zdrowotne — Firebase Storage</span><span>☁️ Dane modułów — Firestore</span></div></article>
+        <div className="settings-right-stack">
+          <article className="settings-versa-card settings-security-card">
+            <header><span className="settings-card-icon">🛡️</span><div><strong>Prywatność i bezpieczeństwo</strong><small>Dostęp do danych</small></div></header>
+            <div className="settings-menu-list compact">
+              <button><span>👥</span><b>Dane rodzinne</b><small>Zarządzaj swoimi danymi</small><em>›</em></button>
+              <button><span>👤</span><b>Uprawnienia i role</b><small>{parent?'Rodzic · pełny dostęp':'Dostęp ograniczony'}</small><em>›</em></button>
+              <button><span>☁️</span><b>Kopie zapasowe</b><small>Etap integracji</small><em>›</em></button>
+              <button className="danger" onClick={()=>alert('Usuwanie konta wymaga dodatkowego potwierdzenia i zostanie dodane w etapie bezpieczeństwa.')}><span>🗑️</span><b>Usuń swoje konto</b><small>Trwałe usunięcie danych</small><em>›</em></button>
+            </div>
+          </article>
 
-        <article className="settings-section whats-new-v130"><header><span>✨</span><div><strong>Co nowego?</strong><small>Ta sekcja będzie przy każdej wersji</small></div><b className="version-pill">v{APP_VERSION}</b></header><ul><li>Nowy rodzinny Start i plan dnia</li><li>Zadania z punktami i zatwierdzaniem przez rodzica</li><li>Szybkie Zakupy z własnymi ikonami i notatką wielu produktów</li><li>Czat rodzinny + prywatne rozmowy 1:1</li><li>Rozbudowane Zdrowie, Szkoła i profile Rodziny</li><li>Jasny / Ciemny motyw i nowy ekran ładowania</li></ul></article>
-
-        <article className="settings-section app-about"><header><span>ℹ️</span><div><strong>O aplikacji</strong><small>Nasza Rodzina</small></div></header><div className="about-version"><img src="/nasza-rodzina-logo.svg" alt="" /><div><strong>Nasza Rodzina v{APP_VERSION}</strong><small>Aktualizacja: {APP_UPDATED}</small></div></div></article>
+          <article className="settings-versa-card settings-about-card">
+            <header><span className="settings-card-icon">ℹ️</span><div><strong>Informacje o aplikacji</strong><small>Nasza Rodzina</small></div></header>
+            <div className="settings-about-row"><img src="/nasza-rodzina-logo.svg" alt=""/><div><strong>Nasza Rodzina</strong><small>Wersja {APP_VERSION} · {APP_UPDATED}</small></div><em>›</em></div>
+          </article>
+        </div>
       </section>
     </div>
   );
