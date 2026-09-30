@@ -4686,6 +4686,7 @@ html[data-theme="dark"] .sidebar-logo-art span { color:#f18be8; }
 .start1310-person-card.busy { background:linear-gradient(145deg,#fff,#fff5f6); }
 .start1310-person-card.break { background:linear-gradient(145deg,#fff,#fff8ea); }
 .start1310-person-card.free { background:linear-gradient(145deg,#fff,#f5fff8); }
+.start1310-person-card.unknown { background:linear-gradient(145deg,#fff,#f4f7fa); }
 .start1310-person-photo {
   grid-area:photo;
   width:64px; height:64px;
@@ -4698,6 +4699,7 @@ html[data-theme="dark"] .sidebar-logo-art span { color:#f18be8; }
 .start1310-person-card.busy .start1310-person-photo { border-color:#ff6f79; }
 .start1310-person-card.break .start1310-person-photo { border-color:#ffbe55; }
 .start1310-person-card.free .start1310-person-photo { border-color:#74da91; }
+.start1310-person-card.unknown .start1310-person-photo { border-color:#aab6c4; }
 .start1310-person-photo img,.mini-person img { width:100%; height:100%; object-fit:cover; }
 .start1310-person-card > div { grid-area:status; min-width:0; }
 .start1310-person-card > div > strong,.start1310-person-card > div > b,.start1310-person-card > div > small { display:block; }
@@ -4712,6 +4714,7 @@ html[data-theme="dark"] .sidebar-logo-art span { color:#f18be8; }
 .status-dot.busy { background:#ff2f45; box-shadow:0 0 0 3px rgba(255,47,69,.1); }
 .status-dot.break { background:#ff9f1c; box-shadow:0 0 0 3px rgba(255,159,28,.1); }
 .status-dot.free { background:#1fc963; box-shadow:0 0 0 3px rgba(31,201,99,.1); }
+.status-dot.unknown { background:#9aa8b8; box-shadow:0 0 0 3px rgba(154,168,184,.12); }
 
 .start1310-widget-grid {
   display:grid;
@@ -5097,3 +5100,141 @@ html[data-theme="dark"] .start1311-urgent-strip > div > button strong { color:#f
 .start1310-widget-grid.is-editing .start1311-widget-shell { touch-action:none; cursor:grab; }
 .start1310-widget-grid.is-editing .start1311-widget-shell:active { cursor:grabbing; }
 .start1310-widget-grid.is-editing .start1311-widget-shell > .start1310-card button { pointer-events:none; }
+
+/* =========================================================
+   START 1.3.12 — PERSONALIZACJA, ROZMIARY, POWIADOMIENIA
+   ========================================================= */
+
+/* Rozmiary kafelków — siatka z bezpiecznym snapowaniem */
+.start1311-widget-shell[data-widget-size="small"] { grid-column: span 3; }
+.start1311-widget-shell[data-widget-size="medium"] { grid-column: span 4; }
+.start1311-widget-shell[data-widget-size="wide"] { grid-column: span 6; }
+.start1311-widget-shell[data-widget-size="large"] { grid-column: span 12; }
+.start1312-resize-handle {
+  position:absolute; z-index:12; right:4px; bottom:4px;
+  width:31px; height:31px; display:none; place-items:center;
+  border:1px solid #d7e2ef; border-radius:11px;
+  background:rgba(255,255,255,.96); color:#6f55d9;
+  font-size:21px; font-weight:900; line-height:1;
+  box-shadow:0 7px 18px rgba(32,55,91,.14);
+  touch-action:none; cursor:nwse-resize;
+}
+.start1310-widget-grid.is-editing .start1312-resize-handle { display:grid; }
+.start1312-size-options { margin-top:3px; padding-top:6px; border-top:1px solid #e9eef5; }
+.start1312-size-options > small { display:block; padding:3px 5px 6px; color:#8190a3; font-size:8px; font-weight:800; }
+.start1312-size-options > div { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+.start1312-size-options button { padding:7px 6px !important; text-align:center !important; }
+.start1312-size-options button.active { background:#eee9ff !important; color:#684bd8 !important; }
+
+/* Plan dnia jest domyślnie krótszy: maksymalnie 4 pozycje z kodu */
+.start1310-day { min-height:0; }
+
+/* Kto kiedy kończy — tylko avatar/imię otwiera profil, reszta Kalendarz */
+.start1310-ends { cursor:pointer; }
+.start1312-end-row {
+  min-height:42px; padding:5px 3px;
+  display:grid; grid-template-columns:minmax(95px,1.25fr) 45px 10px minmax(58px,1fr) 11px;
+  align-items:center; gap:6px;
+  border-bottom:1px solid #edf2f7; color:#234a73; text-align:left;
+}
+.start1312-end-row:last-child { border-bottom:0; }
+.start1312-end-row:hover { background:#f8fbff; border-radius:10px; }
+.start1312-person-link {
+  min-width:0; padding:0; display:grid; grid-template-columns:31px minmax(0,1fr); align-items:center; gap:7px;
+  border:0; background:transparent; color:#234a73; text-align:left;
+}
+.start1312-person-link strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
+.start1312-end-row time { color:#183f70; font-size:11px; font-weight:900; }
+.start1312-end-row em { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#6e849e; font-style:normal; font-size:9px; }
+.start1312-end-row b { color:#6982a1; }
+
+/* Wszyscy wolni — żywe odliczanie */
+.start1312-free-countdown {
+  margin-top:9px; padding:7px 10px; display:block;
+  border-radius:999px; background:rgba(70,190,112,.12); color:#25824b;
+  font-size:11px; line-height:1.2;
+}
+.start1310-free > p { margin-top:9px; }
+.start1310-free > div { margin-top:14px; }
+
+/* Najważniejsze zadania — avatar przypisanej osoby */
+.start1310-tasks > div > button {
+  grid-template-columns:32px minmax(0,1fr) auto;
+}
+.task-person-avatar { width:30px; height:30px; font-size:14px; }
+
+/* Zakupy na Start — pełna lista notatnikowa z kategoriami */
+.start1312-shopping-scroll {
+  max-height:360px; overflow:auto; padding-right:4px;
+  scrollbar-width:thin; scrollbar-color:#cad8e7 transparent;
+}
+.start1312-shopping-group { padding:2px 0 8px; }
+.start1312-shopping-group + .start1312-shopping-group { border-top:1px solid #edf2f7; padding-top:8px; }
+.start1312-shopping-group > header {
+  min-height:28px; padding:2px 3px 5px; display:grid; grid-template-columns:22px minmax(0,1fr) auto; align-items:center; gap:6px;
+}
+.start1312-shopping-group > header strong { color:#173d65; font-size:10px; }
+.start1312-shopping-group > header small {
+  min-width:22px; height:20px; padding:0 6px; display:grid; place-items:center;
+  border-radius:999px; background:#edf4fb; color:#5a7694; font-size:8px; font-weight:900;
+}
+.start1312-shopping-group > div { display:grid; }
+.start1312-shopping-group > div > button {
+  min-height:36px; padding:4px 3px; display:grid; grid-template-columns:24px minmax(0,1fr) auto; align-items:center; gap:7px;
+  border:0; border-bottom:1px dashed #edf1f5; background:transparent; text-align:left;
+}
+.start1312-shopping-group > div > button:last-child { border-bottom:0; }
+.start1312-shop-check {
+  width:22px; height:22px; display:grid; place-items:center;
+  border:2px solid #84a1c4; border-radius:7px; color:white; font-size:12px; font-weight:900;
+}
+.start1312-shopping-group > div > button.done .start1312-shop-check { border-color:#34b86c; background:#34b86c; }
+.start1312-shopping-group > div > button strong { color:#173b64; font-size:10px; }
+.start1312-shopping-group > div > button small { color:#8394a8; font-size:9px; }
+.start1312-shopping-group > div > button.done strong { color:#8c99a8; text-decoration:line-through; }
+.start1312-shopping-group > div > button.done small { color:#a4aeba; }
+
+/* Dzwoneczek — licznik tylko nieprzeczytanych */
+.start1310-notifications > header > div { display:flex; align-items:center; gap:6px; }
+.start1310-notifications > header .mark-all-read {
+  width:auto; height:28px; padding:0 9px; border:0; border-radius:9px;
+  background:#edf5ff; color:#3769a5; font-size:8px; font-weight:850;
+}
+.start1310-notifications > button { position:relative; }
+.start1310-notifications > button.read { opacity:.68; }
+.start1310-notifications > button.unread { background:#f7fbff; }
+.notice-unread-dot {
+  position:absolute; right:8px; top:50%; width:8px; height:8px; margin-top:-4px;
+  border-radius:50%; background:#f0446b; box-shadow:0 0 0 3px rgba(240,68,107,.10);
+}
+
+html[data-theme="dark"] .start1312-resize-handle,
+html[data-theme="dark"] .start1312-shopping-group > div > button,
+html[data-theme="dark"] .start1312-person-link { background:transparent; color:#dce7fa; }
+html[data-theme="dark"] .start1312-end-row:hover { background:#182846; }
+html[data-theme="dark"] .start1312-shopping-group > header strong,
+html[data-theme="dark"] .start1312-shopping-group > div > button strong { color:#e6efff; }
+html[data-theme="dark"] .start1312-size-options { border-color:#2b3e61; }
+
+@media (max-width:1280px) {
+  .start1311-widget-shell[data-widget-size="small"] { grid-column:span 4; }
+  .start1311-widget-shell[data-widget-size="medium"] { grid-column:span 6; }
+  .start1311-widget-shell[data-widget-size="wide"] { grid-column:span 8; }
+  .start1311-widget-shell[data-widget-size="large"] { grid-column:span 12; }
+}
+@media (max-width:1000px) {
+  .start1311-widget-shell[data-widget-size="small"],
+  .start1311-widget-shell[data-widget-size="medium"] { grid-column:span 6; }
+  .start1311-widget-shell[data-widget-size="wide"],
+  .start1311-widget-shell[data-widget-size="large"] { grid-column:span 12; }
+}
+@media (max-width:700px) {
+  .start1311-widget-shell[data-widget-size="small"],
+  .start1311-widget-shell[data-widget-size="medium"],
+  .start1311-widget-shell[data-widget-size="wide"],
+  .start1311-widget-shell[data-widget-size="large"] { grid-column:1 / -1; }
+  .start1312-resize-handle { display:none !important; }
+  .start1312-shopping-scroll { max-height:330px; }
+  .start1312-end-row { grid-template-columns:minmax(105px,1.3fr) 42px 9px minmax(56px,1fr) 9px; }
+  .start1312-free-countdown { font-size:10px; }
+}

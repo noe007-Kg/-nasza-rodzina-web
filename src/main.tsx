@@ -22,7 +22,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { auth, db, storage } from './firebase';
 import './style.css';
 
-const APP_VERSION = '1.3.11';
+const APP_VERSION = '1.3.12';
 const APP_UPDATED = '30.09.2026';
 
 /* =========================================================
@@ -799,6 +799,22 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
       return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string' && defaultWidgetOrder.includes(id)) : [];
     } catch { return []; }
   });
+  type WidgetSize = 'small' | 'medium' | 'wide' | 'large';
+  const defaultWidgetSizes: Record<string, WidgetSize> = { day:'medium', ends:'medium', free:'small', school:'medium', tasks:'medium', shopping:'wide', health:'medium', events:'medium', quick:'medium' };
+  const sizeKey=`nr-start-sizes:${userLayoutId}`;
+  const readNoticeKey=`nr-start-read-notices:${userLayoutId}`;
+  const [widgetSizes, setWidgetSizes] = useState<Record<string, WidgetSize>>(() => {
+    try {
+      const saved=localStorage.getItem(sizeKey); const parsed=saved ? JSON.parse(saved) : {};
+      const next={...defaultWidgetSizes};
+      if(parsed && typeof parsed==='object') for(const id of defaultWidgetOrder){ const value=parsed[id]; if(value==='small'||value==='medium'||value==='wide'||value==='large') next[id]=value; }
+      return next;
+    } catch { return {...defaultWidgetSizes}; }
+  });
+  const [readNoticeIds, setReadNoticeIds] = useState<string[]>(() => {
+    try { const parsed=JSON.parse(localStorage.getItem(readNoticeKey) || '[]'); return Array.isArray(parsed) ? parsed.filter((v):v is string=>typeof v==='string') : []; }
+    catch { return []; }
+  });
   const widgetOrderRef = useRef<string[]>(widgetOrder);
   useEffect(() => { widgetOrderRef.current = widgetOrder; }, [widgetOrder]);
   useEffect(() => {
@@ -809,6 +825,7 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
     id:string; pointerId:number; startX:number; startY:number; offsetX:number; offsetY:number;
     timer:number; active:boolean; source:HTMLElement; ghost:HTMLElement | null;
   } | null>(null);
+  const resizeRef = useRef<{ id:string; pointerId:number; startX:number; startY:number; startIndex:number } | null>(null);
 
   useEffect(() => onSnapshot(collection(db, 'members'), (snap) => {
     const next = snap.docs.map((d): FamilyMemberDoc => {
@@ -951,6 +968,7 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
 
   function liveStatus(personName:string) {
     const rows=planForPerson(personName).filter((r)=>!r.allDay);
+    if (!rows.length) return { tone:'unknown', label:'Brak planu', detail:'Brak danych na dziś', until:'', next:'Brak danych' };
     const activeRows=rows.filter((r)=>r.start<=now && r.end>now).sort((a,b)=>b.priority-a.priority || b.start.getTime()-a.start.getTime());
     const active=activeRows[0];
     const next=rows.filter((r)=>r.start>now).sort((a,b)=>a.start.getTime()-b.start.getTime() || b.priority-a.priority)[0];
@@ -965,22 +983,32 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
     return { tone:'free', label:personName==='Layla' ? 'W domu' : 'Wolny', detail:'Brak planów', until:'', next:'Brak kolejnych zajęć' };
   }
 
-  const visibleFamilyMembers=(isParent(member) || access.viewFamilySchedule)
+  const canSeeFamilyContext=isParent(member) || access.viewFamilySchedule;
+  const visibleFamilyMembers=canSeeFamilyContext
     ? members.slice(0,5)
     : members.filter((m)=>m.name===member?.name).slice(0,1);
+  const personalMembers=members.filter((m)=>m.name===member?.name).slice(0,1);
   const familyStatus=visibleFamilyMembers.map((m)=>({member:m,status:liveStatus(m.name)}));
-  const allFreeAt=useMemo(()=>{
-    const ends:Date[]=[];
-    visibleFamilyMembers.forEach((m)=>planForPerson(m.name).forEach((r)=>{ if(!r.allDay && r.end>now) ends.push(r.end); }));
-    if(!ends.length) return 'Teraz';
-    const latest=ends.reduce((max,d)=>d>max ? d : max,ends[0]);
-    return latest<=now ? 'Teraz' : formatTime(latest);
+  const allFreeInfo=useMemo(()=>{
+    const incomplete=visibleFamilyMembers.some((m)=>planForPerson(m.name).filter((r)=>!r.allDay).length===0);
+    if(incomplete) return { time:'—', countdown:'Brak pełnego planu', latestPerson:'' };
+    let latest:Date | null=null; let latestPerson='';
+    visibleFamilyMembers.forEach((m)=>planForPerson(m.name).forEach((r)=>{
+      if(r.allDay || r.end<=now) return;
+      if(!latest || r.end>latest){ latest=r.end; latestPerson=m.name; }
+    }));
+    if(!latest) return { time:'Teraz', countdown:'Wszyscy wolni teraz', latestPerson:'' };
+    const total=Math.max(0,Math.ceil((latest.getTime()-now.getTime())/60000));
+    const hours=Math.floor(total/60); const minutes=total%60;
+    const countdown=hours>0 ? `Wszyscy wolni za ${hours} godz. ${minutes} min` : `Wszyscy wolni za ${minutes} min`;
+    return { time:formatTime(latest), countdown, latestPerson };
   },[todayOccurrences,todaySchoolItems,todayHealthVisits,visibleFamilyMembers.map((m)=>m.id).join('|'),todayKey,clockTick]);
 
   const dayPlan=useMemo(()=>{
     const rows:StartPlanRow[]=[];
+    const sourceMembers=personalMembers.length ? personalMembers : visibleFamilyMembers.slice(0,1);
     const familySeen=new Set<string>();
-    visibleFamilyMembers.forEach((m)=>{
+    sourceMembers.forEach((m)=>{
       planForPerson(m.name).forEach((row)=>{
         const familyOccurrence=row.source==='calendar' && todayOccurrences.find((o)=>o.key===row.key)?.source.person==='family';
         if(familyOccurrence){
@@ -990,21 +1018,24 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
         } else rows.push(row);
       });
     });
-    return rows.sort((a,b)=>a.allDay===b.allDay ? (a.start.getTime()-b.start.getTime() || b.priority-a.priority) : (a.allDay ? -1 : 1)).slice(0,7);
-  },[todayOccurrences,todaySchoolItems,todayHealthVisits,visibleFamilyMembers.map((m)=>m.id).join('|'),todayKey,clockTick]);
+    return rows.sort((a,b)=>a.allDay===b.allDay ? (a.start.getTime()-b.start.getTime() || b.priority-a.priority) : (a.allDay ? -1 : 1)).slice(0,4);
+  },[todayOccurrences,todaySchoolItems,todayHealthVisits,personalMembers.map((m)=>m.id).join('|'),visibleFamilyMembers.map((m)=>m.id).join('|'),todayKey,clockTick]);
 
-  const priorityTasks=useMemo(()=>tasks.filter((t)=>!t.done && (isParent(member) || access.viewFamilyTasks || t.person===member?.name || t.person==='family')).sort((a,b)=>(({high:0,normal:1,low:2}[a.priority]-{high:0,normal:1,low:2}[b.priority]) || (a.dueDate || '9999').localeCompare(b.dueDate || '9999'))).slice(0,4),[tasks,member?.name,access.viewFamilyTasks]);
-  const openShopping=shopping.filter((i)=>!i.done).slice(0,5);
-  const upcomingEvents=useMemo(()=>events.flatMap((e)=>generateOccurrences(e,startOfDay(now),endOfDay(addDays(now,45)))).filter((o)=>o.endDate>=now && (isParent(member) || access.viewFamilySchedule || o.source.person===member?.name || o.source.person==='family')).sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,4),[events,todayKey,clockTick,member?.name,access.viewFamilySchedule]);
-  const visibleHealthRecords=useMemo(()=>healthRecords.filter((r)=>isParent(member) || access.viewFamilyHealth || r.person===member?.name || r.person==='family'),[healthRecords,member?.name,access.viewFamilyHealth]);
+  const priorityTasks=useMemo(()=>tasks.filter((t)=>!t.done && (t.person===member?.name || t.person==='family')).sort((a,b)=>(({high:0,normal:1,low:2}[a.priority]-{high:0,normal:1,low:2}[b.priority]) || (a.dueDate || '9999').localeCompare(b.dueDate || '9999'))).slice(0,4),[tasks,member?.name]);
+  const upcomingEvents=useMemo(()=>events.flatMap((e)=>generateOccurrences(e,startOfDay(now),endOfDay(addDays(now,45)))).filter((o)=>o.endDate>=now && (o.source.person===member?.name || o.source.person==='family')).sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,4),[events,todayKey,clockTick,member?.name]);
+  const visibleHealthRecords=useMemo(()=>healthRecords.filter((r)=>r.person===member?.name || r.person==='family'),[healthRecords,member?.name]);
   const upcomingVisits=useMemo(()=>visibleHealthRecords.filter((r)=>r.type==='visit' && r.status!=='cancelled' && r.date>=todayKey).sort((a,b)=>(`${a.date} ${a.time}`).localeCompare(`${b.date} ${b.time}`)).slice(0,2),[visibleHealthRecords,todayKey]);
   const dueMedicineDoses=useMemo(()=>visibleHealthRecords.filter((r)=>r.type==='medicine').flatMap((r)=>{
     const times=r.medicineTimes.length ? r.medicineTimes : (r.medicineTime ? [r.medicineTime] : []);
     return times.filter((time)=>parseLocalDate(todayKey,time).getTime()<=now.getTime()).filter((time)=>!healthIntakes.some((i)=>i.recordId===r.id && i.date===todayKey && i.time===time)).map((time)=>({record:r,time}));
   }),[visibleHealthRecords,healthIntakes,todayKey,clockTick]);
-  const visibleSchoolRecords=useMemo(()=>schoolRecords.filter((r)=>isParent(member) || access.viewFamilySchool || r.person===member?.name),[schoolRecords,member?.name,access.viewFamilySchool]);
+  const visibleSchoolRecords=useMemo(()=>schoolRecords.filter((r)=>r.person===member?.name),[schoolRecords,member?.name]);
   const schoolTests=useMemo(()=>visibleSchoolRecords.filter((r)=>r.type==='test' && r.date>=todayKey).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,2),[visibleSchoolRecords,todayKey]);
   const schoolHomework=useMemo(()=>visibleSchoolRecords.filter((r)=>r.type==='homework' && (!r.date || r.date>=todayKey)).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,2),[visibleSchoolRecords,todayKey]);
+  const shoppingGroups=useMemo(()=>{
+    const order=Object.keys(SHOPPING_META) as ShoppingCategory[];
+    return order.map((category)=>({ category, items:shopping.filter((item)=>item.category===category).sort((a,b)=>Number(a.done)-Number(b.done) || (b.createdAt?.getTime()||0)-(a.createdAt?.getTime()||0)) })).filter((group)=>group.items.length>0);
+  },[shopping]);
   const todayLabel=capitalize(now.toLocaleDateString('pl-PL',{weekday:'long',day:'numeric',month:'long',year:'numeric'}));
 
   type StartNotice={id:string;icon:string;title:string;meta:string;page:Page;level:'critical'|'important'|'info';score:number};
@@ -1015,7 +1046,7 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
     healthAlerts.filter((a)=>a.status==='open' && canSeeHealth(a.person)).forEach((a)=>list.push({id:`h-${a.id}`,icon:'🚨',title:`Brak potwierdzenia leku: ${a.title}`,meta:`${personLabel(a.person)} · ${a.time || 'do potwierdzenia'}`,page:'Zdrowie',level:'critical',score:100}));
     dueMedicineDoses.forEach(({record,time})=>{
       const alreadyAlerted=healthAlerts.some((a)=>a.status==='open' && a.recordId===record.id && a.date===todayKey && a.time===time);
-      if(!alreadyAlerted) list.push({id:`dose-${record.id}-${time}`,icon:'💊',title:`Lek do przyjęcia: ${record.title}`,meta:`${personLabel(record.person)} · plan ${time}${record.dose?` · ${record.dose}`:''}`,page:'Zdrowie',level:'important',score:84});
+      if(!alreadyAlerted) list.push({id:`dose-${record.id}-${todayKey}-${time}`,icon:'💊',title:`Lek do przyjęcia: ${record.title}`,meta:`${personLabel(record.person)} · plan ${time}${record.dose?` · ${record.dose}`:''}`,page:'Zdrowie',level:'important',score:84});
     });
     upcomingVisits.filter((r)=>r.date===todayKey && !!r.time).forEach((r)=>{
       const start=parseLocalDate(r.date,r.time); const minutes=(start.getTime()-now.getTime())/60000;
@@ -1042,6 +1073,19 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
     const seen=new Set<string>();
     return list.sort((a,b)=>b.score-a.score).filter((item)=>{const key=`${normalizeProduct(item.title.replace(/^brak potwierdzenia leku:\s*/i,''))}|${normalizeProduct(item.meta)}`; if(seen.has(key)) return false; seen.add(key); return true;}).slice(0,8);
   },[urgentItems,tasks,schoolTests,upcomingEvents,upcomingVisits,todayKey,clockTick,member?.name,access.viewFamilyTasks]);
+
+  const unreadNotificationCount=notificationItems.filter((item)=>!readNoticeIds.includes(item.id)).length;
+  function persistReadNotices(next:string[]) {
+    const unique=Array.from(new Set(next)).slice(-250);
+    setReadNoticeIds(unique);
+    try { localStorage.setItem(readNoticeKey,JSON.stringify(unique)); } catch { /* ignore */ }
+  }
+  function markNoticeRead(id:string) { if(!readNoticeIds.includes(id)) persistReadNotices([...readNoticeIds,id]); }
+  function markAllNoticesRead() { persistReadNotices([...readNoticeIds,...notificationItems.map((item)=>item.id)]); }
+
+  async function toggleShoppingFromStart(item:ShoppingItem) {
+    await updateDoc(doc(db,'shoppingItems',item.id),{done:!item.done,updatedAt:Timestamp.now()});
+  }
 
   function openFamily(person?:string) {
     try { sessionStorage.setItem('nr-family-focus', person && isPersonKey(person) ? person : 'family'); } catch { /* ignore */ }
@@ -1085,10 +1129,45 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
     setWidgetMenu(null);
   }
 
+  function persistWidgetSizes(next:Record<string,WidgetSize>) {
+    setWidgetSizes(next);
+    try { localStorage.setItem(sizeKey,JSON.stringify(next)); } catch { /* ignore */ }
+  }
+  function setWidgetSize(id:string,size:WidgetSize) { persistWidgetSizes({...widgetSizes,[id]:size}); setWidgetMenu(null); }
+
   function resetDashboardLayout() {
     persistOrder([...defaultWidgetOrder]);
     persistHidden([]);
+    persistWidgetSizes({...defaultWidgetSizes});
     setWidgetMenu(null);
+  }
+
+  function beginResize(id:string,e:React.PointerEvent<HTMLButtonElement>) {
+    e.preventDefault(); e.stopPropagation();
+    const sizes:WidgetSize[]=['small','medium','wide','large'];
+    const current=widgetSizes[id] || defaultWidgetSizes[id] || 'medium';
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    resizeRef.current={id,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,startIndex:Math.max(0,sizes.indexOf(current))};
+  }
+  function moveResize(e:React.PointerEvent<HTMLButtonElement>) {
+    const r=resizeRef.current; if(!r || r.pointerId!==e.pointerId) return;
+    e.preventDefault(); e.stopPropagation();
+    const sizes:WidgetSize[]=['small','medium','wide','large'];
+    const delta=(e.clientX-r.startX)+((e.clientY-r.startY)*.35);
+    const step=Math.round(delta/90);
+    const index=Math.max(0,Math.min(sizes.length-1,r.startIndex+step));
+    const size=sizes[index];
+    setWidgetSizes((current)=>{
+      if(current[r.id]===size) return current;
+      const next={...current,[r.id]:size};
+      try { localStorage.setItem(sizeKey,JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }
+  function endResize(e?:React.PointerEvent<HTMLButtonElement>) {
+    if(!resizeRef.current) return;
+    e?.preventDefault(); e?.stopPropagation();
+    resizeRef.current=null;
   }
 
   function beginTilePress(id:string,e:React.PointerEvent<HTMLElement>) {
@@ -1162,19 +1241,18 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
     const last=rows[rows.length-1];
     return { active, last };
   };
-  const dashboardStudents: Array<'Paweł'|'Nikodem'> = (isParent(member) || access.viewFamilySchool)
-    ? ['Nikodem','Paweł']
-    : (member?.name==='Paweł' || member?.name==='Nikodem' ? [member.name] : []);
+  const dashboardStudents: Array<'Paweł'|'Nikodem'> = member?.name==='Paweł' || member?.name==='Nikodem' ? [member.name] : [];
   const visibleHealthAlerts=healthAlerts.filter((a)=>a.status==='open' && (isParent(member) || access.viewFamilyHealth || a.person===member?.name));
+  const permissionHiddenWidgets=canSeeFamilyContext ? [] : ['ends','free'];
   const widgetLabels:Record<string,string>={day:'Plan dnia',ends:'Kto kiedy kończy',free:'Wszyscy wolni od',school:'Szkoła',tasks:'Zadania',shopping:'Zakupy',health:'Zdrowie',events:'Wydarzenia',quick:'Szybkie dodawanie'};
 
   const widgets:Record<string,React.ReactNode>={
     day:<article className="start1310-card start1310-day"><header><div><span>📅</span><strong>Plan dnia – dziś</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz cały dzień ›</button></header><div className="start1310-day-list">{dayPlan.length ? dayPlan.map((item)=><button key={`${item.person}-${item.key}`} onClick={()=>goTo(item.source==='school' ? 'Szkoła' : 'Kalendarz')}><i style={{background:personColor(item.person)}}/><span className="mini-person">{members.find((m)=>m.name===item.person)?.photoURL ? <img src={members.find((m)=>m.name===item.person)?.photoURL} alt=""/> : memberEmoji(item.person)}</span><time>{item.allDay ? 'Cały dzień' : `${formatTime(item.start)} – ${formatTime(item.end)}`}</time><strong>{personLabel(item.person)}</strong><span>{item.icon} {item.title}</span><em>›</em></button>) : <p className="start1310-empty">Brak wpisów na dziś.</p>}</div></article>,
-    ends:<article className="start1310-card start1310-ends"><header><div><span>🕒</span><strong>Kto kiedy kończy?</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz więcej ›</button></header><div>{visibleFamilyMembers.map((m)=>{const s=liveStatus(m.name);const last=lastEndFor(m.name);return <button key={m.id} onClick={()=>openFamily(m.name)}><span className="mini-person">{m.photoURL ? <img src={m.photoURL} alt=""/> : memberEmoji(m.name)}</span><strong>{m.name}</strong><time>{last ? formatTime(last) : '—'}</time><small className={`status-dot ${s.tone}`}/><em>{s.label}</em><b>›</b></button>;})}</div></article>,
-    free:<article className="start1310-card start1310-free"><header><span>👥</span><strong>Wszyscy wolni od</strong></header><b>{allFreeAt}</b><p>Najbliższy wspólny czas dla całej rodziny</p><div aria-hidden="true">⌂ ♡</div></article>,
+    ends:<article className="start1310-card start1310-ends" onClick={()=>goTo('Kalendarz')}><header><div><span>🕒</span><strong>Kto kiedy kończy?</strong></div><button onClick={(e)=>{e.stopPropagation();goTo('Kalendarz');}}>Zobacz więcej ›</button></header><div>{visibleFamilyMembers.map((m)=>{const s=liveStatus(m.name);const last=lastEndFor(m.name);return <div key={m.id} className="start1312-end-row" role="button" tabIndex={0} onClick={()=>goTo('Kalendarz')} onKeyDown={(e)=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();goTo('Kalendarz');}}}><button className="start1312-person-link" onClick={(e)=>{e.stopPropagation();openFamily(m.name);}}><span className="mini-person">{m.photoURL ? <img src={m.photoURL} alt=""/> : memberEmoji(m.name)}</span><strong>{m.name}</strong></button><time>{last ? formatTime(last) : '—'}</time><small className={`status-dot ${s.tone}`}/><em>{s.label}</em><b>›</b></div>;})}</div></article>,
+    free:<article className="start1310-card start1310-free"><header><span>👥</span><strong>Wszyscy wolni od</strong></header><b>{allFreeInfo.time}</b><strong className="start1312-free-countdown">{allFreeInfo.countdown}</strong><p>{allFreeInfo.latestPerson ? `Najpóźniej kończy ${allFreeInfo.latestPerson}` : 'Na podstawie dzisiejszego planu'}</p><div aria-hidden="true">⌂ ♡</div></article>,
     school:<article className="start1310-card start1310-school"><header><div><span>🎓</span><strong>Szkoła</strong></div><button onClick={()=>goTo('Szkoła')}>Zobacz więcej ›</button></header>{dashboardStudents.map((person)=>{const info=studentSummary(person);return <button className="school-person-summary" key={person} onClick={()=>goTo('Szkoła')}><span className="mini-person">{members.find((m)=>m.name===person)?.photoURL ? <img src={members.find((m)=>m.name===person)?.photoURL} alt=""/> : memberEmoji(person)}</span><span><strong>{person}</strong>{info.active ? <><b>Trwa lekcja: {info.active.title}</b><small>{formatTime(info.active.start)} – {formatTime(info.active.end)}{info.active.place ? ` · ${info.active.place}` : ''}</small></> : <><b>{info.last ? `Koniec lekcji: ${formatTime(info.last.end)}` : 'Brak lekcji dziś'}</b></>}</span></button>;})}{schoolTests[0] && <button className="school-next" onClick={()=>goTo('Szkoła')}><span>📝</span><div><strong>Najbliżej: {formatShortDate(schoolTests[0].date)} · Sprawdzian</strong><small>{schoolTests[0].subject || schoolTests[0].title}</small></div><em>›</em></button>}{!schoolTests[0] && schoolHomework[0] && <button className="school-next" onClick={()=>goTo('Szkoła')}><span>📚</span><div><strong>Zadanie domowe</strong><small>{schoolHomework[0].subject || schoolHomework[0].title}</small></div><em>›</em></button>}</article>,
-    tasks:<article className="start1310-card start1310-tasks"><header><div><span>✅</span><strong>Zadania – najważniejsze</strong></div><button onClick={()=>goTo('Zadania')}>Zobacz wszystkie ›</button></header><div>{priorityTasks.length ? priorityTasks.map((t)=><button key={t.id} onClick={()=>goTo('Zadania')}><span className="fake-check"/><span><strong>{t.title}</strong><small>{personLabel(t.person)}{t.points ? ` · +${t.points} pkt` : ''}</small></span><em>{t.dueDate===todayKey ? 'Dziś' : t.dueDate ? formatShortDate(t.dueDate) : 'Bez terminu'}</em></button>) : <p className="start1310-empty">Brak pilnych zadań ✨</p>}</div></article>,
-    shopping:<article className="start1310-card start1310-shopping"><header><div><span>🛒</span><strong>Zakupy</strong></div><button onClick={()=>goTo('Zakupy')}>Zobacz wszystkie ›</button></header><div>{openShopping.length ? openShopping.map((item)=><button key={item.id} onClick={()=>goTo('Zakupy')}><span className="fake-check"/><span>{SHOPPING_META[item.category].icon}</span><strong>{item.title}</strong><small>{item.quantity ? `${item.quantity} ${item.unit}` : ''}</small></button>) : <p className="start1310-empty">Lista zakupów jest pusta.</p>}</div>{shopping.filter((i)=>!i.done).length>5 && <p className="start1310-more">+ {shopping.filter((i)=>!i.done).length-5} więcej produktów</p>}</article>,
+    tasks:<article className="start1310-card start1310-tasks"><header><div><span>✅</span><strong>Zadania – najważniejsze</strong></div><button onClick={()=>goTo('Zadania')}>Zobacz wszystkie ›</button></header><div>{priorityTasks.length ? priorityTasks.map((t)=>{const taskMember=members.find((m)=>m.name===t.person);return <button key={t.id} onClick={()=>goTo('Zadania')}><span className="mini-person task-person-avatar">{taskMember?.photoURL ? <img src={taskMember.photoURL} alt=""/> : memberEmoji(t.person)}</span><span><strong>{t.title}</strong><small>{personLabel(t.person)}{t.points ? ` · +${t.points} pkt` : ''}</small></span><em>{t.dueDate===todayKey ? 'Dziś' : t.dueDate ? formatShortDate(t.dueDate) : 'Bez terminu'}</em></button>;}) : <p className="start1310-empty">Brak pilnych zadań ✨</p>}</div></article>,
+    shopping:<article className="start1310-card start1310-shopping start1312-shopping"><header><div><span>🛒</span><strong>Zakupy</strong></div><button onClick={()=>goTo('Zakupy')}>Zobacz wszystkie ›</button></header><div className="start1312-shopping-scroll">{shoppingGroups.length ? shoppingGroups.map((group)=><section className="start1312-shopping-group" key={group.category}><header><span>{SHOPPING_META[group.category].icon}</span><strong>{SHOPPING_META[group.category].label}</strong><small>{group.items.filter((item)=>!item.done).length}</small></header><div>{group.items.map((item)=><button key={item.id} className={item.done?'done':''} onClick={()=>void toggleShoppingFromStart(item)}><span className="start1312-shop-check">{item.done?'✓':''}</span><strong>{item.title}</strong><small>{item.quantity ? `${item.quantity} ${item.unit}` : ''}</small></button>)}</div></section>) : <p className="start1310-empty">Lista zakupów jest pusta.</p>}</div></article>,
     health:<article className="start1310-card start1310-health"><header><div><span>♡</span><strong>Zdrowie</strong></div><button onClick={()=>goTo('Zdrowie')}>Zobacz więcej ›</button></header><div>{upcomingVisits.length ? upcomingVisits.map((r)=><button key={r.id} onClick={()=>goTo('Zdrowie')}><span className="mini-person">{members.find((m)=>m.name===r.person)?.photoURL ? <img src={members.find((m)=>m.name===r.person)?.photoURL} alt=""/> : memberEmoji(r.person)}</span><span>🩺</span><div><strong>{personLabel(r.person)} · {r.specialty || r.title}</strong><small>{r.date===todayKey ? 'Dziś' : formatShortDate(r.date)}{r.time ? `, ${r.time}` : ''}</small></div><em>›</em></button>) : <p className="start1310-empty">Brak zaplanowanych wizyt.</p>}</div><div className={`start1310-med-status ${dueMedicineDoses.length || visibleHealthAlerts.length ? 'alert' : 'ok'}`}>{dueMedicineDoses.length || visibleHealthAlerts.length ? `🔔 ${dueMedicineDoses.length || visibleHealthAlerts.length} lek(i) wymagają uwagi` : '✓ Brak leków do podania dziś'}</div></article>,
     events:<article className="start1310-card start1310-events"><header><div><span>📅</span><strong>Nadchodzące wydarzenia</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz więcej ›</button></header><div>{upcomingEvents.length ? upcomingEvents.map((o)=><button key={o.key} onClick={()=>goTo('Kalendarz')}><span className="date-box"><b>{o.date.getDate()}</b><small>{o.date.toLocaleDateString('pl-PL',{month:'short'}).replace('.','').toUpperCase()}</small></span><div><strong>{o.source.title}{o.source.person!=='family' ? ` – ${personLabel(o.source.person)}` : ''}</strong><small>{o.source.allDay ? 'Cały dzień' : `${formatTime(o.date)} – ${formatTime(o.endDate)}`}</small></div></button>) : <p className="start1310-empty">Brak nadchodzących wydarzeń.</p>}</div></article>,
     quick:<article className="start1310-card start1310-quick"><header><div><span>⚡</span><strong>Szybkie dodawanie</strong></div></header><div><button onClick={()=>goTo('Kalendarz')}>📅<span>Dodaj wydarzenie</span></button><button onClick={()=>goTo('Zadania')}>✅<span>Dodaj zadanie</span></button><button onClick={()=>goTo('Zakupy')}>🛒<span>Dodaj zakup</span></button><button onClick={()=>goTo('Zdrowie')}>➕<span>Dodaj wizytę</span></button></div></article>,
@@ -1186,7 +1264,7 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
       <div className="start1310-header-right">
         <div className="start1310-weather"><span>{weather?.icon || '🌤️'}</span><div><small>Kołobrzeg</small><strong>{weather ? `${weather.temp}°C` : '—°C'}</strong></div>{weather && <p><b>{weather.label}</b><span>↑ {weather.max}° ↓ {weather.min}°</span></p>}</div>
         <button className="start1310-icon-btn" title="Szukaj" type="button">⌕</button>
-        <div className="start1310-notification-wrap"><button className="start1310-icon-btn" type="button" title="Powiadomienia" onClick={()=>setNotificationsOpen((v)=>!v)}>🔔{notificationItems.length>0 && <i>{notificationItems.length}</i>}</button>{notificationsOpen && <aside className="start1310-notifications"><header><strong>Powiadomienia</strong><button onClick={()=>setNotificationsOpen(false)}>✕</button></header>{notificationItems.length ? notificationItems.map((n)=><button key={n.id} onClick={()=>{setNotificationsOpen(false);goTo(n.page);}}><span>{n.icon}</span><div><strong>{n.title}</strong><small>{n.meta}</small></div></button>) : <p>Wszystko załatwione ✓</p>}<footer><button onClick={()=>{try{sessionStorage.setItem('nr-settings-focus','notifications');}catch{} setNotificationsOpen(false);goTo('Ustawienia');}}>Ustawienia powiadomień</button><button title="Wycisz na godzinę">🔕 Wycisz</button></footer></aside>}</div>
+        <div className="start1310-notification-wrap"><button className="start1310-icon-btn" type="button" title="Powiadomienia" onClick={()=>setNotificationsOpen((v)=>!v)}>🔔{unreadNotificationCount>0 && <i>{unreadNotificationCount}</i>}</button>{notificationsOpen && <aside className="start1310-notifications"><header><strong>Powiadomienia</strong><div>{notificationItems.length>0 && <button className="mark-all-read" onClick={markAllNoticesRead}>Przeczytane</button>}<button onClick={()=>setNotificationsOpen(false)}>✕</button></div></header>{notificationItems.length ? notificationItems.map((n)=>{const read=readNoticeIds.includes(n.id);return <button key={n.id} className={read?'read':'unread'} onClick={()=>{markNoticeRead(n.id);setNotificationsOpen(false);goTo(n.page);}}><span>{n.icon}</span><div><strong>{n.title}</strong><small>{n.meta}</small></div>{!read && <i className="notice-unread-dot"/>}</button>;}) : <p>Wszystko załatwione ✓</p>}<footer><button onClick={()=>{try{sessionStorage.setItem('nr-settings-focus','notifications');}catch{} setNotificationsOpen(false);goTo('Ustawienia');}}>Ustawienia powiadomień</button><button title="Wycisz na godzinę">🔕 Wycisz</button></footer></aside>}</div>
         <button className="start1310-user" type="button" onClick={()=>openFamily(name)}>{member?.photoURL ? <img src={member.photoURL} alt=""/> : memberEmoji(name)}</button>
       </div>
     </header>
@@ -1207,13 +1285,14 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
     </section>
 
     <section className={`start1310-widget-grid ${editMode?'is-editing':''}`}>
-      {widgetOrder.filter((id)=>!hiddenWidgets.includes(id)).map((id)=><div key={id} className={`start1311-widget-shell widget-${id}`} {...tileProps(id)}>
+      {widgetOrder.filter((id)=>!hiddenWidgets.includes(id) && !permissionHiddenWidgets.includes(id)).map((id)=><div key={id} className={`start1311-widget-shell widget-${id}`} data-widget-size={widgetSizes[id] || defaultWidgetSizes[id] || 'medium'} {...tileProps(id)}>
         {editMode && <button className="start1311-widget-menu-button" type="button" aria-label={`Opcje: ${widgetLabels[id] || id}`} onPointerDown={(e)=>e.stopPropagation()} onClick={(e)=>{e.stopPropagation();setWidgetMenu((current)=>current===id?null:id);}}>⋮</button>}
-        {editMode && widgetMenu===id && <aside className="start1311-widget-menu" onPointerDown={(e)=>e.stopPropagation()}><button onClick={()=>hideWidget(id)}>👁️ Ukryj z pulpitu</button><button onClick={()=>restoreWidgetPosition(id)}>↺ Przywróć pozycję</button></aside>}
+        {editMode && widgetMenu===id && <aside className="start1311-widget-menu" onPointerDown={(e)=>e.stopPropagation()}><button onClick={()=>hideWidget(id)}>👁️ Ukryj z pulpitu</button><button onClick={()=>restoreWidgetPosition(id)}>↺ Przywróć pozycję</button><div className="start1312-size-options"><small>Rozmiar kafelka</small><div>{(['small','medium','wide','large'] as WidgetSize[]).map((size)=><button key={size} className={(widgetSizes[id]||defaultWidgetSizes[id])===size?'active':''} onClick={()=>setWidgetSize(id,size)}>{size==='small'?'Mały':size==='medium'?'Średni':size==='wide'?'Szeroki':'Duży'}</button>)}</div></div></aside>}
         {widgets[id]}
+        {editMode && <button className="start1312-resize-handle" type="button" aria-label="Zmień rozmiar kafelka" onPointerDown={(e)=>beginResize(id,e)} onPointerMove={moveResize} onPointerUp={endResize} onPointerCancel={endResize}>⌟</button>}
       </div>)}
     </section>
-    <div className="start1310-layout-tip">Przytrzymaj kafelek — będzie poruszał się razem z palcem. W trybie edycji użyj ⋮, aby go ukryć.</div>
+    <div className="start1310-layout-tip">Przytrzymaj kafelek, aby go przesunąć. W trybie edycji użyj ⋮ lub uchwytu w prawym dolnym rogu, aby zmienić jego rozmiar.</div>
   </div>;
 }
 
