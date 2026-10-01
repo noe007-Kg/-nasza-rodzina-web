@@ -1,0 +1,5 @@
+[
+  { "person": "Nikodem", "type": "lesson", "title": "Matematyka", "subject": "Matematyka", "date": "", "time": "08:00", "endTime": "08:45", "weekday": 1, "note": "Sala 12" },
+  { "person": "Paweł", "type": "homework", "title": "Zadania 1-5", "subject": "Matematyka", "date": "2026-10-02", "time": "", "endTime": "", "weekday": 0, "note": "Podręcznik strona 32" },
+  { "person": "Nikodem", "type": "activity", "title": "Piłka nożna", "subject": "", "date": "2026-10-03", "time": "17:00", "endTime": "18:00", "weekday": 0, "note": "Strój sportowy" }
+]
