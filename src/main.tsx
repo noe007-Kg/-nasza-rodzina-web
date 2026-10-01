@@ -4,6 +4,7 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut,
+  sendPasswordResetEmail,
 } from 'firebase/auth';
 import type { User } from 'firebase/auth';
 import {
@@ -13,36 +14,42 @@ import {
   doc,
   getDoc,
   getDocs,
-  onSnapshot,
+  query,
+  where,
+  runTransaction,
+  writeBatch,
   setDoc,
   Timestamp,
   updateDoc,
 } from 'firebase/firestore';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref as storageRef, uploadBytes, getDownloadURL, getBlob, deleteObject } from 'firebase/storage';
 import { auth, db, storage } from './firebase';
 import './style.css';
+import './responsive.css';
+import './improvements.css';
+import './navigation.css';
+import './brand-theme.css';
+import { Feedback, ErrorBoundary, notify, errorMessage, onSnapshot } from './feedback';
+import SchoolModule from './SchoolModule';
+import { registerPwa } from './pwa';
+import { startOfDay, endOfDay, startOfWeek, addDays, addMonths, addYears, sameDay, formatDateInput, formatTimeInput, parseLocalDate, isRepeatType, repeatLabel, occurrenceAt, generateOccurrences } from './calendar-utils';
 
-const APP_VERSION = '1.3.13';
-const APP_UPDATED = '30.09.2026';
+const APP_VERSION = '1.4.2';
+const APP_UPDATED = '01.10.2026';
 
 /* =========================================================
    TYPES
    ========================================================= */
 
-type MemberPermissions = {
-  viewFamilySchedule: boolean;
-  viewFamilyTasks: boolean;
-  viewFamilySchool: boolean;
-  viewFamilyHealth: boolean;
-};
-
 type Member = {
+  personKey?: string;
+  birthDate?: string;
+  adult?: boolean;
   name?: string;
   role?: string;
   photoURL?: string;
   active?: boolean;
   canLogin?: boolean;
-  permissions?: Partial<MemberPermissions>;
 };
 
 type Page =
@@ -194,42 +201,17 @@ type HealthRecord = {
   nextControl: string;
   callReminderDate: string;
   documentURL: string;
+  documentPath: string;
   privateToParents: boolean;
-  sharedWithPerson: boolean;
-  blocksSchoolDay: boolean;
   dose: string;
   medicineTime: string;
-  medicineTimes: string[];
-  escalationMinutes: number;
   confirmedDate: string;
   createdAt?: Date;
 };
 
-type HealthForm = Omit<HealthRecord, 'id' | 'createdAt' | 'confirmedDate' | 'documentURL'> & {
+type HealthForm = Omit<HealthRecord, 'id' | 'createdAt' | 'confirmedDate' | 'documentURL' | 'documentPath'> & {
   addToCalendar: boolean;
   file: File | null;
-};
-
-type MedicationIntake = {
-  id: string;
-  recordId: string;
-  person: PersonKey;
-  date: string;
-  time: string;
-  confirmedBy: string;
-  confirmedAt?: Date;
-};
-
-type HealthAlert = {
-  id: string;
-  recordId: string;
-  person: PersonKey;
-  date: string;
-  time: string;
-  title: string;
-  dose: string;
-  status: 'open' | 'acknowledged' | 'resolved';
-  createdAt?: Date;
 };
 
 type MedicalContact = {
@@ -243,7 +225,7 @@ type MedicalContact = {
   note: string;
 };
 
-type SchoolType = 'lesson' | 'homework' | 'test' | 'grade' | 'message' | 'activity' | 'attendance';
+type SchoolType = 'lesson' | 'homework' | 'test' | 'grade' | 'message' | 'activity';
 type SchoolRecord = {
   id: string;
   title: string;
@@ -262,9 +244,6 @@ type SchoolForm = Omit<SchoolRecord, 'id' | 'createdAt'> & {
   addToCalendar: boolean;
 };
 
-type SchoolStudentFilter = 'Paweł' | 'Nikodem' | 'all';
-type SchoolTab = 'summary' | 'plan' | 'homework' | 'tests' | 'grades' | 'attendance' | 'messages';
-
 type FamilyMemberDoc = {
   id: string;
   name: string;
@@ -272,7 +251,6 @@ type FamilyMemberDoc = {
   photoURL?: string;
   active?: boolean;
   birthDate?: string;
-  permissions?: Partial<MemberPermissions>;
 };
 
 /* =========================================================
@@ -281,40 +259,18 @@ type FamilyMemberDoc = {
 
 const PEOPLE: PersonKey[] = ['family', 'Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla'];
 const FAMILY_ORDER = ['Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla'];
-const FAMILY_BIRTHDAYS: Partial<Record<PersonKey, string>> = {
-  Dominika: '1990-12-27',
-  Paweł: '2008-01-28',
-  Nikodem: '2019-01-25',
-  Layla: '2025-10-10',
-};
-const PARENT_NAMES = new Set(['Sebastian', 'Dominika']);
-
-const DEFAULT_MEMBER_PERMISSIONS: MemberPermissions = {
-  viewFamilySchedule: true,
-  viewFamilyTasks: true,
-  viewFamilySchool: false,
-  viewFamilyHealth: false,
-};
-
-function normalizeMemberPermissions(value: unknown): MemberPermissions {
-  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  return {
-    viewFamilySchedule: typeof raw.viewFamilySchedule === 'boolean' ? raw.viewFamilySchedule : DEFAULT_MEMBER_PERMISSIONS.viewFamilySchedule,
-    viewFamilyTasks: typeof raw.viewFamilyTasks === 'boolean' ? raw.viewFamilyTasks : DEFAULT_MEMBER_PERMISSIONS.viewFamilyTasks,
-    viewFamilySchool: typeof raw.viewFamilySchool === 'boolean' ? raw.viewFamilySchool : DEFAULT_MEMBER_PERMISSIONS.viewFamilySchool,
-    viewFamilyHealth: typeof raw.viewFamilyHealth === 'boolean' ? raw.viewFamilyHealth : DEFAULT_MEMBER_PERMISSIONS.viewFamilyHealth,
-  };
-}
-
-function effectiveMemberPermissions(member: Member | null | undefined): MemberPermissions {
-  if (isParent(member)) return { viewFamilySchedule:true, viewFamilyTasks:true, viewFamilySchool:true, viewFamilyHealth:true };
-  return normalizeMemberPermissions(member?.permissions);
-}
-
+const FAMILY_BIRTHDAYS: Partial<Record<PersonKey, string>> = {};
 function isParent(member: Member | null | undefined) {
-  const name = member?.name || '';
-  const role = (member?.role || '').toLowerCase();
-  return PARENT_NAMES.has(name) || role.includes('tata') || role.includes('mama') || role.includes('rodzic');
+  return member?.role === 'parent';
+}
+
+function ownPerson(member: Member | null | undefined) {
+  const value = member?.personKey || member?.name;
+  return isPersonKey(value) ? value : 'family';
+}
+
+function schoolQuery(member: Member | null) {
+  return isParent(member) ? collection(db, 'schoolItems') : query(collection(db, 'schoolItems'), where('person', '==', ownPerson(member)));
 }
 
 function ageFromBirthDate(value?: string) {
@@ -329,14 +285,13 @@ function ageFromBirthDate(value?: string) {
 }
 
 function isAdultMember(member: Member | null | undefined) {
-  if (isParent(member)) return true;
-  const name = (member?.name || '') as PersonKey;
-  const age = ageFromBirthDate(FAMILY_BIRTHDAYS[name]);
+  if (isParent(member) || member?.adult === true) return true;
+  const age = ageFromBirthDate(member?.birthDate);
   return age !== null && age >= 18;
 }
 
 function personRole(name: string, role?: string) {
-  if (role) return role;
+  if (role && role !== 'parent' && role !== 'child') return role;
   if (name === 'Sebastian') return 'Tata';
   if (name === 'Dominika') return 'Mama';
   if (name === 'Paweł' || name === 'Nikodem') return 'Syn';
@@ -408,66 +363,6 @@ function personEventClass(person: PersonKey) {
   }
 }
 
-function startOfDay(date: Date) {
-  const result = new Date(date);
-  result.setHours(0, 0, 0, 0);
-  return result;
-}
-
-function endOfDay(date: Date) {
-  const result = new Date(date);
-  result.setHours(23, 59, 59, 999);
-  return result;
-}
-
-function startOfWeek(date: Date) {
-  const result = startOfDay(date);
-  const day = result.getDay();
-  result.setDate(result.getDate() + (day === 0 ? -6 : 1 - day));
-  return result;
-}
-
-function addDays(date: Date, days: number) {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}
-
-function addMonths(date: Date, months: number) {
-  const result = new Date(date);
-  const originalDay = result.getDate();
-  result.setDate(1);
-  result.setMonth(result.getMonth() + months);
-  const lastDay = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
-  result.setDate(Math.min(originalDay, lastDay));
-  return result;
-}
-
-function addYears(date: Date, years: number) {
-  const result = new Date(date);
-  const month = result.getMonth();
-  result.setFullYear(result.getFullYear() + years);
-  if (result.getMonth() !== month) result.setDate(0);
-  return result;
-}
-
-function sameDay(a: Date, b: Date) {
-  return a.getFullYear() === b.getFullYear()
-    && a.getMonth() === b.getMonth()
-    && a.getDate() === b.getDate();
-}
-
-function formatDateInput(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function formatTimeInput(date: Date) {
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
 function formatTime(date: Date) {
   return date.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
 }
@@ -498,58 +393,6 @@ function weekTitle(weekStart: Date) {
   return `${weekStart.getDate()} ${startMonth} – ${end.getDate()} ${endMonth} ${end.getFullYear()}`;
 }
 
-function parseLocalDate(date: string, time: string) {
-  return new Date(`${date}T${time}:00`);
-}
-
-function isRepeatType(value: unknown): value is RepeatType {
-  return value === 'none' || value === 'daily' || value === 'weekly' || value === 'monthly' || value === 'yearly';
-}
-
-function repeatLabel(value: RepeatType) {
-  switch (value) {
-    case 'daily': return 'Codziennie';
-    case 'weekly': return 'Co tydzień';
-    case 'monthly': return 'Co miesiąc';
-    case 'yearly': return 'Co rok';
-    default: return 'Nie powtarzaj';
-  }
-}
-
-function occurrenceAt(base: Date, repeat: RepeatType, index: number) {
-  if (repeat === 'daily') return addDays(base, index);
-  if (repeat === 'weekly') return addDays(base, index * 7);
-  if (repeat === 'monthly') return addMonths(base, index);
-  if (repeat === 'yearly') return addYears(base, index);
-  return new Date(base);
-}
-
-function generateOccurrences(event: CalendarEventData, rangeStart: Date, rangeEnd: Date): CalendarOccurrence[] {
-  const duration = event.endDate.getTime() - event.date.getTime();
-  const occurrences: CalendarOccurrence[] = [];
-
-  if (event.repeat === 'none') {
-    if (event.date <= rangeEnd && event.endDate >= rangeStart) {
-      occurrences.push({ key: `${event.id}-${event.date.getTime()}`, source: event, date: event.date, endDate: event.endDate });
-    }
-    return occurrences;
-  }
-
-  const repeatUntil = event.repeatUntil ? endOfDay(event.repeatUntil) : rangeEnd;
-  const hardEnd = repeatUntil < rangeEnd ? repeatUntil : rangeEnd;
-
-  for (let index = 0; index < 2000; index += 1) {
-    const date = occurrenceAt(event.date, event.repeat, index);
-    if (date > hardEnd) break;
-    const endDate = new Date(date.getTime() + duration);
-    if (date <= rangeEnd && endDate >= rangeStart) {
-      occurrences.push({ key: `${event.id}-${date.getTime()}`, source: event, date, endDate });
-    }
-  }
-
-  return occurrences;
-}
-
 function initials(name?: string) {
   if (!name) return '🙂';
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -569,6 +412,11 @@ function memberEmoji(name: string) {
 /* =========================================================
    APP + LOGIN
    ========================================================= */
+
+const PAGES: Page[] = ['Start', 'Kalendarz', 'Zadania', 'Zakupy', 'Czat', 'Zdrowie', 'Szkoła', 'Rodzina', 'Ustawienia'];
+function pageFromHash(): Page {
+  try { const value = decodeURIComponent(location.hash.slice(1)) as Page; return PAGES.includes(value) ? value : 'Start'; } catch { return 'Start'; }
+}
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -591,7 +439,7 @@ function App() {
     );
   }
 
-  return user ? <FamilyApp user={user} /> : <Login />;
+  return <><Feedback />{user ? <FamilyApp key={user.uid} user={user} /> : <Login />}</>;
 }
 
 function Login() {
@@ -599,6 +447,16 @@ function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loggingIn, setLoggingIn] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  async function resetPassword() {
+    if (!email.trim()) { setError('Wpisz e-mail, aby otrzymać link do zmiany hasła.'); return; }
+    setResetting(true);
+    try { await sendPasswordResetEmail(auth, email.trim()); notify('Jeśli konto istnieje, otrzymasz wiadomość z linkiem do zmiany hasła.'); }
+    catch { setError('Nie udało się wysłać linku. Sprawdź e-mail i połączenie.'); }
+    finally { setResetting(false); }
+  }
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -639,16 +497,17 @@ function Login() {
         <form className="login-v11-form" onSubmit={handleLogin}>
           <label>
             <span>E-mail</span>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Twój e-mail" required />
+            <input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Twój e-mail" required />
           </label>
           <label>
             <span>Hasło</span>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Hasło" required />
+            <input type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Hasło" required />
           </label>
           {error && <div className="login-error">{error}</div>}
           <button type="submit" disabled={loggingIn}>{loggingIn ? 'Logowanie…' : 'Zaloguj się'}</button>
         </form>
 
+        <div className="login-options"><button type="button" onClick={()=>setShowPassword(!showPassword)}>{showPassword ? "Ukryj hasło" : "Pokaż hasło"}</button><button type="button" disabled={resetting} onClick={()=>void resetPassword()}>{resetting ? "Wysyłanie…" : "Nie pamiętam hasła"}</button></div>
         <div className="login-v11-divider"><span>Rodzinne centrum w jednym miejscu ❤️</span></div>
         <div className="login-v11-features">
           {features.map(([icon, label]) => <div key={label}><span>{icon}</span><small>{label}</small></div>)}
@@ -665,7 +524,9 @@ function Login() {
    ========================================================= */
 
 function FamilyApp({ user }: { user: User }) {
-  const [page, setPage] = useState<Page>('Start');
+  const [page, setPage] = useState<Page>(() => pageFromHash());
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileError, setProfileError] = useState('');
   const [member, setMember] = useState<Member | null>(null);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -678,12 +539,26 @@ function FamilyApp({ user }: { user: User }) {
     try { localStorage.setItem('nr-theme', theme); } catch { /* ignore */ }
   }, [theme]);
 
-  useEffect(() => onSnapshot(doc(db, 'members', user.uid), (snapshot) => {
-    if (snapshot.exists()) setMember(snapshot.data() as Member);
-  }, (error) => console.error('Błąd profilu:', error)), [user.uid]);
+
+  useEffect(() => {
+    let active = true;
+    setProfileLoading(true);
+    getDoc(doc(db, 'members', user.uid)).then(snapshot => {
+      if (!active) return;
+      setMember(snapshot.exists() ? snapshot.data() as Member : null);
+    }).catch(error => { if (active) setProfileError(errorMessage(error)); }).finally(() => { if (active) setProfileLoading(false); });
+    return () => { active = false; };
+  }, [user.uid]);
+
+  useEffect(() => {
+    const changed = () => { setPage(pageFromHash()); setMobileMoreOpen(false); };
+    window.addEventListener('hashchange', changed);
+    return () => window.removeEventListener('hashchange', changed);
+  }, []);
 
   function goTo(next: Page) {
     setPage(next);
+    window.location.hash = encodeURIComponent(next);
     setMobileMoreOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -696,21 +571,24 @@ function FamilyApp({ user }: { user: User }) {
       case 'Zakupy': return <ShoppingPage user={user} member={member} />;
       case 'Czat': return <ChatPage user={user} member={member} />;
       case 'Zdrowie': return <HealthPage user={user} member={member} />;
-      case 'Szkoła': return <SchoolPage user={user} member={member} />;
-      case 'Rodzina': return <FamilyPage user={user} member={member} goTo={goTo} />;
-      case 'Ustawienia': return <SettingsPage member={member} theme={theme} setTheme={setTheme} goTo={goTo} />;
+      case 'Szkoła': return <SchoolModule user={user} member={member} />;
+      case 'Rodzina': return <FamilyPage member={member} goTo={goTo} />;
+      case 'Ustawienia': return <SettingsPage user={user} member={member} theme={theme} setTheme={setTheme} />;
       default: return <StartPage member={member} goTo={goTo} />;
     }
   }
+
+  if (profileLoading) return <div className="loading-screen"><section className="loading-card"><h2>Nasza Rodzina</h2><p>Sprawdzam profil rodziny…</p></section></div>;
+  if (!member || member.active !== true || member.canLogin !== true || !['parent','child'].includes(member.role || '')) return <div className="loading-screen"><section className="loading-card access-card"><h2>Konto czeka na dostęp</h2><p>{profileError || 'Administrator rodziny musi przypisać temu kontu aktywny profil. Skontaktuj się z osobą, która konfiguruje aplikację dla rodziny.'}</p><button className="secondary-button" onClick={()=>void signOut(auth)}>Wyloguj</button></section></div>;
 
   return (
     <div className={`app-shell theme-${theme}`}>
       <Sidebar page={page} goTo={goTo} member={member} />
       <main className="main-area">
-        {page !== 'Start' && page !== 'Kalendarz' && <FamilyHeader member={member} onLogout={() => signOut(auth)} />}
+        <FamilyHeader member={member} onLogout={() => signOut(auth)} />
         {renderPage()}
       </main>
-      <MobileNavigation page={page} goTo={goTo} onMore={() => setMobileMoreOpen(true)} />
+      <MobileNavigation page={page} goTo={goTo} moreOpen={mobileMoreOpen} onMore={() => setMobileMoreOpen(true)} />
       {mobileMoreOpen && (
         <MobileMoreMenu page={page} goTo={goTo} onClose={() => setMobileMoreOpen(false)} onLogout={() => signOut(auth)} />
       )}
@@ -718,49 +596,51 @@ function FamilyApp({ user }: { user: User }) {
   );
 }
 
-
-type NavIconName = 'start' | 'calendar' | 'tasks' | 'shopping' | 'chat' | 'health' | 'school' | 'family' | 'settings' | 'more';
-
-function AppNavIcon({ name }: { name: NavIconName }) {
-  const common = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
-  return <svg className="app-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
-    {name === 'start' && <><path {...common} d="M3.5 10.7 12 3.7l8.5 7"/><path {...common} d="M5.5 9.5v10h13v-10"/><path {...common} d="M9.5 19.5v-6h5v6"/></>}
-    {name === 'calendar' && <><rect {...common} x="3.5" y="5.2" width="17" height="15.2" rx="2.2"/><path {...common} d="M7 3.5v4M17 3.5v4M3.5 9.5h17"/><path {...common} d="M7.5 13h2M12 13h2M16.5 13h.1M7.5 16.5h2M12 16.5h2"/></>}
-    {name === 'tasks' && <><rect {...common} x="4" y="4" width="16" height="16" rx="2.5"/><path {...common} d="m7.5 12 2.7 2.7 6.4-6.4"/></>}
-    {name === 'shopping' && <><path {...common} d="M3 4h2l2.1 10.1a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 1.9-1.4L21 8H6"/><circle {...common} cx="9.5" cy="19" r="1.2"/><circle {...common} cx="17.2" cy="19" r="1.2"/></>}
-    {name === 'chat' && <><path {...common} d="M4 5.5h16v10.8H9l-4.5 3.2.8-3.2H4z"/><path {...common} d="M8 10h.1M12 10h.1M16 10h.1"/></>}
-    {name === 'health' && <path {...common} d="M12 20.2S4 15.8 4 9.4a4.3 4.3 0 0 1 7.8-2.5L12 7l.2-.2A4.3 4.3 0 0 1 20 9.4c0 6.4-8 10.8-8 10.8Z"/>}
-    {name === 'school' && <><path {...common} d="m3 9 9-5 9 5-9 5z"/><path {...common} d="M6.5 11.2v5.2c2.6 2 8.4 2 11 0v-5.2M21 9v6"/></>}
-    {name === 'family' && <><circle {...common} cx="8" cy="8" r="3"/><circle {...common} cx="16.5" cy="9" r="2.5"/><path {...common} d="M2.8 19c.5-3.4 2.3-5.2 5.2-5.2S12.7 15.6 13.2 19M13 14.2c1-.9 2.2-1.3 3.6-1.3 2.6 0 4.2 1.7 4.6 4.8"/></>}
-    {name === 'settings' && <><circle {...common} cx="12" cy="12" r="3.2"/><path {...common} d="M19.2 13.5v-3l-2-.6a7 7 0 0 0-.7-1.6l1-1.8-2.1-2.1-1.8 1a7 7 0 0 0-1.6-.7L11.5 2h-3L8 4.7a7 7 0 0 0-1.6.7l-1.8-1-2.1 2.1 1 1.8a7 7 0 0 0-.7 1.6L.8 10.5v3l2 .6a7 7 0 0 0 .7 1.6l-1 1.8 2.1 2.1 1.8-1a7 7 0 0 0 1.6.7l.5 2.7h3l.5-2.7a7 7 0 0 0 1.6-.7l1.8 1 2.1-2.1-1-1.8a7 7 0 0 0 .7-1.6z" transform="translate(1.5 0) scale(.87)"/></>}
-    {name === 'more' && <><path {...common} d="M5 7h14M5 12h14M5 17h14"/></>}
-  </svg>;
+function AppIcon({ page, size = 20 }: { page: Page; size?: number }) {
+  const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true };
+  switch (page) {
+    case 'Start': return <svg {...common}><path d="M3.5 10.5 12 3.5l8.5 7"/><path d="M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-6h5v6"/></svg>;
+    case 'Kalendarz': return <svg {...common}><rect x="3.5" y="5.5" width="17" height="15" rx="2.5"/><path d="M7 3.5v4M17 3.5v4M3.5 10h17"/><path d="M7.5 13.5h2M12 13.5h2M16.5 13.5h.1M7.5 17h2M12 17h2"/></svg>;
+    case 'Zadania': return <svg {...common}><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 2.2 2.2L16.5 8"/></svg>;
+    case 'Zakupy': return <svg {...common}><path d="M3 4h2l2.1 10.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.6L20.5 8H6"/><circle cx="9.5" cy="19" r="1"/><circle cx="17" cy="19" r="1"/></svg>;
+    case 'Czat': return <svg {...common}><path d="M4 5.5h16v11H9l-5 4v-15Z"/><path d="M8 10h8M8 13h5"/></svg>;
+    case 'Zdrowie': return <svg {...common}><path d="M12 20s-7.5-4.7-7.5-10.2A4.3 4.3 0 0 1 12 6.9a4.3 4.3 0 0 1 7.5 2.9C19.5 15.3 12 20 12 20Z"/></svg>;
+    case 'Szkoła': return <svg {...common}><path d="m3 9 9-5 9 5-9 5-9-5Z"/><path d="M7 12.2V16c3 2 7 2 10 0v-3.8M21 9v6"/></svg>;
+    case 'Rodzina': return <svg {...common}><circle cx="8" cy="8" r="2.5"/><circle cx="16.2" cy="8.8" r="2.1"/><path d="M3.8 19v-1.8A4.2 4.2 0 0 1 8 13h0a4.2 4.2 0 0 1 4.2 4.2V19M13.2 14.2a3.5 3.5 0 0 1 6.3 2.1V19"/></svg>;
+    case 'Ustawienia': return <svg {...common}><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.1M12 19.1v2.1M21.2 12h-2.1M4.9 12H2.8M18.5 5.5 17 7M7 17l-1.5 1.5M18.5 18.5 17 17M7 7 5.5 5.5"/><circle cx="12" cy="12" r="7.1"/></svg>;
+  }
 }
 
 function Sidebar({ page, goTo, member }: { page: Page; goTo: (page: Page) => void; member: Member | null }) {
-  const items: Array<[Page, NavIconName]> = [
-    ['Start', 'start'], ['Kalendarz', 'calendar'], ['Zadania', 'tasks'], ['Zakupy', 'shopping'], ['Czat', 'chat'],
-    ['Zdrowie', 'health'], ['Szkoła', 'school'], ['Rodzina', 'family'], ['Ustawienia', 'settings'],
+  const groups: Array<{ label: string; items: Page[] }> = [
+    { label: 'Na co dzień', items: ['Start', 'Kalendarz', 'Zadania', 'Zakupy'] },
+    { label: 'Dom i bliscy', items: ['Czat', 'Zdrowie', 'Szkoła', 'Rodzina'] },
+    { label: 'Twoja aplikacja', items: ['Ustawienia'] },
   ];
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar family-menu">
       <div className="sidebar-brand">
-        <img className="brand-mark" src="/nasza-rodzina-logo.svg" alt="" />
-        <div className="brand-copy"><strong>Nasza<br />Rodzina</strong><small>v{APP_VERSION}</small></div>
+        <img className="menu-brand-logo" src="/nasza-rodzina-logo.svg" alt="" />
+        <div className="brand-copy"><strong>Nasza<br />Rodzina</strong><small>Razem zawsze lepiej ♡</small></div>
       </div>
-      <nav className="sidebar-nav">
-        {items.map(([label, icon]) => (
-          <button key={label} type="button" className={`nav-button ${page === label ? 'active' : ''}`} onClick={() => goTo(label)}>
-            <span><AppNavIcon name={icon} /></span>{label}
-          </button>
+      <nav className="sidebar-nav" aria-label="Menu główne">
+        {groups.map((group) => (
+          <div className="menu-group" key={group.label}>
+            <p className="menu-group-label">{group.label}</p>
+            {group.items.map((label) => (
+              <button key={label} type="button" aria-current={page === label ? 'page' : undefined} data-menu-page={label} className={`nav-button ${page === label ? 'active' : ''}`} onClick={() => goTo(label)}>
+                <span className="nav-icon"><AppIcon page={label} size={20} /></span><span className="nav-label">{label}</span>
+                <span className="menu-active-mark" aria-hidden="true">›</span>
+              </button>
+            ))}
+          </div>
         ))}
       </nav>
-      <div className="sidebar-bottom-art sidebar-logo-art">
-        <img src="/nasza-rodzina-logo.svg" alt="Nasza Rodzina" />
-        <strong>Nasza Rodzina</strong>
-        <span>Razem zawsze lepiej ♡</span>
-        <small>v{APP_VERSION}</small>
+      <div className="menu-profile">
+        <span className="menu-profile-avatar">{member?.photoURL ? <img src={member.photoURL} alt="" /> : memberEmoji(member?.name || '')}</span>
+        <div><strong>{member?.name || 'Nasza Rodzina'}</strong><small>{personRole(member?.name || '', member?.role)}</small></div>
+        <span className="menu-version">v{APP_VERSION}</span>
       </div>
     </aside>
   );
@@ -769,9 +649,9 @@ function Sidebar({ page, goTo, member }: { page: Page; goTo: (page: Page) => voi
 function FamilyHeader({ member, onLogout }: { member: Member | null; onLogout: () => void }) {
   return (
     <header className="top-header">
-      <div><small>Rodzinne centrum</small><strong>Nasza Rodzina</strong></div>
+      <div className="header-brand"><img src="/nasza-rodzina-logo.svg" alt="" /><div><small>Rodzinne centrum</small><strong>Nasza Rodzina</strong></div></div>
       <div className="header-user">
-        <div className="header-user-text"><strong>{member?.name || 'Użytkownik'}</strong><small>{member?.role || 'Rodzina'}</small></div>
+        <div className="header-user-text"><strong>{member?.name || 'Użytkownik'}</strong><small>{personRole(member?.name || '', member?.role)}</small></div>
         <button type="button" onClick={onLogout}>Wyloguj</button>
       </div>
     </header>
@@ -789,75 +669,18 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
   const [events, setEvents] = useState<CalendarEventData[]>([]);
   const [schoolRecords, setSchoolRecords] = useState<SchoolRecord[]>([]);
   const [shopping, setShopping] = useState<ShoppingItem[]>([]);
-  const [healthRecords, setHealthRecords] = useState<HealthRecord[]>([]);
-  const [healthAlerts, setHealthAlerts] = useState<HealthAlert[]>([]);
-  const [healthIntakes, setHealthIntakes] = useState<MedicationIntake[]>([]);
   const [weather, setWeather] = useState<{ temp: number; max: number; min: number; wind: number; label: string; icon: string } | null>(null);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [clock, setClock] = useState(() => new Date());
-  const [editMode, setEditMode] = useState(false);
-  const [widgetMenu, setWidgetMenu] = useState<string | null>(null);
-  const access = effectiveMemberPermissions(member);
-  const defaultWidgetOrder = ['day','ends','free','school','tasks','shopping','health','events','quick'];
-  const userLayoutId = auth.currentUser?.uid || member?.name || 'family';
-  const layoutKey=`nr-start-order:${userLayoutId}`;
-  const hiddenKey=`nr-start-hidden:${userLayoutId}`;
-  const [widgetOrder, setWidgetOrder] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem(layoutKey);
-      const parsed = saved ? JSON.parse(saved) : null;
-      if (!Array.isArray(parsed)) return defaultWidgetOrder;
-      const valid = parsed.filter((id): id is string => typeof id === 'string' && defaultWidgetOrder.includes(id));
-      return [...valid, ...defaultWidgetOrder.filter((id) => !valid.includes(id))];
-    } catch { return defaultWidgetOrder; }
-  });
-  const [hiddenWidgets, setHiddenWidgets] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem(hiddenKey);
-      const parsed = saved ? JSON.parse(saved) : [];
-      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string' && defaultWidgetOrder.includes(id)) : [];
-    } catch { return []; }
-  });
-  type WidgetSize = 'small' | 'medium' | 'wide' | 'large';
-  const defaultWidgetSizes: Record<string, WidgetSize> = { day:'medium', ends:'medium', free:'small', school:'medium', tasks:'medium', shopping:'wide', health:'medium', events:'medium', quick:'medium' };
-  const sizeKey=`nr-start-sizes:${userLayoutId}`;
-  const readNoticeKey=`nr-start-read-notices:${userLayoutId}`;
-  const [widgetSizes, setWidgetSizes] = useState<Record<string, WidgetSize>>(() => {
-    try {
-      const saved=localStorage.getItem(sizeKey); const parsed=saved ? JSON.parse(saved) : {};
-      const next={...defaultWidgetSizes};
-      if(parsed && typeof parsed==='object') for(const id of defaultWidgetOrder){ const value=parsed[id]; if(value==='small'||value==='medium'||value==='wide'||value==='large') next[id]=value; }
-      return next;
-    } catch { return {...defaultWidgetSizes}; }
-  });
-  const [readNoticeIds, setReadNoticeIds] = useState<string[]>(() => {
-    try { const parsed=JSON.parse(localStorage.getItem(readNoticeKey) || '[]'); return Array.isArray(parsed) ? parsed.filter((v):v is string=>typeof v==='string') : []; }
-    catch { return []; }
-  });
-  const widgetOrderRef = useRef<string[]>(widgetOrder);
-  useEffect(() => { widgetOrderRef.current = widgetOrder; }, [widgetOrder]);
-  useEffect(() => {
-    const timer = window.setInterval(() => setClock(new Date()), 30 * 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  const dragRef = useRef<{
-    id:string; pointerId:number; startX:number; startY:number; offsetX:number; offsetY:number;
-    timer:number; active:boolean; source:HTMLElement; ghost:HTMLElement | null;
-  } | null>(null);
-  const resizeRef = useRef<{ id:string; pointerId:number; startX:number; startY:number; startIndex:number } | null>(null);
 
   useEffect(() => onSnapshot(collection(db, 'members'), (snap) => {
     const next = snap.docs.map((d): FamilyMemberDoc => {
       const x = d.data();
-      const personName = String(x.name || 'Rodzina');
       return {
         id: d.id,
-        name: personName,
-        role: personRole(personName, typeof x.role === 'string' ? x.role : ''),
+        name: String(x.name || 'Rodzina'),
+        role: personRole(String(x.name || ''), typeof x.role === 'string' ? x.role : ''),
         photoURL: typeof x.photoURL === 'string' ? x.photoURL : undefined,
         active: x.active !== false,
-        birthDate: typeof x.birthDate === 'string' ? x.birthDate : FAMILY_BIRTHDAYS[personName as PersonKey],
-        permissions: normalizeMemberPermissions(x.permissions),
+        birthDate: typeof x.birthDate === 'string' ? x.birthDate : FAMILY_BIRTHDAYS[String(x.name || '') as PersonKey],
       };
     });
     next.sort((a, b) => FAMILY_ORDER.indexOf(a.name) - FAMILY_ORDER.indexOf(b.name));
@@ -865,480 +688,276 @@ function StartPage({ member, goTo }: { member: Member | null; goTo: (page: Page)
   }), []);
 
   useEffect(() => onSnapshot(collection(db, 'tasks'), (snap) => {
-    setTasks(snap.docs.map((d): TaskItem => {
+    const next = snap.docs.map((d): TaskItem => {
       const x = d.data();
       return {
-        id: d.id, title: String(x.title || ''), person: isPersonKey(x.person) ? x.person : 'family', done: x.done === true,
-        dueDate: typeof x.dueDate === 'string' ? x.dueDate : '', priority: x.priority === 'low' || x.priority === 'high' ? x.priority : 'normal',
-        note: typeof x.note === 'string' ? x.note : '', points: Number(x.points || 0), requireApproval: x.requireApproval === true,
+        id: d.id,
+        title: String(x.title || ''),
+        person: isPersonKey(x.person) ? x.person : 'family',
+        done: x.done === true,
+        dueDate: typeof x.dueDate === 'string' ? x.dueDate : '',
+        priority: x.priority === 'low' || x.priority === 'high' ? x.priority : 'normal',
+        note: typeof x.note === 'string' ? x.note : '',
+        points: Number(x.points || 0),
+        requireApproval: x.requireApproval === true,
         approvalStatus: x.approvalStatus === 'pending' || x.approvalStatus === 'approved' ? x.approvalStatus : 'none',
         repeat: x.repeat === 'daily' || x.repeat === 'weekly' || x.repeat === 'monthly' ? x.repeat : 'none',
         createdAt: x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
         completedAt: x.completedAt instanceof Timestamp ? x.completedAt.toDate() : undefined,
       };
-    }));
+    });
+    setTasks(next);
   }), []);
 
   useEffect(() => onSnapshot(collection(db, 'shoppingItems'), (snap) => {
-    setShopping(snap.docs.map((d): ShoppingItem => {
-      const x = d.data(); const productTitle = String(x.title || '');
-      return { id:d.id, title:productTitle, done:x.done === true, category:isShoppingCategory(x.category) ? x.category : categorizeProduct(productTitle), quantity:typeof x.quantity === 'string' ? x.quantity : '', unit:typeof x.unit === 'string' ? x.unit : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
-    }));
-  }), []);
-
-  useEffect(() => onSnapshot(collection(db, 'calendarEvents'), (snap) => {
-    const next: CalendarEventData[] = [];
-    snap.forEach((d) => {
-      const x=d.data(); if (!(x.date instanceof Timestamp)) return;
-      const start=x.date.toDate();
-      next.push({ id:d.id, title:String(x.title || 'Wydarzenie'), person:isPersonKey(x.person) ? x.person : 'family', date:start, endDate:x.endDate instanceof Timestamp ? x.endDate.toDate() : new Date(start.getTime()+3600000), allDay:x.allDay === true, description:typeof x.description === 'string' ? x.description : '', createdBy:typeof x.createdBy === 'string' ? x.createdBy : '', repeat:isRepeatType(x.repeat) ? x.repeat : 'none', repeatUntil:x.repeatUntil instanceof Timestamp ? x.repeatUntil.toDate() : null });
+    const next = snap.docs.map((d): ShoppingItem => {
+      const x = d.data();
+      const productTitle = String(x.title || '');
+      return {
+        id: d.id,
+        title: productTitle,
+        done: x.done === true,
+        category: isShoppingCategory(x.category) ? x.category : categorizeProduct(productTitle),
+        quantity: typeof x.quantity === 'string' ? x.quantity : '',
+        unit: typeof x.unit === 'string' ? x.unit : '',
+        createdAt: x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
+      };
     });
-    setEvents(next);
+    setShopping(next);
   }), []);
 
-  useEffect(() => onSnapshot(collection(db, 'schoolItems'), (snap) => {
-    setSchoolRecords(snap.docs.map((d): SchoolRecord => {
-      const x=d.data();
-      return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'Nikodem', type:isSchoolType(x.type) ? x.type : 'homework', subject:typeof x.subject === 'string' ? x.subject : '', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', endTime:typeof x.endTime === 'string' ? x.endTime : '', weekday:Number(x.weekday || 0), note:typeof x.note === 'string' ? x.note : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
-    }));
+  useEffect(() => onSnapshot(collection(db, 'calendarEvents'), (snapshot) => {
+    const loaded: CalendarEventData[] = [];
+    snapshot.forEach((eventDoc) => {
+      const data = eventDoc.data();
+      if (!(data.date instanceof Timestamp)) return;
+      const start = data.date.toDate();
+      loaded.push({
+        id: eventDoc.id,
+        title: typeof data.title === 'string' && data.title.trim() ? data.title : 'Wydarzenie',
+        person: isPersonKey(data.person) ? data.person : 'family',
+        date: start,
+        endDate: data.endDate instanceof Timestamp ? data.endDate.toDate() : new Date(start.getTime() + 3600000),
+        allDay: data.allDay === true,
+        description: typeof data.description === 'string' ? data.description : '',
+        createdBy: typeof data.createdBy === 'string' ? data.createdBy : '',
+        repeat: isRepeatType(data.repeat) ? data.repeat : 'none',
+        repeatUntil: data.repeatUntil instanceof Timestamp ? data.repeatUntil.toDate() : null,
+      });
+    });
+    setEvents(loaded);
   }), []);
 
-  useEffect(() => onSnapshot(collection(db, 'healthRecords'), (snap) => {
-    setHealthRecords(snap.docs.map((d): HealthRecord => {
-      const x=d.data();
-      const legacyTime=typeof x.medicineTime === 'string' ? x.medicineTime : (typeof x.time === 'string' ? x.time : '');
-      const rawTimes=Array.isArray(x.medicineTimes) ? x.medicineTimes.filter((v:unknown)=>typeof v === 'string') as string[] : [];
-      return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', type:isHealthType(x.type) ? x.type : 'history', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', doctor:typeof x.doctor === 'string' ? x.doctor : '', location:typeof x.location === 'string' ? x.location : '', note:typeof x.note === 'string' ? x.note : '', specialty:typeof x.specialty === 'string' ? x.specialty : '', status:isHealthStatus(x.status) ? x.status : (x.type === 'visit' ? 'planned' : 'done'), referralCode:typeof x.referralCode === 'string' ? x.referralCode : '', nextControl:typeof x.nextControl === 'string' ? x.nextControl : '', callReminderDate:typeof x.callReminderDate === 'string' ? x.callReminderDate : '', documentURL:typeof x.documentURL === 'string' ? x.documentURL : '', privateToParents:x.privateToParents === true, sharedWithPerson:x.sharedWithPerson === true, blocksSchoolDay:x.blocksSchoolDay === true, dose:typeof x.dose === 'string' ? x.dose : '', medicineTime:legacyTime, medicineTimes:rawTimes.length ? rawTimes : (legacyTime ? [legacyTime] : []), escalationMinutes:Number.isFinite(Number(x.escalationMinutes)) ? Math.max(1,Number(x.escalationMinutes)) : 15, confirmedDate:typeof x.confirmedDate === 'string' ? x.confirmedDate : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
-    }));
-  }), []);
-
-  useEffect(() => onSnapshot(collection(db, 'healthAlerts'), (snap) => {
-    setHealthAlerts(snap.docs.map((d): HealthAlert => {
-      const x=d.data();
-      return { id:d.id, recordId:String(x.recordId || ''), person:isPersonKey(x.person) ? x.person : 'family', date:String(x.date || ''), time:String(x.time || ''), title:String(x.title || ''), dose:String(x.dose || ''), status:x.status === 'acknowledged' || x.status === 'resolved' ? x.status : 'open', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
-    }));
-  }), []);
-
-  useEffect(() => onSnapshot(collection(db, 'healthMedicationIntakes'), (snap) => {
-    setHealthIntakes(snap.docs.map((d): MedicationIntake => {
-      const x=d.data();
-      return { id:d.id, recordId:String(x.recordId || ''), person:isPersonKey(x.person) ? x.person : 'family', date:String(x.date || ''), time:String(x.time || ''), confirmedBy:String(x.confirmedBy || ''), confirmedAt:x.confirmedAt instanceof Timestamp ? x.confirmedAt.toDate() : undefined };
-    }));
+  useEffect(() => onSnapshot(schoolQuery(member), (snap) => {
+    const next = snap.docs.map((d): SchoolRecord => {
+      const x = d.data();
+      return {
+        id: d.id,
+        title: String(x.title || ''),
+        person: isPersonKey(x.person) ? x.person : 'Nikodem',
+        type: isSchoolType(x.type) ? x.type : 'homework',
+        subject: typeof x.subject === 'string' ? x.subject : '',
+        date: typeof x.date === 'string' ? x.date : '',
+        time: typeof x.time === 'string' ? x.time : '',
+        endTime: typeof x.endTime === 'string' ? x.endTime : '',
+        weekday: Number(x.weekday || 0),
+        note: typeof x.note === 'string' ? x.note : '',
+        createdAt: x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
+      };
+    });
+    setSchoolRecords(next);
   }), []);
 
   useEffect(() => {
-    const controller=new AbortController();
+    const controller = new AbortController();
     async function loadWeather() {
       try {
-        const url='https://api.open-meteo.com/v1/forecast?latitude=54.176&longitude=15.576&current=temperature_2m,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min&timezone=Europe%2FWarsaw&forecast_days=1';
-        const response=await fetch(url,{signal:controller.signal}); if(!response.ok) throw new Error('weather');
-        const data=await response.json(); const code=Number(data.current?.weather_code ?? 0);
-        const meta=code<=1 ? ['Słonecznie','☀️'] : code<=3 ? ['Częściowe zachmurzenie','⛅'] : code<=48 ? ['Mgła / chmury','🌫️'] : code<=67 ? ['Deszcz','🌧️'] : code<=77 ? ['Śnieg','🌨️'] : code<=82 ? ['Przelotny deszcz','🌦️'] : ['Burze','⛈️'];
-        setWeather({temp:Math.round(data.current?.temperature_2m ?? 0),max:Math.round(data.daily?.temperature_2m_max?.[0] ?? 0),min:Math.round(data.daily?.temperature_2m_min?.[0] ?? 0),wind:Math.round(data.current?.wind_speed_10m ?? 0),label:meta[0],icon:meta[1]});
-      } catch(error) { if ((error as Error).name !== 'AbortError') console.warn('Pogoda chwilowo niedostępna'); }
-    }
-    void loadWeather(); const timer=window.setInterval(()=>void loadWeather(),30*60*1000);
-    return ()=>{controller.abort();window.clearInterval(timer);};
-  },[]);
-
-  const now=clock;
-  const clockTick=clock.getTime();
-  const todayKey=formatDateInput(now);
-  const todayWeekday=now.getDay()===0 ? 7 : now.getDay();
-  const todayStart=startOfDay(now); const todayEnd=endOfDay(now);
-  const todayOccurrences=useMemo(()=>events.flatMap((event)=>generateOccurrences(event,todayStart,todayEnd)).sort((a,b)=>a.date.getTime()-b.date.getTime()),[events,todayKey]);
-  const todaySchoolItems=useMemo(()=>schoolRecords.filter((r)=>(r.type==='lesson' || r.type==='activity') && (r.weekday===todayWeekday || (!!r.date && r.date===todayKey))).sort((a,b)=>(a.time || '99:99').localeCompare(b.time || '99:99')),[schoolRecords,todayWeekday,todayKey]);
-  const todayHealthVisits=useMemo(()=>healthRecords.filter((r)=>r.type==='visit' && r.status!=='cancelled' && r.date===todayKey),[healthRecords,todayKey]);
-
-  function schoolStart(record:SchoolRecord){ return parseLocalDate(todayKey,record.time || '08:00'); }
-  function schoolEnd(record:SchoolRecord){ const start=schoolStart(record); const end=parseLocalDate(todayKey,record.endTime || record.time || '08:45'); return end>start ? end : new Date(start.getTime()+45*60000); }
-  function healthStart(record:HealthRecord){ return parseLocalDate(todayKey,record.time || '12:00'); }
-  function healthEnd(record:HealthRecord){ return new Date(healthStart(record).getTime()+60*60000); }
-  function isMedicalText(value:string){ const normalized=normalizeProduct(value); return ['lekar','dentyst','neurolog','kardiolog','ortoped','pediatr','wizyta','szpital','poradn','badani'].some((word)=>normalized.includes(word)); }
-  function rowsOverlap(a:{start:Date;end:Date},b:{start:Date;end:Date}){ return a.start < b.end && a.end > b.start; }
-  function titlesClose(a:string,b:string){ const aa=normalizeProduct(a).replace(/[^a-z0-9 ]/g,' ').trim(); const bb=normalizeProduct(b).replace(/[^a-z0-9 ]/g,' ').trim(); return !!aa && !!bb && (aa.includes(bb) || bb.includes(aa)); }
-
-  type StartPlanRow={ key:string; person:PersonKey; start:Date; end:Date; title:string; icon:string; place:string; source:'calendar'|'school'|'health'; allDay:boolean; priority:number };
-  function planForPerson(personName:string):StartPlanRow[] {
-    const key=personName as PersonKey;
-    const healthRows=todayHealthVisits.filter((r)=>r.person===key).map((r):StartPlanRow=>({
-      key:`health-${r.id}`, person:key, start:healthStart(r), end:healthEnd(r), title:r.title || r.specialty || 'Wizyta lekarska', icon:'🩺',
-      place:[r.specialty,r.doctor,r.location].filter(Boolean).join(' · '), source:'health', allDay:false, priority:110,
-    }));
-    const blocksSchoolDay=todayHealthVisits.some((r)=>r.person===key && r.blocksSchoolDay);
-    let schoolRows=todaySchoolItems.filter((r)=>r.person===key).map((r):StartPlanRow=>({
-      key:`school-${r.id}`, person:key, start:schoolStart(r), end:schoolEnd(r), title:r.type==='activity' ? r.title : (r.subject || r.title),
-      icon:subjectIcon(r.subject || r.title), place:r.note || 'Szkoła', source:'school', allDay:false, priority:r.type==='activity' ? 85 : 80,
-    }));
-    if (blocksSchoolDay) schoolRows=[];
-    else schoolRows=schoolRows.filter((school)=>!healthRows.some((visit)=>rowsOverlap(school,visit)));
-
-    let calendarRows=todayOccurrences.filter((o)=>o.source.person===key || o.source.person==='family').map((o):StartPlanRow=>({
-      key:o.key, person:key, start:o.date, end:o.endDate, title:o.source.title, icon:eventActivityIcon(o.source.title), place:o.source.description || '',
-      source:'calendar', allDay:o.source.allDay, priority:isMedicalText(`${o.source.title} ${o.source.description}`) ? 105 : (o.source.allDay ? 20 : 60),
-    }));
-    calendarRows=calendarRows.filter((row)=>!healthRows.some((visit)=>Math.abs(row.start.getTime()-visit.start.getTime())<10*60000 && titlesClose(row.title,visit.title)));
-    if (key==='Paweł' || key==='Nikodem') {
-      calendarRows=calendarRows.filter((row)=>row.allDay || row.priority>=100 || !schoolRows.some((school)=>rowsOverlap(row,school)));
-      schoolRows=schoolRows.filter((school)=>!calendarRows.some((row)=>row.priority>=100 && rowsOverlap(row,school)));
-    }
-    return [...healthRows,...calendarRows,...schoolRows].sort((a,b)=>a.start.getTime()-b.start.getTime() || b.priority-a.priority);
-  }
-
-  function liveStatus(personName:string) {
-    const rows=planForPerson(personName).filter((r)=>!r.allDay);
-    if (!rows.length) return { tone:'unknown', label:'Brak planu', detail:'Brak danych na dziś', until:'', next:'Brak danych' };
-    const activeRows=rows.filter((r)=>r.start<=now && r.end>now).sort((a,b)=>b.priority-a.priority || b.start.getTime()-a.start.getTime());
-    const active=activeRows[0];
-    const next=rows.filter((r)=>r.start>now).sort((a,b)=>a.start.getTime()-b.start.getTime() || b.priority-a.priority)[0];
-    if (active) {
-      return { tone:'busy', label:active.title, detail:active.place || `do ${formatTime(active.end)}`, until:`do ${formatTime(active.end)}`, next:next ? `${next.title} ${formatTime(next.start)}` : 'Później wolny' };
-    }
-    if (next) {
-      const minutes=Math.round((next.start.getTime()-now.getTime())/60000);
-      if (minutes<=30) return { tone:'break', label:'Przerwa', detail:`do ${formatTime(next.start)}`, until:`za ${Math.max(1,minutes)} min`, next:`${next.title} ${formatTime(next.start)}` };
-      return { tone:'free', label:personName==='Layla' ? 'W domu' : 'Wolny', detail:'Brak zajęć teraz', until:'', next:`${next.title} ${formatTime(next.start)}` };
-    }
-    return { tone:'free', label:personName==='Layla' ? 'W domu' : 'Wolny', detail:'Brak planów', until:'', next:'Brak kolejnych zajęć' };
-  }
-
-  const canSeeFamilyContext=isParent(member) || access.viewFamilySchedule;
-  const visibleFamilyMembers=canSeeFamilyContext
-    ? members.slice(0,5)
-    : members.filter((m)=>m.name===member?.name).slice(0,1);
-  const personalMembers=members.filter((m)=>m.name===member?.name).slice(0,1);
-  const familyStatus=visibleFamilyMembers.map((m)=>({member:m,status:liveStatus(m.name)}));
-  const allFreeInfo=useMemo(()=>{
-    const incomplete=visibleFamilyMembers.some((m)=>planForPerson(m.name).filter((r)=>!r.allDay).length===0);
-    if(incomplete) return { time:'—', countdown:'Brak pełnego planu', latestPerson:'' };
-    let latest:Date | undefined;
-    let latestPerson='';
-    for (const familyMember of visibleFamilyMembers) {
-      const rows=planForPerson(familyMember.name);
-      for (const row of rows) {
-        if(row.allDay || row.end<=now) continue;
-        if(!latest || row.end>latest){
-          latest=row.end;
-          latestPerson=familyMember.name;
-        }
+        const url = 'https://api.open-meteo.com/v1/forecast?latitude=54.176&longitude=15.576&current=temperature_2m,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min&timezone=Europe%2FWarsaw&forecast_days=1';
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) throw new Error('weather');
+        const data = await response.json();
+        const code = Number(data.current?.weather_code ?? 0);
+        const weatherMeta = code <= 1 ? ['Słonecznie', '☀️'] : code <= 3 ? ['Częściowe zachmurzenie', '⛅'] : code <= 48 ? ['Mgła / chmury', '🌫️'] : code <= 67 ? ['Deszcz', '🌧️'] : code <= 77 ? ['Śnieg', '🌨️'] : code <= 82 ? ['Przelotny deszcz', '🌦️'] : ['Burze', '⛈️'];
+        setWeather({ temp: Math.round(data.current?.temperature_2m ?? 0), max: Math.round(data.daily?.temperature_2m_max?.[0] ?? 0), min: Math.round(data.daily?.temperature_2m_min?.[0] ?? 0), wind: Math.round(data.current?.wind_speed_10m ?? 0), label: weatherMeta[0], icon: weatherMeta[1] });
+      } catch (error) {
+        if ((error as Error).name !== 'AbortError') console.warn('Pogoda chwilowo niedostępna');
       }
     }
-    if(!latest) return { time:'Teraz', countdown:'Wszyscy wolni teraz', latestPerson:'' };
-    const total=Math.max(0,Math.ceil((latest.getTime()-now.getTime())/60000));
-    const hours=Math.floor(total/60); const minutes=total%60;
-    const countdown=hours>0 ? `Wszyscy wolni za ${hours} godz. ${minutes} min` : `Wszyscy wolni za ${minutes} min`;
-    return { time:formatTime(latest), countdown, latestPerson };
-  },[todayOccurrences,todaySchoolItems,todayHealthVisits,visibleFamilyMembers.map((m)=>m.id).join('|'),todayKey,clockTick]);
+    void loadWeather();
+    const timer = window.setInterval(() => void loadWeather(), 30 * 60 * 1000);
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, []);
 
-  const dayPlan=useMemo(()=>{
-    const rows:StartPlanRow[]=[];
-    const sourceMembers=personalMembers.length ? personalMembers : visibleFamilyMembers.slice(0,1);
-    const familySeen=new Set<string>();
-    sourceMembers.forEach((m)=>{
-      planForPerson(m.name).forEach((row)=>{
-        const familyOccurrence=row.source==='calendar' && todayOccurrences.find((o)=>o.key===row.key)?.source.person==='family';
-        if(familyOccurrence){
-          if(familySeen.has(row.key)) return;
-          familySeen.add(row.key);
-          rows.push({...row,person:'family'});
-        } else rows.push(row);
-      });
-    });
-    return rows.sort((a,b)=>a.allDay===b.allDay ? (a.start.getTime()-b.start.getTime() || b.priority-a.priority) : (a.allDay ? -1 : 1)).slice(0,4);
-  },[todayOccurrences,todaySchoolItems,todayHealthVisits,personalMembers.map((m)=>m.id).join('|'),visibleFamilyMembers.map((m)=>m.id).join('|'),todayKey,clockTick]);
+  const now = new Date();
+  const todayStart = startOfDay(now);
+  const todayEnd = endOfDay(now);
+  const todayOccurrences = useMemo(() => events
+    .flatMap((event) => generateOccurrences(event, todayStart, todayEnd))
+    .sort((a, b) => a.date.getTime() - b.date.getTime()), [events, todayStart.getTime(), todayEnd.getTime()]);
 
-  const priorityTasks=useMemo(()=>tasks.filter((t)=>!t.done && (t.person===member?.name || t.person==='family')).sort((a,b)=>(({high:0,normal:1,low:2}[a.priority]-{high:0,normal:1,low:2}[b.priority]) || (a.dueDate || '9999').localeCompare(b.dueDate || '9999'))).slice(0,4),[tasks,member?.name]);
-  const upcomingEvents=useMemo(()=>events.flatMap((e)=>generateOccurrences(e,startOfDay(now),endOfDay(addDays(now,45)))).filter((o)=>o.endDate>=now && (o.source.person===member?.name || o.source.person==='family')).sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,4),[events,todayKey,clockTick,member?.name]);
-  const visibleHealthRecords=useMemo(()=>healthRecords.filter((r)=>r.person===member?.name || r.person==='family'),[healthRecords,member?.name]);
-  const upcomingVisits=useMemo(()=>visibleHealthRecords.filter((r)=>r.type==='visit' && r.status!=='cancelled' && r.date>=todayKey).sort((a,b)=>(`${a.date} ${a.time}`).localeCompare(`${b.date} ${b.time}`)).slice(0,2),[visibleHealthRecords,todayKey]);
-  const dueMedicineDoses=useMemo(()=>visibleHealthRecords.filter((r)=>r.type==='medicine').flatMap((r)=>{
-    const times=r.medicineTimes.length ? r.medicineTimes : (r.medicineTime ? [r.medicineTime] : []);
-    return times.filter((time)=>parseLocalDate(todayKey,time).getTime()<=now.getTime()).filter((time)=>!healthIntakes.some((i)=>i.recordId===r.id && i.date===todayKey && i.time===time)).map((time)=>({record:r,time}));
-  }),[visibleHealthRecords,healthIntakes,todayKey,clockTick]);
-  const visibleSchoolRecords=useMemo(()=>schoolRecords.filter((r)=>r.person===member?.name),[schoolRecords,member?.name]);
-  const schoolTests=useMemo(()=>visibleSchoolRecords.filter((r)=>r.type==='test' && r.date>=todayKey).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,2),[visibleSchoolRecords,todayKey]);
-  const schoolHomework=useMemo(()=>visibleSchoolRecords.filter((r)=>r.type==='homework' && (!r.date || r.date>=todayKey)).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,2),[visibleSchoolRecords,todayKey]);
-  const shoppingGroups=useMemo(()=>{
-    const order=Object.keys(SHOPPING_META) as ShoppingCategory[];
-    return order.map((category)=>({ category, items:shopping.filter((item)=>item.category===category).sort((a,b)=>Number(a.done)-Number(b.done) || (b.createdAt?.getTime()||0)-(a.createdAt?.getTime()||0)) })).filter((group)=>group.items.length>0);
-  },[shopping]);
-  const todayLabel=capitalize(now.toLocaleDateString('pl-PL',{weekday:'long',day:'numeric',month:'long',year:'numeric'}));
+  const priorityTasks = useMemo(() => tasks
+    .filter((item) => !item.done)
+    .sort((a, b) => (
+      { high: 0, normal: 1, low: 2 }[a.priority]
+      - { high: 0, normal: 1, low: 2 }[b.priority]
+      || (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99')
+    ))
+    .slice(0, 4), [tasks]);
 
-  type StartNotice={id:string;icon:string;title:string;meta:string;page:Page;level:'critical'|'important'|'info';score:number};
-  const tomorrowKey=formatDateInput(addDays(now,1));
-  const urgentItems=useMemo(()=>{
-    const list:StartNotice[]=[];
-    const canSeeHealth=(person:PersonKey)=>isParent(member) || access.viewFamilyHealth || person===member?.name || person==='family';
-    healthAlerts.filter((a)=>a.status==='open' && canSeeHealth(a.person)).forEach((a)=>list.push({id:`h-${a.id}`,icon:'🚨',title:`Brak potwierdzenia leku: ${a.title}`,meta:`${personLabel(a.person)} · ${a.time || 'do potwierdzenia'}`,page:'Zdrowie',level:'critical',score:100}));
-    dueMedicineDoses.forEach(({record,time})=>{
-      const alreadyAlerted=healthAlerts.some((a)=>a.status==='open' && a.recordId===record.id && a.date===todayKey && a.time===time);
-      if(!alreadyAlerted) list.push({id:`dose-${record.id}-${todayKey}-${time}`,icon:'💊',title:`Lek do przyjęcia: ${record.title}`,meta:`${personLabel(record.person)} · plan ${time}${record.dose?` · ${record.dose}`:''}`,page:'Zdrowie',level:'important',score:84});
-    });
-    upcomingVisits.filter((r)=>r.date===todayKey && !!r.time).forEach((r)=>{
-      const start=parseLocalDate(r.date,r.time); const minutes=(start.getTime()-now.getTime())/60000;
-      if(minutes>=0 && minutes<=120) list.push({id:`visit-${r.id}`,icon:'🩺',title:`Wizyta: ${r.specialty || r.title}`,meta:`${personLabel(r.person)} · ${r.time}${r.location ? ` · ${r.location}` : ''}`,page:'Zdrowie',level:minutes<=60?'critical':'important',score:minutes<=60?95:85});
-    });
-    priorityTasks.filter((t)=>t.dueDate && t.dueDate<=todayKey).forEach((t)=>list.push({id:`task-${t.id}`,icon:'✅',title:t.title,meta:`${personLabel(t.person)} · ${t.dueDate<todayKey?'po terminie':'na dziś'}`,page:'Zadania',level:t.dueDate<todayKey||t.priority==='high'?'critical':'important',score:t.dueDate<todayKey?92:(t.priority==='high'?82:70)}));
-    schoolTests.filter((r)=>r.date===todayKey || r.date===tomorrowKey).forEach((r)=>list.push({id:`test-${r.id}`,icon:'🎓',title:`Sprawdzian: ${r.subject || r.title}`,meta:`${personLabel(r.person)} · ${r.date===todayKey?'dzisiaj':'jutro'}`,page:'Szkoła',level:r.date===todayKey?'critical':'important',score:r.date===todayKey?88:76}));
-    upcomingEvents.filter((o)=>!o.source.allDay && o.date.getTime()>=now.getTime() && o.date.getTime()-now.getTime()<=60*60000).forEach((o)=>{
-      const duplicateVisit=upcomingVisits.some((r)=>r.person===o.source.person && r.date===formatDateInput(o.date) && (!!r.time && Math.abs(parseLocalDate(r.date,r.time).getTime()-o.date.getTime())<10*60000) && titlesClose(r.title,o.source.title));
-      if(!duplicateVisit) list.push({id:`event-${o.key}`,icon:'📅',title:o.source.title,meta:`${o.source.person==='family'?'Rodzina':personLabel(o.source.person)} · za ${Math.max(1,Math.round((o.date.getTime()-now.getTime())/60000))} min`,page:'Kalendarz',level:'info',score:60});
-    });
-    const seen=new Set<string>();
-    return list.sort((a,b)=>b.score-a.score).filter((item)=>{const key=`${normalizeProduct(item.title)}|${normalizeProduct(item.meta)}`; if(seen.has(key)) return false; seen.add(key); return true;}).slice(0,5);
-  },[healthAlerts,dueMedicineDoses,upcomingVisits,priorityTasks,schoolTests,upcomingEvents,todayKey,tomorrowKey,clockTick,member?.name,access.viewFamilyHealth]);
+  const upcomingEvents = useMemo(() => {
+    const rangeStart = startOfDay(new Date());
+    const end = endOfDay(addDays(rangeStart, 45));
+    return events.flatMap((event) => generateOccurrences(event, rangeStart, end))
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
+      .slice(0, 5);
+  }, [events]);
 
-  const notificationItems=useMemo(()=>{
-    const list:StartNotice[]=[...urgentItems];
-    tasks.filter((t)=>!t.done && t.approvalStatus==='pending' && (isParent(member) || access.viewFamilyTasks || t.person===member?.name)).forEach((t)=>list.push({id:`approval-${t.id}`,icon:'✅',title:t.title,meta:`${personLabel(t.person)} · do zatwierdzenia`,page:'Zadania',level:'info',score:50}));
-    schoolTests.forEach((r)=>list.push({id:`s-${r.id}`,icon:'🎓',title:`Sprawdzian: ${r.subject || r.title}`,meta:`${personLabel(r.person)} · ${formatShortDate(r.date)}`,page:'Szkoła',level:'info',score:45}));
-    upcomingEvents.filter((o)=>o.date.getTime()-now.getTime()<=24*3600000).forEach((o)=>{
-      const duplicateVisit=upcomingVisits.some((r)=>r.person===o.source.person && r.date===formatDateInput(o.date) && (!!r.time && Math.abs(parseLocalDate(r.date,r.time).getTime()-o.date.getTime())<10*60000) && titlesClose(r.title,o.source.title));
-      if(!duplicateVisit) list.push({id:`e-${o.key}`,icon:'📅',title:o.source.title,meta:`${o.source.person==='family' ? 'Rodzina' : personLabel(o.source.person)} · ${o.source.allDay?'cały dzień':formatTime(o.date)}`,page:'Kalendarz',level:'info',score:40});
-    });
-    const seen=new Set<string>();
-    return list.sort((a,b)=>b.score-a.score).filter((item)=>{const key=`${normalizeProduct(item.title.replace(/^brak potwierdzenia leku:\s*/i,''))}|${normalizeProduct(item.meta)}`; if(seen.has(key)) return false; seen.add(key); return true;}).slice(0,8);
-  },[urgentItems,tasks,schoolTests,upcomingEvents,upcomingVisits,todayKey,clockTick,member?.name,access.viewFamilyTasks]);
+  const openShopping = shopping.filter((item) => !item.done).slice(0, 5);
 
-  const unreadNotificationCount=notificationItems.filter((item)=>!readNoticeIds.includes(item.id)).length;
-  function persistReadNotices(next:string[]) {
-    const unique=Array.from(new Set(next)).slice(-250);
-    setReadNoticeIds(unique);
-    try { localStorage.setItem(readNoticeKey,JSON.stringify(unique)); } catch { /* ignore */ }
+  const todayKey = formatDateInput(now);
+  const todayWeekday = now.getDay() === 0 ? 7 : now.getDay();
+  const todaySchoolItems = useMemo(() => schoolRecords
+    .filter((r) => (r.type === 'lesson' || r.type === 'activity') && (r.weekday === todayWeekday || (!!r.date && r.date === todayKey)))
+    .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99')), [schoolRecords, todayWeekday, todayKey]);
+
+  function schoolStart(record: SchoolRecord) {
+    return parseLocalDate(todayKey, record.time || '08:00');
   }
-  function markNoticeRead(id:string) { if(!readNoticeIds.includes(id)) persistReadNotices([...readNoticeIds,id]); }
-  function markAllNoticesRead() { persistReadNotices([...readNoticeIds,...notificationItems.map((item)=>item.id)]); }
-
-  async function toggleShoppingFromStart(item:ShoppingItem) {
-    await updateDoc(doc(db,'shoppingItems',item.id),{done:!item.done,updatedAt:Timestamp.now()});
+  function schoolEnd(record: SchoolRecord) {
+    const start = schoolStart(record);
+    const end = parseLocalDate(todayKey, record.endTime || record.time || '08:45');
+    return end > start ? end : new Date(start.getTime() + 45 * 60000);
   }
 
-  function openFamily(person?:string) {
-    try { sessionStorage.setItem('nr-family-focus', person && isPersonKey(person) ? person : 'family'); } catch { /* ignore */ }
-    goTo('Rodzina');
+  const allFreeAt = useMemo(() => {
+    const ends: Date[] = todayOccurrences
+      .filter((o) => o.source.person !== 'family' && !o.source.allDay)
+      .map((o) => o.endDate);
+    for (const item of todaySchoolItems) ends.push(schoolEnd(item));
+    if (!ends.length) return 'Teraz';
+    return formatTime(ends.reduce((max, value) => value > max ? value : max, ends[0]));
+  }, [todayOccurrences, todaySchoolItems, todayKey]);
+
+  function planForPerson(personName: string) {
+    const key = personName as PersonKey;
+    const calendarRows = todayOccurrences
+      .filter((o) => o.source.person === key)
+      .map((o) => ({ key:o.key, start:o.date, end:o.endDate, title:o.source.title, icon:eventActivityIcon(o.source.title), allDay:o.source.allDay }));
+    const schoolRows = todaySchoolItems
+      .filter((r) => r.person === key)
+      .map((r) => ({ key:`school-${r.id}`, start:schoolStart(r), end:schoolEnd(r), title:r.type === 'activity' ? r.title : (r.subject || r.title), icon:subjectIcon(r.subject || r.title), allDay:false }));
+    return [...calendarRows, ...schoolRows].sort((a,b)=>a.start.getTime()-b.start.getTime());
   }
 
-  function lastEndFor(personName:string) {
-    const rows=planForPerson(personName).filter((r)=>!r.allDay && r.end>now);
-    if(!rows.length) return null;
-    return rows.reduce((max,r)=>r.end>max ? r.end : max,rows[0].end);
+  function personStatus(personName: string) {
+    const rows = planForPerson(personName);
+    const active = rows.find((o) => !o.allDay && o.start <= now && o.end > now);
+    if (active) return `${active.icon} ${active.title} do ${formatTime(active.end)}`;
+    const next = rows.find((o) => o.start > now);
+    if (next) return `${next.icon} ${next.title} ${formatTime(next.start)}`;
+    return '🟢 Wolny';
   }
 
-  function persistOrder(next:string[]) {
-    widgetOrderRef.current=next;
-    setWidgetOrder(next);
-    try { localStorage.setItem(layoutKey,JSON.stringify(next)); } catch { /* ignore */ }
-  }
+  return (
+    <div className="page-content start-dashboard-page start-v130">
+      <section className="start-top-row">
+        <div className="family-quick-strip" aria-label="Profile rodziny">
+          {members.slice(0, 5).map((person) => (
+            <button key={person.id} className="quick-person" type="button" onClick={() => goTo('Rodzina')} title={`Profil: ${person.name}`}>
+              <span className="quick-avatar">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span>
+              <span title="Aktywne konto" aria-label="Aktywne konto" className={`online-dot ${person.active ? 'on' : ''}`} />
+              <strong>{person.name}</strong><small>{personRole(person.name, person.role)}</small>
+            </button>
+          ))}
+        </div>
+        <div className="start-weather" title="Pogoda: Open-Meteo">
+          <span className="weather-icon">{weather?.icon || '🌤️'}</span>
+          <div className="weather-main"><strong>Kołobrzeg</strong><b>{weather ? `${weather.temp}°C` : '—°C'}</b><small>{weather?.label || 'Pobieranie pogody…'}</small></div>
+          <div className="weather-side">
+            <div className="weather-date"><strong>{capitalize(new Date().toLocaleDateString('pl-PL', { weekday: 'long' }))}</strong><small>{new Date().toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })}</small></div>
+            {weather && <div className="weather-details"><span>↑ {weather.max}°C</span><span>↓ {weather.min}°C</span><span>≋ {weather.wind} km/h</span></div>}
+          </div>
+        </div>
+      </section>
 
-  function persistHidden(next:string[]) {
-    setHiddenWidgets(next);
-    try { localStorage.setItem(hiddenKey,JSON.stringify(next)); } catch { /* ignore */ }
-  }
+      <section className="start-welcome-banner">
+        <div className="start-welcome-copy"><h1>Cześć, <span>{name}!</span> 👋</h1><p>Miło Cię znowu widzieć.<br />Dobrego dnia dla całej rodziny!</p></div>
+      </section>
 
-  function hideWidget(id:string) {
-    persistHidden(Array.from(new Set([...hiddenWidgets,id])));
-    setWidgetMenu(null);
-  }
+      <section className="family-free-banner">
+        <div><span className="free-family-icon">👨‍👩‍👧‍👦</span><div><small>Rodzinny czas</small><strong>Wszyscy wolni od {allFreeAt}</strong><p>Liczymy sztywne godziny zakończenia pracy, szkoły i zajęć.</p></div></div>
+        <button onClick={() => goTo('Kalendarz')}>Pełny plan dnia ›</button>
+      </section>
 
-  function restoreWidget(id:string) {
-    persistHidden(hiddenWidgets.filter((item)=>item!==id));
-    setWidgetMenu(null);
-  }
+      <section className="today-people-grid">
+        {members.slice(0, 5).map((person) => {
+          const personEvents = planForPerson(person.name).slice(0, 5);
+          return <article className="today-person-card" key={person.id} style={{ borderTopColor: personColor(person.name as PersonKey) }}>
+            <header><span className="mini-avatar">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span><div><strong>{person.name}</strong><small>{personStatus(person.name)}</small></div></header>
+            <div className="mini-timeline">
+              {personEvents.length === 0 ? <p>Brak zaplanowanych zajęć</p> : personEvents.map((o) => <div key={o.key}><time>{o.allDay ? 'Cały dzień' : `${formatTime(o.start)}–${formatTime(o.end)}`}</time><span>{o.icon} {o.title}</span></div>)}
+            </div>
+          </article>;
+        })}
+      </section>
 
-  function restoreWidgetPosition(id:string) {
-    const current=widgetOrderRef.current.filter((item)=>item!==id);
-    const wanted=defaultWidgetOrder.indexOf(id);
-    const before=defaultWidgetOrder.slice(0,wanted).filter((item)=>current.includes(item));
-    const insertAt=before.length ? current.indexOf(before[before.length-1])+1 : 0;
-    current.splice(Math.max(0,insertAt),0,id);
-    persistOrder(current);
-    setWidgetMenu(null);
-  }
+      <section className="home-focus-grid home-focus-grid-v130">
+        <article className="focus-card">
+          <header><div><span className="focus-title-icon purple">✓</span><strong>Najważniejsze zadania</strong></div><button onClick={() => goTo('Zadania')}>Zobacz wszystkie ›</button></header>
+          <div className="focus-list">
+            {priorityTasks.length === 0 ? <p className="focus-empty">Brak pilnych zadań — super! ✨</p> : priorityTasks.map((item) => (
+              <button className="focus-row" key={item.id} onClick={() => goTo('Zadania')}>
+                <span className="focus-check" />
+                <span className="focus-main"><strong>{item.title}</strong><small>{personLabel(item.person)}{item.points ? ` · +${item.points} pkt` : ''}</small></span>
+                <span className="focus-meta">{item.dueDate ? formatShortDate(item.dueDate) : item.priority === 'high' ? 'Pilne' : 'Bez terminu'}</span>
+              </button>
+            ))}
+          </div>
+        </article>
 
-  function persistWidgetSizes(next:Record<string,WidgetSize>) {
-    setWidgetSizes(next);
-    try { localStorage.setItem(sizeKey,JSON.stringify(next)); } catch { /* ignore */ }
-  }
-  function setWidgetSize(id:string,size:WidgetSize) { persistWidgetSizes({...widgetSizes,[id]:size}); setWidgetMenu(null); }
+        <article className="focus-card">
+          <header><div><span className="focus-title-icon pink">📅</span><strong>Nadchodzące wydarzenia</strong></div><button onClick={() => goTo('Kalendarz')}>Zobacz wszystkie ›</button></header>
+          <div className="focus-list">
+            {upcomingEvents.length === 0 ? <p className="focus-empty">Brak nadchodzących wydarzeń.</p> : upcomingEvents.map((occurrence) => {
+              const completed = sameDay(occurrence.date, now) && occurrence.endDate < now;
+              return <button className={`focus-row event-focus-row ${completed ? 'completed-today' : ''}`} key={occurrence.key} onClick={() => goTo('Kalendarz')}>
+                <span className="date-badge"><b>{occurrence.date.getDate()}</b><small>{occurrence.date.toLocaleDateString('pl-PL', { month: 'short' }).replace('.', '').toUpperCase()}</small></span>
+                <span className="focus-main"><strong>{occurrence.source.title}</strong><small>{occurrence.source.allDay ? 'Cały dzień' : `${formatTime(occurrence.date)}–${formatTime(occurrence.endDate)}`} · {personLabel(occurrence.source.person)}</small></span>
+                <span className="focus-meta">{completed ? '✓ Zakończone' : '›'}</span>
+              </button>;
+            })}
+          </div>
+        </article>
 
-  function resetDashboardLayout() {
-    persistOrder([...defaultWidgetOrder]);
-    persistHidden([]);
-    persistWidgetSizes({...defaultWidgetSizes});
-    setWidgetMenu(null);
-  }
-
-  function beginResize(id:string,e:React.PointerEvent<HTMLButtonElement>) {
-    e.preventDefault(); e.stopPropagation();
-    const sizes:WidgetSize[]=['small','medium','wide','large'];
-    const current=widgetSizes[id] || defaultWidgetSizes[id] || 'medium';
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-    resizeRef.current={id,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,startIndex:Math.max(0,sizes.indexOf(current))};
-  }
-  function moveResize(e:React.PointerEvent<HTMLButtonElement>) {
-    const r=resizeRef.current; if(!r || r.pointerId!==e.pointerId) return;
-    e.preventDefault(); e.stopPropagation();
-    const sizes:WidgetSize[]=['small','medium','wide','large'];
-    const delta=(e.clientX-r.startX)+((e.clientY-r.startY)*.35);
-    const step=Math.round(delta/90);
-    const index=Math.max(0,Math.min(sizes.length-1,r.startIndex+step));
-    const size=sizes[index];
-    setWidgetSizes((current)=>{
-      if(current[r.id]===size) return current;
-      const next={...current,[r.id]:size};
-      try { localStorage.setItem(sizeKey,JSON.stringify(next)); } catch { /* ignore */ }
-      return next;
-    });
-  }
-  function endResize(e?:React.PointerEvent<HTMLButtonElement>) {
-    if(!resizeRef.current) return;
-    e?.preventDefault(); e?.stopPropagation();
-    resizeRef.current=null;
-  }
-
-  function beginTilePress(id:string,e:React.PointerEvent<HTMLElement>) {
-    if (e.pointerType==='mouse' && e.button!==0) return;
-    const source=e.currentTarget;
-    const rect=source.getBoundingClientRect();
-    try { source.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-    const holder={id,pointerId:e.pointerId,startX:e.clientX,startY:e.clientY,offsetX:e.clientX-rect.left,offsetY:e.clientY-rect.top,timer:0,active:false,source,ghost:null as HTMLElement|null};
-    holder.timer=window.setTimeout(()=>{
-      const ghost=source.cloneNode(true) as HTMLElement;
-      ghost.classList.add('start-drag-ghost');
-      ghost.style.width=`${rect.width}px`; ghost.style.height=`${rect.height}px`;
-      ghost.style.left=`${e.clientX-holder.offsetX}px`; ghost.style.top=`${e.clientY-holder.offsetY}px`;
-      document.body.appendChild(ghost);
-      source.classList.add('start-drag-source');
-      holder.ghost=ghost; holder.active=true;
-      setEditMode(true);
-      setWidgetMenu(null);
-      document.body.classList.add('start-is-dragging');
-      if (navigator.vibrate) navigator.vibrate(20);
-    },430);
-    dragRef.current=holder;
-  }
-
-  function moveTile(e:React.PointerEvent<HTMLElement>) {
-    const d=dragRef.current; if(!d || d.pointerId!==e.pointerId) return;
-    if(!d.active) {
-      if(Math.hypot(e.clientX-d.startX,e.clientY-d.startY)>12) { window.clearTimeout(d.timer); dragRef.current=null; }
-      return;
-    }
-    e.preventDefault();
-    if(d.ghost) { d.ghost.style.left=`${e.clientX-d.offsetX}px`; d.ghost.style.top=`${e.clientY-d.offsetY}px`; }
-    const target=document.elementFromPoint(e.clientX,e.clientY)?.closest<HTMLElement>('[data-start-widget]');
-    const targetId=target?.dataset.startWidget;
-    if(targetId && targetId!==d.id) {
-      setWidgetOrder((current)=>{
-        const next=[...current]; const from=next.indexOf(d.id); const to=next.indexOf(targetId);
-        if(from<0 || to<0 || from===to) return current;
-        next.splice(from,1); next.splice(to,0,d.id); widgetOrderRef.current=next; return next;
-      });
-    }
-    const edge=72;
-    if(e.clientY<edge) window.scrollBy({top:-18,behavior:'auto'});
-    else if(e.clientY>window.innerHeight-edge) window.scrollBy({top:18,behavior:'auto'});
-  }
-
-  function endTilePress(e?:React.PointerEvent<HTMLElement>) {
-    const d=dragRef.current; if(!d) return;
-    window.clearTimeout(d.timer);
-    if(d.active) {
-      d.ghost?.remove(); d.source.classList.remove('start-drag-source'); document.body.classList.remove('start-is-dragging');
-      persistOrder(widgetOrderRef.current);
-      e?.preventDefault();
-    }
-    dragRef.current=null;
-  }
-
-  function tileProps(id:string) {
-    return {
-      'data-start-widget':id,
-      onPointerDown:(e:React.PointerEvent<HTMLElement>)=>beginTilePress(id,e),
-      onPointerMove:moveTile,
-      onPointerUp:endTilePress,
-      onPointerCancel:endTilePress,
-    };
-  }
-
-  const studentSummary=(person:'Paweł'|'Nikodem')=>{
-    const rows=planForPerson(person).filter((r)=>r.source==='school');
-    const active=rows.find((r)=>r.start<=now && r.end>now);
-    const last=rows[rows.length-1];
-    return { active, last };
-  };
-  const dashboardStudents: Array<'Paweł'|'Nikodem'> = member?.name==='Paweł' || member?.name==='Nikodem' ? [member.name] : [];
-  const visibleHealthAlerts=healthAlerts.filter((a)=>a.status==='open' && (isParent(member) || access.viewFamilyHealth || a.person===member?.name));
-  const permissionHiddenWidgets=canSeeFamilyContext ? [] : ['ends','free'];
-  const widgetLabels:Record<string,string>={day:'Plan dnia',ends:'Kto kiedy kończy',free:'Wszyscy wolni od',school:'Szkoła',tasks:'Zadania',shopping:'Zakupy',health:'Zdrowie',events:'Wydarzenia',quick:'Szybkie dodawanie'};
-
-  const widgets:Record<string,React.ReactNode>={
-    day:<article className="start1310-card start1310-day"><header><div><span>📅</span><strong>Plan dnia – dziś</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz cały dzień ›</button></header><div className="start1310-day-list">{dayPlan.length ? dayPlan.map((item)=><button key={`${item.person}-${item.key}`} onClick={()=>goTo(item.source==='school' ? 'Szkoła' : 'Kalendarz')}><i style={{background:personColor(item.person)}}/><span className="mini-person">{members.find((m)=>m.name===item.person)?.photoURL ? <img src={members.find((m)=>m.name===item.person)?.photoURL} alt=""/> : memberEmoji(item.person)}</span><time>{item.allDay ? 'Cały dzień' : `${formatTime(item.start)} – ${formatTime(item.end)}`}</time><strong>{personLabel(item.person)}</strong><span>{item.icon} {item.title}</span><em>›</em></button>) : <p className="start1310-empty">Brak wpisów na dziś.</p>}</div></article>,
-    ends:<article className="start1310-card start1310-ends" onClick={()=>goTo('Kalendarz')}><header><div><span>🕒</span><strong>Kto kiedy kończy?</strong></div><button onClick={(e)=>{e.stopPropagation();goTo('Kalendarz');}}>Zobacz więcej ›</button></header><div>{visibleFamilyMembers.map((m)=>{const s=liveStatus(m.name);const last=lastEndFor(m.name);return <div key={m.id} className="start1312-end-row" role="button" tabIndex={0} onClick={()=>goTo('Kalendarz')} onKeyDown={(e)=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();goTo('Kalendarz');}}}><button className="start1312-person-link" onClick={(e)=>{e.stopPropagation();openFamily(m.name);}}><span className="mini-person">{m.photoURL ? <img src={m.photoURL} alt=""/> : memberEmoji(m.name)}</span><strong>{m.name}</strong></button><time>{last ? formatTime(last) : '—'}</time><small className={`status-dot ${s.tone}`}/><em>{s.label}</em><b>›</b></div>;})}</div></article>,
-    free:<article className="start1310-card start1310-free"><header><span>👥</span><strong>Wszyscy wolni od</strong></header><b>{allFreeInfo.time}</b><strong className="start1312-free-countdown">{allFreeInfo.countdown}</strong><p>{allFreeInfo.latestPerson ? `Najpóźniej kończy ${allFreeInfo.latestPerson}` : 'Na podstawie dzisiejszego planu'}</p><div aria-hidden="true">⌂ ♡</div></article>,
-    school:<article className="start1310-card start1310-school"><header><div><span>🎓</span><strong>Szkoła</strong></div><button onClick={()=>goTo('Szkoła')}>Zobacz więcej ›</button></header>{dashboardStudents.map((person)=>{const info=studentSummary(person);return <button className="school-person-summary" key={person} onClick={()=>goTo('Szkoła')}><span className="mini-person">{members.find((m)=>m.name===person)?.photoURL ? <img src={members.find((m)=>m.name===person)?.photoURL} alt=""/> : memberEmoji(person)}</span><span><strong>{person}</strong>{info.active ? <><b>Trwa lekcja: {info.active.title}</b><small>{formatTime(info.active.start)} – {formatTime(info.active.end)}{info.active.place ? ` · ${info.active.place}` : ''}</small></> : <><b>{info.last ? `Koniec lekcji: ${formatTime(info.last.end)}` : 'Brak lekcji dziś'}</b></>}</span></button>;})}{schoolTests[0] && <button className="school-next" onClick={()=>goTo('Szkoła')}><span>📝</span><div><strong>Najbliżej: {formatShortDate(schoolTests[0].date)} · Sprawdzian</strong><small>{schoolTests[0].subject || schoolTests[0].title}</small></div><em>›</em></button>}{!schoolTests[0] && schoolHomework[0] && <button className="school-next" onClick={()=>goTo('Szkoła')}><span>📚</span><div><strong>Zadanie domowe</strong><small>{schoolHomework[0].subject || schoolHomework[0].title}</small></div><em>›</em></button>}</article>,
-    tasks:<article className="start1310-card start1310-tasks"><header><div><span>✅</span><strong>Zadania – najważniejsze</strong></div><button onClick={()=>goTo('Zadania')}>Zobacz wszystkie ›</button></header><div>{priorityTasks.length ? priorityTasks.map((t)=>{const taskMember=members.find((m)=>m.name===t.person);return <button key={t.id} onClick={()=>goTo('Zadania')}><span className="mini-person task-person-avatar">{taskMember?.photoURL ? <img src={taskMember.photoURL} alt=""/> : memberEmoji(t.person)}</span><span><strong>{t.title}</strong><small>{personLabel(t.person)}{t.points ? ` · +${t.points} pkt` : ''}</small></span><em>{t.dueDate===todayKey ? 'Dziś' : t.dueDate ? formatShortDate(t.dueDate) : 'Bez terminu'}</em></button>;}) : <p className="start1310-empty">Brak pilnych zadań ✨</p>}</div></article>,
-    shopping:<article className="start1310-card start1310-shopping start1312-shopping"><header><div><span>🛒</span><strong>Zakupy</strong></div><button onClick={()=>goTo('Zakupy')}>Zobacz wszystkie ›</button></header><div className="start1312-shopping-scroll">{shoppingGroups.length ? shoppingGroups.map((group)=><section className="start1312-shopping-group" key={group.category}><header><span>{SHOPPING_META[group.category].icon}</span><strong>{SHOPPING_META[group.category].label}</strong><small>{group.items.filter((item)=>!item.done).length}</small></header><div>{group.items.map((item)=><button key={item.id} className={item.done?'done':''} onClick={()=>void toggleShoppingFromStart(item)}><span className="start1312-shop-check">{item.done?'✓':''}</span><strong>{item.title}</strong><small>{item.quantity ? `${item.quantity} ${item.unit}` : ''}</small></button>)}</div></section>) : <p className="start1310-empty">Lista zakupów jest pusta.</p>}</div></article>,
-    health:<article className="start1310-card start1310-health"><header><div><span>♡</span><strong>Zdrowie</strong></div><button onClick={()=>goTo('Zdrowie')}>Zobacz więcej ›</button></header><div>{upcomingVisits.length ? upcomingVisits.map((r)=><button key={r.id} onClick={()=>goTo('Zdrowie')}><span className="mini-person">{members.find((m)=>m.name===r.person)?.photoURL ? <img src={members.find((m)=>m.name===r.person)?.photoURL} alt=""/> : memberEmoji(r.person)}</span><span>🩺</span><div><strong>{personLabel(r.person)} · {r.specialty || r.title}</strong><small>{r.date===todayKey ? 'Dziś' : formatShortDate(r.date)}{r.time ? `, ${r.time}` : ''}</small></div><em>›</em></button>) : <p className="start1310-empty">Brak zaplanowanych wizyt.</p>}</div><div className={`start1310-med-status ${dueMedicineDoses.length || visibleHealthAlerts.length ? 'alert' : 'ok'}`}>{dueMedicineDoses.length || visibleHealthAlerts.length ? `🔔 ${dueMedicineDoses.length || visibleHealthAlerts.length} lek(i) wymagają uwagi` : '✓ Brak leków do podania dziś'}</div></article>,
-    events:<article className="start1310-card start1310-events"><header><div><span>📅</span><strong>Nadchodzące wydarzenia</strong></div><button onClick={()=>goTo('Kalendarz')}>Zobacz więcej ›</button></header><div>{upcomingEvents.length ? upcomingEvents.map((o)=><button key={o.key} onClick={()=>goTo('Kalendarz')}><span className="date-box"><b>{o.date.getDate()}</b><small>{o.date.toLocaleDateString('pl-PL',{month:'short'}).replace('.','').toUpperCase()}</small></span><div><strong>{o.source.title}{o.source.person!=='family' ? ` – ${personLabel(o.source.person)}` : ''}</strong><small>{o.source.allDay ? 'Cały dzień' : `${formatTime(o.date)} – ${formatTime(o.endDate)}`}</small></div></button>) : <p className="start1310-empty">Brak nadchodzących wydarzeń.</p>}</div></article>,
-    quick:<article className="start1310-card start1310-quick"><header><div><span>⚡</span><strong>Szybkie dodawanie</strong></div></header><div><button onClick={()=>goTo('Kalendarz')}>📅<span>Dodaj wydarzenie</span></button><button onClick={()=>goTo('Zadania')}>✅<span>Dodaj zadanie</span></button><button onClick={()=>goTo('Zakupy')}>🛒<span>Dodaj zakup</span></button><button onClick={()=>goTo('Zdrowie')}>➕<span>Dodaj wizytę</span></button></div></article>,
-  };
-
-  return <div className="start-v1310">
-    <header className="start1310-header">
-      <div><h1>Dzień dobry, {name}!</h1><p>{todayLabel}</p></div>
-      <div className="start1310-header-right">
-        <div className="start1310-weather"><span>{weather?.icon || '🌤️'}</span><div><small>Kołobrzeg</small><strong>{weather ? `${weather.temp}°C` : '—°C'}</strong></div>{weather && <p><b>{weather.label}</b><span>↑ {weather.max}° ↓ {weather.min}°</span></p>}</div>
-        <button className="start1310-icon-btn" title="Szukaj" type="button">⌕</button>
-        <div className="start1310-notification-wrap"><button className="start1310-icon-btn" type="button" title="Powiadomienia" onClick={()=>setNotificationsOpen((v)=>!v)}>🔔{unreadNotificationCount>0 && <i>{unreadNotificationCount}</i>}</button>{notificationsOpen && <aside className="start1310-notifications"><header><strong>Powiadomienia</strong><div>{notificationItems.length>0 && <button className="mark-all-read" onClick={markAllNoticesRead}>Przeczytane</button>}<button onClick={()=>setNotificationsOpen(false)}>✕</button></div></header>{notificationItems.length ? notificationItems.map((n)=>{const read=readNoticeIds.includes(n.id);return <button key={n.id} className={read?'read':'unread'} onClick={()=>{markNoticeRead(n.id);setNotificationsOpen(false);goTo(n.page);}}><span>{n.icon}</span><div><strong>{n.title}</strong><small>{n.meta}</small></div>{!read && <i className="notice-unread-dot"/>}</button>;}) : <p>Wszystko załatwione ✓</p>}<footer><button onClick={()=>{try{sessionStorage.setItem('nr-settings-focus','notifications');}catch{} setNotificationsOpen(false);goTo('Ustawienia');}}>Ustawienia powiadomień</button><button title="Wycisz na godzinę">🔕 Wycisz</button></footer></aside>}</div>
-        <button className="start1310-user" type="button" onClick={()=>openFamily(name)}>{member?.photoURL ? <img src={member.photoURL} alt=""/> : memberEmoji(name)}</button>
-      </div>
-    </header>
-
-    <section className="start1310-family-strip">
-      {familyStatus.map(({member:person,status})=><button key={person.id} className={`start1310-person-card ${status.tone}`} onClick={()=>openFamily(person.name)}><span className="start1310-person-photo">{person.photoURL ? <img src={person.photoURL} alt=""/> : memberEmoji(person.name)}</span><div><strong>{person.name}</strong><b><i className={`status-dot ${status.tone}`}/>{status.label}</b><small>{status.detail}</small></div><p><small>Następnie</small><strong>{status.next}</strong></p></button>)}
-    </section>
-
-    {urgentItems.length>0 && <section className="start1311-urgent-strip">
-      <header><div><span>⚠️</span><strong>Najważniejsze teraz</strong></div><small>{urgentItems.length} {urgentItems.length===1?'sprawa wymaga':'spraw wymaga'} uwagi</small></header>
-      <div>{urgentItems.slice(0,3).map((item)=><button key={item.id} className={item.level} onClick={()=>goTo(item.page)}><span>{item.icon}</span><div><strong>{item.title}</strong><small>{item.meta}</small></div><em>›</em></button>)}</div>
-    </section>}
-
-    <section className={`start1311-edit-bar ${editMode?'editing':''}`}>
-      <small>Dane aktualne: {formatTime(now)}</small>
-      <div>{editMode && hiddenWidgets.length>0 && <button className="secondary-button" onClick={()=>setWidgetMenu(widgetMenu==='__hidden' ? null : '__hidden')}>＋ Dodaj kafelek ({hiddenWidgets.length})</button>}<button className={editMode?'primary-button':'secondary-button'} onClick={()=>{setEditMode((v)=>!v);setWidgetMenu(null);}}>{editMode?'✓ Gotowe':'✥ Edytuj pulpit'}</button>{editMode&&<button className="secondary-button" onClick={resetDashboardLayout}>↺ Przywróć układ</button>}</div>
-      {editMode && widgetMenu==='__hidden' && hiddenWidgets.length>0 && <aside className="start1311-hidden-menu">{hiddenWidgets.map((id)=><button key={id} onClick={()=>restoreWidget(id)}>＋ {widgetLabels[id] || id}</button>)}</aside>}
-    </section>
-
-    <section className={`start1310-widget-grid ${editMode?'is-editing':''}`}>
-      {widgetOrder.filter((id)=>!hiddenWidgets.includes(id) && !permissionHiddenWidgets.includes(id)).map((id)=><div key={id} className={`start1311-widget-shell widget-${id}`} data-widget-size={widgetSizes[id] || defaultWidgetSizes[id] || 'medium'} {...tileProps(id)}>
-        {editMode && <button className="start1311-widget-menu-button" type="button" aria-label={`Opcje: ${widgetLabels[id] || id}`} onPointerDown={(e)=>e.stopPropagation()} onClick={(e)=>{e.stopPropagation();setWidgetMenu((current)=>current===id?null:id);}}>⋮</button>}
-        {editMode && widgetMenu===id && <aside className="start1311-widget-menu" onPointerDown={(e)=>e.stopPropagation()}><button onClick={()=>hideWidget(id)}>👁️ Ukryj z pulpitu</button><button onClick={()=>restoreWidgetPosition(id)}>↺ Przywróć pozycję</button><div className="start1312-size-options"><small>Rozmiar kafelka</small><div>{(['small','medium','wide','large'] as WidgetSize[]).map((size)=><button key={size} className={(widgetSizes[id]||defaultWidgetSizes[id])===size?'active':''} onClick={()=>setWidgetSize(id,size)}>{size==='small'?'Mały':size==='medium'?'Średni':size==='wide'?'Szeroki':'Duży'}</button>)}</div></div></aside>}
-        {widgets[id]}
-        {editMode && <button className="start1312-resize-handle" type="button" aria-label="Zmień rozmiar kafelka" onPointerDown={(e)=>beginResize(id,e)} onPointerMove={moveResize} onPointerUp={endResize} onPointerCancel={endResize}>⌟</button>}
-      </div>)}
-    </section>
-    <div className="start1310-layout-tip">Przytrzymaj kafelek, aby go przesunąć. W trybie edycji użyj ⋮ lub uchwytu w prawym dolnym rogu, aby zmienić jego rozmiar.</div>
-  </div>;
+        <article className="focus-card shopping-preview-card">
+          <header><div><span className="focus-title-icon orange">🛒</span><strong>Lista zakupów</strong></div><button onClick={() => goTo('Zakupy')}>Pokaż więcej ›</button></header>
+          <div className="focus-list">
+            {openShopping.length === 0 ? <p className="focus-empty">Lista zakupów jest pusta.</p> : openShopping.map((item) => <button className="focus-row" key={item.id} onClick={() => goTo('Zakupy')}><span>{SHOPPING_META[item.category].icon}</span><span className="focus-main"><strong>{item.title}</strong><small>{SHOPPING_META[item.category].label}</small></span><span className="focus-meta">{item.quantity} {item.unit}</span></button>)}
+          </div>
+        </article>
+      </section>
+    </div>
+  );
 }
 
 /* =========================================================
    SHARED UI
    ========================================================= */
 
-function ModuleHeader({ icon, title, text, action }: { icon: string; title: string; text: string; action?: React.ReactNode }) {
+function ModuleHeader({ icon: _icon, title, text, action }: { icon: string; title: string; text: string; action?: React.ReactNode }) {
+  const pageIcon = (['Kalendarz','Zadania','Zakupy','Czat','Zdrowie','Szkoła','Rodzina','Ustawienia'] as Page[]).includes(title as Page) ? title as Page : 'Start';
   return (
     <section className="page-header compact-header">
-      <div><small>Nasza Rodzina</small><h1>{icon} {title}</h1><p>{text}</p></div>
+      <div className="module-heading"><span className="module-title-icon"><AppIcon page={pageIcon} size={20} /></span><div><small>Nasza Rodzina</small><h1>{title}</h1><p>{text}</p></div></div>
       {action}
     </section>
   );
 }
 
-function PersonSelect({ value, onChange, includeFamily = true, schoolOnly = false }: { value: PersonKey; onChange: (v: PersonKey) => void; includeFamily?: boolean; schoolOnly?: boolean }) {
-  const options: PersonKey[] = schoolOnly ? ['Paweł', 'Nikodem'] : (includeFamily ? PEOPLE : PEOPLE.filter((p) => p !== 'family'));
+function PersonSelect({ value, onChange, includeFamily = true, schoolOnly = false, allowed }: { value: PersonKey; onChange: (v: PersonKey) => void; includeFamily?: boolean; schoolOnly?: boolean; allowed?: PersonKey[] }) {
+  const options: PersonKey[] = allowed || (schoolOnly ? ['Paweł', 'Nikodem'] : (includeFamily ? PEOPLE : PEOPLE.filter((p) => p !== 'family')));
   return (
-    <select value={value} onChange={(e) => isPersonKey(e.target.value) && onChange(e.target.value)}>
+    <select aria-label="Osoba" value={value} onChange={(e) => isPersonKey(e.target.value) && onChange(e.target.value)}>
       {options.map((person) => <option key={person} value={person}>{personLabel(person)}</option>)}
     </select>
   );
@@ -1349,13 +968,30 @@ function EmptyState({ icon, text }: { icon: string; text: string }) {
 }
 
 function Modal({ title, subtitle, onClose, children, wide = false }: { title: string; subtitle?: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
+  const element = useRef<HTMLElement | null>(null);
+  const closeRef = useRef(onClose); closeRef.current = onClose;
+  const titleId = React.useId();
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    element.current?.focus();
+    function keyboard(e: KeyboardEvent) {
+      if (e.key === 'Escape') { e.preventDefault(); closeRef.current(); }
+      if (e.key !== 'Tab') return;
+      const options = Array.from(element.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]') || []).filter(node=>node.getClientRects().length);
+      if (!options.length) { e.preventDefault(); return; }
+      const first = options[0], last = options[options.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === element.current)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || document.activeElement === element.current)) { e.preventDefault(); first.focus(); }
+    }
+    document.addEventListener('keydown', keyboard);
+    return () => { document.body.style.overflow = overflow; document.removeEventListener('keydown', keyboard); previous?.focus(); };
+  }, []);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <section className={`modal-card ${wide ? 'wide' : ''}`}>
-        <header className="modal-header">
-          <div><small>{subtitle || 'Nasza Rodzina'}</small><h2>{title}</h2></div>
-          <button type="button" onClick={onClose} aria-label="Zamknij">✕</button>
-        </header>
+      <section ref={element} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className={`modal-card ${wide ? 'wide' : ''}`}>
+        <header className="modal-header"><div><small>{subtitle || 'Nasza Rodzina'}</small><h2 id={titleId}>{title}</h2></div><button type="button" onClick={onClose} aria-label="Zamknij">✕</button></header>
         <div className="modal-body">{children}</div>
       </section>
     </div>
@@ -1370,41 +1006,21 @@ function DetailRow({ label, value }: { label: string; value: string }) {
    CALENDAR 2.1
    ========================================================= */
 
-function CalendarPage({ user, member, goTo }: { user: User; member: Member | null; goTo: (page: Page) => void }) {
-  const calendarAccess = effectiveMemberPermissions(member);
-  const calendarParent = isParent(member);
-  const ownCalendarPerson = isPersonKey(member?.name) ? member!.name as PersonKey : 'family';
+function CalendarPage({ user, member, goTo }: { user: User; member: Member | null; goTo: (page:Page)=>void }) {
   const [view, setView] = useState<CalendarView>('week');
   const [focusDate, setFocusDate] = useState(() => new Date());
   const [events, setEvents] = useState<CalendarEventData[]>([]);
-  const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<PersonKey>('family');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<EventForm>(() => createDefaultEventForm(new Date()));
   const [saving, setSaving] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEventData | null>(null);
+  const [selectedOccurrenceDate, setSelectedOccurrenceDate] = useState<Date | null>(null);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<EventForm>(() => createDefaultEventForm(new Date()));
   const [updating, setUpdating] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [lastChecked, setLastChecked] = useState(() => new Date());
-
-  useEffect(() => onSnapshot(collection(db, 'members'), (snapshot) => {
-    const loaded = snapshot.docs.map((memberDoc): FamilyMemberDoc => {
-      const data = memberDoc.data();
-      return {
-        id: memberDoc.id,
-        name: String(data.name || 'Rodzina'),
-        role: personRole(String(data.name || ''), typeof data.role === 'string' ? data.role : ''),
-        photoURL: typeof data.photoURL === 'string' ? data.photoURL : undefined,
-        active: data.active !== false,
-        birthDate: typeof data.birthDate === 'string' ? data.birthDate : undefined,
-        permissions: normalizeMemberPermissions(data.permissions),
-      };
-    });
-    loaded.sort((a, b) => FAMILY_ORDER.indexOf(a.name) - FAMILY_ORDER.indexOf(b.name));
-    setMembers(loaded);
-  }, (error) => console.error('Błąd profili w kalendarzu:', error)), []);
+  const deletingEventId = useRef<string | null>(null);
 
   useEffect(() => onSnapshot(collection(db, 'calendarEvents'), (snapshot) => {
     const loaded: CalendarEventData[] = [];
@@ -1412,13 +1028,13 @@ function CalendarPage({ user, member, goTo }: { user: User; member: Member | nul
       const data = eventDoc.data();
       if (!(data.date instanceof Timestamp)) return;
       const start = data.date.toDate();
-      const endDate = data.endDate instanceof Timestamp ? data.endDate.toDate() : new Date(start.getTime() + 3600000);
+      const end = data.endDate instanceof Timestamp ? data.endDate.toDate() : new Date(start.getTime() + 3600000);
       loaded.push({
         id: eventDoc.id,
         title: typeof data.title === 'string' && data.title.trim() ? data.title : 'Wydarzenie',
         person: isPersonKey(data.person) ? data.person : 'family',
         date: start,
-        endDate,
+        endDate: end,
         allDay: data.allDay === true,
         description: typeof data.description === 'string' ? data.description : '',
         createdBy: typeof data.createdBy === 'string' ? data.createdBy : '',
@@ -1428,8 +1044,7 @@ function CalendarPage({ user, member, goTo }: { user: User; member: Member | nul
     });
     loaded.sort((a, b) => a.date.getTime() - b.date.getTime());
     setEvents(loaded);
-    setLastChecked(new Date());
-    setSelectedEvent((current) => current ? loaded.find((item) => item.id === current.id) || null : null);
+    setSelectedEvent((current) => current ? loaded.find((item) => item.id === current.id) || (snapshot.metadata.hasPendingWrites || deletingEventId.current === current.id ? current : null) : null);
   }, (error) => console.error('Błąd kalendarza:', error)), []);
 
   const weekStart = useMemo(() => startOfWeek(focusDate), [focusDate]);
@@ -1446,51 +1061,29 @@ function CalendarPage({ user, member, goTo }: { user: User; member: Member | nul
     return { start: startOfDay(monthDays[0]), end: endOfDay(monthDays[monthDays.length - 1]) };
   }, [view, focusDate, weekStart, monthDays]);
 
-  const calendarPeople = (calendarParent || calendarAccess.viewFamilySchedule)
-    ? (['Sebastian','Dominika','Paweł','Nikodem','Layla'] as PersonKey[])
-    : (ownCalendarPerson === 'family' ? [] : [ownCalendarPerson]);
-
-  useEffect(() => {
-    if (!calendarParent && !calendarAccess.viewFamilySchedule && selectedPerson !== 'family' && selectedPerson !== ownCalendarPerson) setSelectedPerson(ownCalendarPerson);
-  }, [calendarParent,calendarAccess.viewFamilySchedule,ownCalendarPerson,selectedPerson]);
-
-  const visibleEvents = useMemo(() => events.filter((event) => {
-    const allowed = calendarParent || calendarAccess.viewFamilySchedule || event.person === ownCalendarPerson || event.person === 'family';
-    if (!allowed) return false;
-    return selectedPerson === 'family' || event.person === selectedPerson || event.person === 'family';
-  }), [events, selectedPerson, calendarParent, calendarAccess.viewFamilySchedule, ownCalendarPerson]);
-
-  const occurrences = useMemo(() => visibleEvents
-    .flatMap((event) => generateOccurrences(event, range.start, range.end))
-    .sort((a, b) => a.date.getTime() - b.date.getTime()), [visibleEvents, range]);
+  const occurrences = useMemo(() => {
+    return events
+      .filter((event) => selectedPerson === 'family' || event.person === selectedPerson || event.person === 'family')
+      .flatMap((event) => generateOccurrences(event, range.start, range.end))
+      .sort((a, b) => a.date.getTime() - b.date.getTime());
+  }, [events, selectedPerson, range]);
 
   const todayRange = useMemo(() => ({ start: startOfDay(new Date()), end: endOfDay(new Date()) }), []);
-  const todayOccurrences = useMemo(() => visibleEvents
-    .flatMap((event) => generateOccurrences(event, todayRange.start, todayRange.end)), [visibleEvents, todayRange]);
+  const todayOccurrences = useMemo(() => events
+    .filter((event) => selectedPerson === 'family' || event.person === selectedPerson || event.person === 'family')
+    .flatMap((event) => generateOccurrences(event, todayRange.start, todayRange.end)), [events, selectedPerson, todayRange]);
 
   const upcomingOccurrences = useMemo(() => {
     const now = new Date();
     const todayStart = startOfDay(now);
     const futureEnd = endOfDay(addDays(now, 30));
-    return visibleEvents
+    return events
+      .filter((event) => selectedPerson === 'family' || event.person === selectedPerson || event.person === 'family')
       .flatMap((event) => generateOccurrences(event, todayStart, futureEnd))
       .filter((item) => item.date >= todayStart)
       .sort((a, b) => a.date.getTime() - b.date.getTime())
-      .slice(0, 7);
-  }, [visibleEvents]);
-
-  const loggedMember = members.find((item) => item.id === user.uid) || members.find((item) => item.name === 'Sebastian') || null;
-  const selectedDayOccurrences = useMemo(() => occurrences.filter((item) => sameDay(item.date, focusDate)), [occurrences, focusDate]);
-
-  function memberForPerson(person: PersonKey) {
-    if (person === 'family') return null;
-    return members.find((item) => item.name === person) || null;
-  }
-
-  function personAvatar(person: PersonKey) {
-    const familyMember = memberForPerson(person);
-    return familyMember?.photoURL ? <img src={familyMember.photoURL} alt="" /> : <>{memberEmoji(person)}</>;
-  }
+      .slice(0, 5);
+  }, [events, selectedPerson]);
 
   function titleForView() {
     if (view === 'day') return capitalize(focusDate.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }));
@@ -1509,7 +1102,8 @@ function CalendarPage({ user, member, goTo }: { user: User; member: Member | nul
     setShowForm(true);
   }
 
-  function openEvent(event: CalendarEventData) {
+  function openEvent(event: CalendarEventData, occurrenceDate = event.date) {
+    setSelectedOccurrenceDate(occurrenceDate);
     setSelectedEvent(event);
     setEditing(false);
     setEditForm(eventToForm(event));
@@ -1517,8 +1111,10 @@ function CalendarPage({ user, member, goTo }: { user: User; member: Member | nul
 
   async function saveEvent(e: React.FormEvent) {
     e.preventDefault();
+    if (saving) return;
     const dates = buildEventDates(form);
     if (!form.title.trim() || !dates) return;
+    if (form.repeatUntil && form.repeatUntil < form.date) { notify('Koniec powtarzania nie może być przed wydarzeniem.', 'error'); return; }
     setSaving(true);
     try {
       await addDoc(collection(db, 'calendarEvents'), {
@@ -1539,8 +1135,10 @@ function CalendarPage({ user, member, goTo }: { user: User; member: Member | nul
   async function updateEvent(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedEvent) return;
+    if (updating) return;
     const dates = buildEventDates(editForm);
     if (!editForm.title.trim() || !dates) return;
+    if (editForm.repeatUntil && editForm.repeatUntil < editForm.date) { notify('Koniec powtarzania nie może być przed wydarzeniem.', 'error'); return; }
     setUpdating(true);
     try {
       await updateDoc(doc(db, 'calendarEvents', selectedEvent.id), {
@@ -1561,163 +1159,66 @@ function CalendarPage({ user, member, goTo }: { user: User; member: Member | nul
     if (!selectedEvent) return;
     if (!window.confirm(`Czy na pewno chcesz usunąć „${selectedEvent.title}”?${selectedEvent.repeat !== 'none' ? '\nUsunięta zostanie cała seria.' : ''}`)) return;
     setDeleting(true);
+    deletingEventId.current = selectedEvent.id;
     try {
       await deleteDoc(doc(db, 'calendarEvents', selectedEvent.id));
       setSelectedEvent(null);
     } catch (error) {
       console.error(error); alert('Nie udało się usunąć wydarzenia.');
-    } finally { setDeleting(false); }
+    } finally { deletingEventId.current = null; setDeleting(false); }
   }
 
-  const syncText = navigator.onLine ? 'Dane rodzinne są synchronizowane na bieżąco' : 'Tryb offline — zmiany zsynchronizują się po odzyskaniu połączenia';
-
   return (
-    <div className="page-content calendar-page-v131">
-      <div className="calendar-mobile-appbar">
-        <button type="button" className="calendar-mobile-menu" aria-label="Menu">☰</button>
-        <div><img src="/nasza-rodzina-logo.svg" alt="" /><strong>Nasza Rodzina</strong></div>
-        <span className="calendar-mobile-bell">🔔</span>
-        <span className="calendar-mobile-user">{loggedMember?.photoURL ? <img src={loggedMember.photoURL} alt="" /> : memberEmoji(loggedMember?.name || 'Sebastian')}</span>
-      </div>
+    <div className="page-content compact-page">
+      <ModuleHeader icon="📅" title="Kalendarz" text="Wydarzenia całej rodziny — dzień, tydzień i miesiąc." action={<button className="primary-button" type="button" onClick={() => openNewEvent()}>＋ Dodaj wydarzenie</button>} />
 
-      <section className="calendar-family-top">
-        <div className="calendar-family-people" aria-label="Profile rodziny">
-          {members.slice(0, 5).map((person) => (
-            <button key={person.id} type="button" className="calendar-family-person" onClick={() => setSelectedPerson(person.name as PersonKey)}>
-              <span className="calendar-family-avatar">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span>
-              <span className={`calendar-family-dot ${person.active ? 'on' : ''}`} />
-              <strong>{person.name}</strong>
-              <small>{personRole(person.name, person.role)}</small>
-            </button>
-          ))}
-        </div>
-        <div className="calendar-family-actions">
-          <button type="button" title="Szukaj">⌕</button>
-          <button type="button" title="Powiadomienia" className="calendar-bell">🔔<i>3</i></button>
-          <span className="calendar-account-avatar">{loggedMember?.photoURL ? <img src={loggedMember.photoURL} alt="" /> : memberEmoji(loggedMember?.name || 'Sebastian')}</span>
+      <section className="calendar-toolbar">
+        <div className="calendar-navigation"><button onClick={() => navigate(-1)}>‹</button><strong>{titleForView()}</strong><button onClick={() => navigate(1)}>›</button></div>
+        <button className="secondary-button" type="button" onClick={() => setFocusDate(new Date())}>Dzisiaj</button>
+        <div className="view-switch">
+          {(['day', 'week', 'month'] as CalendarView[]).map((item) => <button key={item} type="button" className={view === item ? 'active' : ''} onClick={() => setView(item)}>{item === 'day' ? 'Dzień' : item === 'week' ? 'Tydzień' : 'Miesiąc'}</button>)}
         </div>
       </section>
 
-      <section className="calendar-heading-row">
-        <div>
-          <h1>Kalendarz</h1>
-          <p>Wszystkie wydarzenia w jednym miejscu</p>
-        </div>
-        <div className="calendar-heading-actions">
-          <button className="calendar-add-button" type="button" onClick={() => openNewEvent()}>＋ Dodaj wydarzenie</button>
-          <button className="calendar-today-button" type="button" onClick={() => setFocusDate(new Date())}>▣ Dzisiaj</button>
-          <div className="calendar-view-switch">
-            {(['day', 'week', 'month'] as CalendarView[]).map((item) => (
-              <button key={item} type="button" className={view === item ? 'active' : ''} onClick={() => setView(item)}>
-                {item === 'day' ? 'Dzień' : item === 'week' ? 'Tydzień' : 'Miesiąc'}
-              </button>
-            ))}
-          </div>
-        </div>
+      <section className="person-filters">
+        {PEOPLE.map((person) => <button key={person} type="button" className={selectedPerson === person ? 'active' : ''} onClick={() => setSelectedPerson(person)}><span style={{ background: personColor(person) }} />{personLabel(person)}</button>)}
       </section>
-
-      <section className={`calendar-sync-strip ${navigator.onLine ? 'online' : 'offline'}`}>
-        <span className="calendar-sync-icon">↻</span>
-        <div>
-          <strong>Synchronizacja kalendarza</strong>
-          <small>{syncText} · ostatnie sprawdzenie {lastChecked.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}</small>
-        </div>
-        <button type="button" onClick={() => setLastChecked(new Date())}>↻ Sprawdź</button>
-        <button type="button" className="calendar-sync-settings" onClick={() => goTo('Ustawienia')}>⋮</button>
-      </section>
-
-      <section className="calendar-mobile-primary-action">
-        <button className="calendar-add-button" type="button" onClick={() => openNewEvent()}>＋ Dodaj wydarzenie</button>
-        <div className="calendar-view-switch">
-          {(['day', 'week', 'month'] as CalendarView[]).map((item) => (
-            <button key={item} type="button" className={view === item ? 'active' : ''} onClick={() => setView(item)}>
-              {item === 'day' ? 'Dzień' : item === 'week' ? 'Tydzień' : 'Miesiąc'}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="calendar-period-row">
-        <strong>{titleForView()}</strong>
-        <span>{view === 'week' ? `Tydzień ${getWeekNumber(focusDate)}` : ''}</span>
-        <div>
-          <button type="button" onClick={() => navigate(-1)}>‹</button>
-          <button type="button" onClick={() => setFocusDate(new Date())}>Dzisiaj</button>
-          <button type="button" onClick={() => navigate(1)}>›</button>
-        </div>
-      </section>
-
-      {view === 'week' && (
-        <>
-          <section className="calendar-mobile-week-strip">
-            {weekDays.map((day) => (
-              <button key={formatDateInput(day)} type="button" className={sameDay(day, focusDate) ? 'active' : ''} onClick={() => setFocusDate(day)}>
-                <small>{capitalize(day.toLocaleDateString('pl-PL', { weekday: 'short' })).replace('.', '')}</small>
-                <strong>{day.getDate()}</strong>
-              </button>
-            ))}
-          </section>
-
-          <div className="calendar-main-layout">
-            <CalendarWeekTimetable days={weekDays} occurrences={occurrences} onOpen={openEvent} onAdd={openNewEvent} />
-
-            <aside className="calendar-right-column">
-              <CalendarMiniMonth focusDate={focusDate} setFocusDate={setFocusDate} />
-
-              <section className="calendar-side-card calendar-visible-calendars">
-                <h3>Widoczne kalendarze</h3>
-                <button type="button" className={selectedPerson === 'family' ? 'active' : ''} onClick={() => setSelectedPerson('family')}>
-                  <span className="calendar-filter-dot family" /> <strong>Wydarzenia rodzinne</strong><em>✓</em>
-                </button>
-                {calendarPeople.map((person) => (
-                  <button type="button" key={person} className={selectedPerson === person ? 'active' : ''} onClick={() => setSelectedPerson(person)}>
-                    <span className="calendar-filter-avatar">{personAvatar(person)}</span><strong>{person}</strong><em>✓</em>
-                  </button>
-                ))}
-              </section>
-
-              <section className="calendar-side-card calendar-connected-card">
-                <h3>Połączone kalendarze</h3>
-                <div><span className="source-icon family-source">NR</span><p><strong>Nasza Rodzina</strong><small className="connected-label">● Aktywny</small></p></div>
-                <div><span className="source-icon google-source">G</span><p><strong>Google Calendar</strong><small>Do podłączenia w Ustawieniach</small></p></div>
-                <div><span className="source-icon apple-source"></span><p><strong>Apple / iCloud</strong><small>Do podłączenia w Ustawieniach</small></p></div>
-                <button type="button" className="calendar-source-settings" onClick={() => goTo('Ustawienia')}>⚙ Źródła kalendarzy ustawisz w Ustawieniach</button>
-              </section>
-
-              <CalendarUpcomingCard items={upcomingOccurrences.slice(0, 4)} onOpen={openEvent} />
-            </aside>
-          </div>
-
-          <section className="calendar-mobile-agenda">
-            <h2>{capitalize(focusDate.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))}</h2>
-            {selectedDayOccurrences.length === 0 ? <p className="calendar-empty-mobile">Brak wydarzeń tego dnia.</p> : selectedDayOccurrences.map((item) => (
-              <button type="button" key={item.key} className={`calendar-mobile-event ${personEventClass(item.source.person)}`} onClick={() => openEvent(item.source)}>
-                <time>{item.source.allDay ? 'Cały dzień' : <>{formatTime(item.date)}<small>{formatTime(item.endDate)}</small></>}</time>
-                <span className="calendar-mobile-event-icon">{eventActivityIcon(item.source.title)}</span>
-                <span className="calendar-mobile-event-copy"><strong>{item.source.title}</strong><small>{personLabel(item.source.person)}</small></span>
-                <span className="calendar-mobile-event-avatar">{personAvatar(item.source.person)}</span>
-                <em>⋮</em>
-              </button>
-            ))}
-            <CalendarUpcomingCard items={upcomingOccurrences.slice(0, 4)} onOpen={openEvent} mobile />
-          </section>
-        </>
-      )}
 
       {view === 'day' && <CalendarDay date={focusDate} occurrences={occurrences} onOpen={openEvent} onAdd={openNewEvent} />}
+      {view === 'week' && (
+        <div className="calendar-week-layout">
+          <section className="calendar-week-card">
+            <div className="calendar-week-grid">
+              {weekDays.map((day) => {
+                const dayItems = occurrences.filter((item) => item.date <= endOfDay(day) && item.endDate >= startOfDay(day));
+                return (
+                  <div className={`calendar-week-day ${sameDay(day, new Date()) ? 'today' : ''}`} key={formatDateInput(day)}>
+                    <button className="calendar-day-heading" type="button" onClick={() => { setFocusDate(day); setView('day'); }}><span>{capitalize(day.toLocaleDateString('pl-PL', { weekday: 'short' }))}</span><strong>{day.getDate()}</strong></button>
+                    <button className="calendar-plus" type="button" onClick={() => openNewEvent(day)}>＋</button>
+                    <div className="calendar-day-events">
+                      {dayItems.length === 0 && <small className="muted">Brak wydarzeń</small>}
+                      {dayItems.map((item) => <CalendarEventButton key={item.key} occurrence={item} onClick={() => openEvent(item.source, item.date)} />)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+          <CalendarSide today={todayOccurrences} upcoming={upcomingOccurrences} onOpen={openEvent} />
+        </div>
+      )}
       {view === 'month' && <CalendarMonth focusDate={focusDate} days={monthDays} occurrences={occurrences} onOpen={openEvent} onAdd={openNewEvent} onDay={(day) => { setFocusDate(day); setView('day'); }} />}
 
-      <section className="calendar-summary-tiles">
-        <button type="button" onClick={() => setFocusDate(new Date())}><span>▣</span><div><strong>Dzisiaj</strong><small>{todayOccurrences.length} wydarzeń</small></div></button>
-        <button type="button"><span>◷</span><div><strong>Najbliższe</strong><small>{upcomingOccurrences.length} wydarzeń</small></div></button>
-        <button type="button"><span>♛</span><div><strong>Urodziny</strong><small>Rodzinne daty</small></div></button>
-        <button type="button"><span>↻</span><div><strong>Powtarzające się</strong><small>{events.filter((item) => item.repeat !== 'none').length} wydarzeń</small></div></button>
-        <button type="button" onClick={() => goTo('Ustawienia')}><span>▱</span><div><strong>Połączone kalendarze</strong><small>Ustaw źródła</small></div></button>
+      <section className="calendar-lower-grid">
+        <article className="calendar-lower-card"><header><strong>⏭️ Nadchodzące wydarzenia</strong></header>{upcomingOccurrences.slice(0,4).map((item) => { const done=sameDay(item.date,new Date())&&item.endDate<new Date(); return <button key={item.key} className={done?'completed-today':''} onClick={()=>openEvent(item.source, item.date)}><span>{eventActivityIcon(item.source.title)}</span><div><strong>{item.source.title}</strong><small>{item.date.toLocaleDateString('pl-PL')} · {item.source.allDay?'Cały dzień':`${formatTime(item.date)}–${formatTime(item.endDate)}`}</small></div><em>{done?'✓ Zakończone':'›'}</em></button>; })}</article>
+        <article className="calendar-lower-card"><header><strong>🔔 Twoje przypomnienia</strong></header><p>Sprawdź nadchodzące wydarzenia tutaj, a przypomnienia o lekach w zakładce Zdrowie.</p><button className="secondary-button" onClick={()=>goTo('Ustawienia')}>Ustawienia przypomnień</button></article>
+        <article className="calendar-lower-card"><header><strong>⚡ Szybkie akcje</strong></header><div className="calendar-actions"><button onClick={()=>openNewEvent(new Date())}>＋ Wydarzenie</button><button onClick={()=>openNewEvent(new Date(),'12:00',true)}>☀️ Cały dzień</button><button onClick={()=>setFocusDate(new Date())}>📍 Dzisiaj</button></div></article>
       </section>
+      <section className="connected-calendars-footer"><header><div><strong>🔗 Połączone kalendarze</strong><small>Nasza Rodzina jest kalendarzem domyślnym.</small></div></header><div><span className="connected active">● Nasza Rodzina</span><span>Google Calendar — do połączenia</span><span>Apple / iCloud — ICS</span><span>Outlook — do połączenia</span></div></section>
 
       {showForm && (
         <Modal title="➕ Nowe wydarzenie" subtitle="Kalendarz" onClose={() => setShowForm(false)} wide>
-          <EventFormFields form={form} setForm={setForm} onSubmit={saveEvent} buttonText={saving ? 'Zapisywanie…' : '✓ Zapisz wydarzenie'} disabled={saving} onCancel={() => setShowForm(false)} />
+          <EventFormFields allowed={isParent(member) ? undefined : ['family', ownPerson(member)]} form={form} setForm={setForm} onSubmit={saveEvent} buttonText={saving ? 'Zapisywanie…' : '✓ Zapisz wydarzenie'} disabled={saving} onCancel={() => setShowForm(false)} />
         </Modal>
       )}
 
@@ -1727,122 +1228,20 @@ function CalendarPage({ user, member, goTo }: { user: User; member: Member | nul
             <>
               <div className="details-grid">
                 <DetailRow label="Osoba" value={personLabel(selectedEvent.person)} />
-                <DetailRow label="Data rozpoczęcia" value={capitalize(selectedEvent.date.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))} />
+                <DetailRow label="Termin wydarzenia" value={capitalize((selectedOccurrenceDate || selectedEvent.date).toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))} />
                 <DetailRow label="Godzina" value={selectedEvent.allDay ? 'Cały dzień' : `${formatTime(selectedEvent.date)} – ${formatTime(selectedEvent.endDate)}`} />
                 <DetailRow label="Powtarzanie" value={repeatLabel(selectedEvent.repeat)} />
                 {selectedEvent.repeatUntil && <DetailRow label="Powtarzaj do" value={selectedEvent.repeatUntil.toLocaleDateString('pl-PL')} />}
                 {selectedEvent.description && <DetailRow label="Notatka" value={selectedEvent.description} />}
               </div>
-              <div className="modal-actions"><button className="secondary-button" onClick={() => setEditing(true)}>✏️ Edytuj</button><button className="danger-button" onClick={removeEvent} disabled={deleting}>{deleting ? 'Usuwanie…' : '🗑️ Usuń'}</button></div>
+              <div className="modal-actions">{(isParent(member) || selectedEvent.createdBy === user.uid) && <><button className="secondary-button" onClick={() => setEditing(true)}>✏️ Edytuj</button><button className="danger-button" onClick={removeEvent} disabled={deleting}>{deleting ? 'Usuwanie…' : '🗑️ Usuń'}</button></>}</div>
             </>
           ) : (
-            <EventFormFields form={editForm} setForm={setEditForm} onSubmit={updateEvent} buttonText={updating ? 'Zapisywanie…' : '✓ Zapisz zmiany'} disabled={updating} onCancel={() => setEditing(false)} />
+            <EventFormFields allowed={isParent(member) ? undefined : ['family', ownPerson(member)]} form={editForm} setForm={setEditForm} onSubmit={updateEvent} buttonText={updating ? 'Zapisywanie…' : '✓ Zapisz zmiany'} disabled={updating} onCancel={() => setEditing(false)} />
           )}
         </Modal>
       )}
-
-      <button type="button" className="calendar-mobile-fab" onClick={() => openNewEvent()}>＋</button>
     </div>
-  );
-}
-
-function getWeekNumber(date: Date) {
-  const value = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const day = value.getUTCDay() || 7;
-  value.setUTCDate(value.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(value.getUTCFullYear(), 0, 1));
-  return Math.ceil((((value.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-}
-
-function CalendarWeekTimetable({ days, occurrences, onOpen, onAdd }: { days: Date[]; occurrences: CalendarOccurrence[]; onOpen: (event: CalendarEventData) => void; onAdd: (date?: Date, time?: string, allDay?: boolean) => void }) {
-  const firstHour = 6;
-  const lastHour = 22;
-  const hourHeight = 42;
-  const hours = Array.from({ length: lastHour - firstHour + 1 }, (_, index) => firstHour + index);
-
-  function eventStyle(item: CalendarOccurrence): React.CSSProperties {
-    const startMinutes = Math.max(firstHour * 60, item.date.getHours() * 60 + item.date.getMinutes());
-    const endMinutes = Math.min((lastHour + 1) * 60, item.endDate.getHours() * 60 + item.endDate.getMinutes());
-    const top = ((startMinutes - firstHour * 60) / 60) * hourHeight;
-    const height = Math.max(32, ((Math.max(endMinutes, startMinutes + 30) - startMinutes) / 60) * hourHeight - 3);
-    return { top, height };
-  }
-
-  return (
-    <section className="calendar-week-timetable">
-      <div className="calendar-week-head">
-        <span className="calendar-time-corner">Godzina</span>
-        {days.map((day) => (
-          <button type="button" key={formatDateInput(day)} className={sameDay(day, new Date()) ? 'today' : ''} onClick={() => onAdd(day)}>
-            <strong>{capitalize(day.toLocaleDateString('pl-PL', { weekday: 'short' })).replace('.', '')}</strong>
-            <span>{day.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' })}</span>
-          </button>
-        ))}
-      </div>
-      <div className="calendar-all-day-row">
-        <span>Cały dzień</span>
-        {days.map((day) => {
-          const allDay = occurrences.filter((item) => sameDay(item.date, day) && item.source.allDay);
-          return <div key={formatDateInput(day)}>{allDay.slice(0, 2).map((item) => <button type="button" key={item.key} className={`calendar-week-event all-day ${personEventClass(item.source.person)}`} onClick={() => onOpen(item.source)}><strong>{item.source.title}</strong></button>)}</div>;
-        })}
-      </div>
-      <div className="calendar-time-grid" style={{ '--hour-height': `${hourHeight}px`, '--hour-count': hours.length } as React.CSSProperties}>
-        <div className="calendar-hour-axis">{hours.map((hour) => <span key={hour}>{String(hour).padStart(2, '0')}:00</span>)}</div>
-        {days.map((day) => {
-          const timed = occurrences.filter((item) => sameDay(item.date, day) && !item.source.allDay && item.endDate.getHours() >= firstHour && item.date.getHours() <= lastHour);
-          return (
-            <div className={`calendar-day-column ${sameDay(day, new Date()) ? 'today' : ''}`} key={formatDateInput(day)}>
-              {timed.map((item) => (
-                <button type="button" key={item.key} style={eventStyle(item)} className={`calendar-week-event ${personEventClass(item.source.person)}`} onClick={() => onOpen(item.source)}>
-                  <span>{eventActivityIcon(item.source.title)}</span>
-                  <strong>{item.source.title}</strong>
-                  <small>{formatTime(item.date)}–{formatTime(item.endDate)}</small>
-                </button>
-              ))}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function CalendarMiniMonth({ focusDate, setFocusDate }: { focusDate: Date; setFocusDate: React.Dispatch<React.SetStateAction<Date>> }) {
-  const first = new Date(focusDate.getFullYear(), focusDate.getMonth(), 1);
-  const offset = (first.getDay() + 6) % 7;
-  const count = new Date(focusDate.getFullYear(), focusDate.getMonth() + 1, 0).getDate();
-  const cells: Array<number | null> = [...Array(offset).fill(null), ...Array.from({ length: count }, (_, index) => index + 1)];
-  while (cells.length % 7) cells.push(null);
-
-  return (
-    <section className="calendar-side-card calendar-mini-month">
-      <header>
-        <button type="button" onClick={() => setFocusDate((current) => addMonths(current, -1))}>‹</button>
-        <strong>{capitalize(focusDate.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' }))}</strong>
-        <button type="button" onClick={() => setFocusDate((current) => addMonths(current, 1))}>›</button>
-      </header>
-      <div className="calendar-mini-weekdays">{['Pn','Wt','Śr','Cz','Pt','So','Nd'].map((day) => <span key={day}>{day}</span>)}</div>
-      <div className="calendar-mini-days">
-        {cells.map((day, index) => day ? (
-          <button type="button" key={`${day}-${index}`} className={day === focusDate.getDate() ? 'active' : ''} onClick={() => setFocusDate(new Date(focusDate.getFullYear(), focusDate.getMonth(), day))}>{day}</button>
-        ) : <span key={`empty-${index}`} />)}
-      </div>
-    </section>
-  );
-}
-
-function CalendarUpcomingCard({ items, onOpen, mobile = false }: { items: CalendarOccurrence[]; onOpen: (event: CalendarEventData) => void; mobile?: boolean }) {
-  return (
-    <section className={`calendar-side-card calendar-upcoming-card ${mobile ? 'mobile' : ''}`}>
-      <header><h3>Nadchodzące wydarzenia</h3><span>Zobacz wszystkie</span></header>
-      {items.length === 0 ? <p className="muted">Brak nadchodzących wydarzeń.</p> : items.map((item) => (
-        <button type="button" key={item.key} onClick={() => onOpen(item.source)}>
-          <span className="calendar-upcoming-date"><b>{String(item.date.getDate()).padStart(2, '0')}</b><small>{item.date.toLocaleDateString('pl-PL', { month: 'short' }).replace('.', '').toUpperCase()}</small></span>
-          <span><strong>{item.source.title}</strong><small>{item.source.allDay ? 'Cały dzień' : `${formatTime(item.date)}–${formatTime(item.endDate)}`}</small></span>
-          <em>›</em>
-        </button>
-      ))}
-    </section>
   );
 }
 
@@ -1878,18 +1277,18 @@ function buildEventDates(form: EventForm) {
   return { start, end };
 }
 
-function EventFormFields({ form, setForm, onSubmit, buttonText, disabled, onCancel }: { form: EventForm; setForm: React.Dispatch<React.SetStateAction<EventForm>>; onSubmit: (e: React.FormEvent) => void; buttonText: string; disabled: boolean; onCancel?: () => void }) {
+function EventFormFields({ form, setForm, onSubmit, buttonText, disabled, onCancel, allowed }: { form: EventForm; setForm: React.Dispatch<React.SetStateAction<EventForm>>; onSubmit: (e: React.FormEvent) => void; buttonText: string; disabled: boolean; onCancel?: () => void; allowed?: PersonKey[] }) {
   return (
     <form className="form-grid" onSubmit={onSubmit}>
       <label className="field field-wide"><span>Nazwa wydarzenia</span><input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="Np. dentysta, urodziny, basen…" required /></label>
-      <label className="field"><span>Osoba</span><PersonSelect value={form.person} onChange={(person) => setForm((f) => ({ ...f, person }))} /></label>
+      <label className="field"><span>Osoba</span><PersonSelect allowed={allowed} value={form.person} onChange={(person) => setForm((f) => ({ ...f, person }))} /></label>
       <label className="field"><span>Data</span><input type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} required /></label>
       <label className="checkbox-field"><input type="checkbox" checked={form.allDay} onChange={(e) => setForm((f) => ({ ...f, allDay: e.target.checked }))} /><span>Cały dzień</span></label>
       {!form.allDay && <>
         <label className="field"><span>Od</span><input type="time" value={form.startTime} onChange={(e) => setForm((f) => ({ ...f, startTime: e.target.value }))} required /></label>
         <label className="field"><span>Do</span><input type="time" value={form.endTime} onChange={(e) => setForm((f) => ({ ...f, endTime: e.target.value }))} required /></label>
       </>}
-      <label className="field"><span>Powtarzanie</span><select value={form.repeat} onChange={(e) => setForm((f) => ({ ...f, repeat: e.target.value as RepeatType, repeatUntil: e.target.value === 'none' ? '' : f.repeatUntil }))}><option value="none">Nie powtarzaj</option><option value="daily">Codziennie</option><option value="weekly">Co tydzień</option><option value="monthly">Co miesiąc</option><option value="yearly">Co rok</option></select></label>
+      <label className="field"><span>Powtarzanie</span><select aria-label="Powtarzanie" value={form.repeat} onChange={(e) => setForm((f) => ({ ...f, repeat: e.target.value as RepeatType, repeatUntil: e.target.value === 'none' ? '' : f.repeatUntil }))}><option value="none">Nie powtarzaj</option><option value="daily">Codziennie</option><option value="weekly">Co tydzień</option><option value="monthly">Co miesiąc</option><option value="yearly">Co rok</option></select></label>
       {form.repeat !== 'none' && <label className="field"><span>Powtarzaj do</span><input type="date" min={form.date} value={form.repeatUntil} onChange={(e) => setForm((f) => ({ ...f, repeatUntil: e.target.value }))} /></label>}
       <label className="field field-wide"><span>Notatka</span><textarea value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="Opcjonalna informacja…" rows={3} /></label>
       <div className="form-actions field-wide">{onCancel && <button className="secondary-button" type="button" onClick={onCancel}>Anuluj</button>}<button className="primary-button" type="submit" disabled={disabled}>{buttonText}</button></div>
@@ -1908,35 +1307,35 @@ function CalendarEventButton({ occurrence, onClick }: { occurrence: CalendarOccu
   );
 }
 
-function CalendarDay({ date, occurrences, onOpen, onAdd }: { date: Date; occurrences: CalendarOccurrence[]; onOpen: (event: CalendarEventData) => void; onAdd: (date?: Date, time?: string, allDay?: boolean) => void }) {
-  const dayItems = occurrences.filter((item) => sameDay(item.date, date));
+function CalendarDay({ date, occurrences, onOpen, onAdd }: { date: Date; occurrences: CalendarOccurrence[]; onOpen: (event: CalendarEventData, occurrenceDate?: Date) => void; onAdd: (date?: Date, time?: string, allDay?: boolean) => void }) {
+  const dayItems = occurrences.filter((item) => item.date <= endOfDay(date) && item.endDate >= startOfDay(date));
   const allDay = dayItems.filter((item) => item.source.allDay);
   const timed = dayItems.filter((item) => !item.source.allDay);
   return (
     <section className="calendar-day-view">
       <div className="calendar-day-title"><div className="big-date">{date.getDate()}</div><div><strong>{capitalize(date.toLocaleDateString('pl-PL', { weekday: 'long' }))}</strong><span>{capitalize(date.toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' }))}</span></div><button className="secondary-button" onClick={() => onAdd(date, '12:00', true)}>＋ Cały dzień</button></div>
-      <div className="all-day-row"><span>Cały dzień</span><div>{allDay.length === 0 ? <small className="muted">Brak wydarzeń</small> : allDay.map((item) => <CalendarEventButton key={item.key} occurrence={item} onClick={() => onOpen(item.source)} />)}</div></div>
+      <div className="all-day-row"><span>Cały dzień</span><div>{allDay.length === 0 ? <small className="muted">Brak wydarzeń</small> : allDay.map((item) => <CalendarEventButton key={item.key} occurrence={item} onClick={() => onOpen(item.source, item.date)} />)}</div></div>
       <div className="hours-list">
-        {Array.from({ length: 18 }, (_, i) => i + 6).map((hour) => {
-          const items = timed.filter((item) => item.date.getHours() === hour);
-          return <div className="hour-row" key={hour}><span>{String(hour).padStart(2, '0')}:00</span><div><button type="button" className="hour-add" onClick={() => onAdd(date, `${String(hour).padStart(2, '0')}:00`)}>＋</button>{items.map((item) => <CalendarEventButton key={item.key} occurrence={item} onClick={() => onOpen(item.source)} />)}</div></div>;
+        {Array.from({ length: 24 }, (_, i) => i).map((hour) => {
+          const items = timed.filter((item) => (sameDay(item.date, date) ? item.date.getHours() : 0) === hour);
+          return <div className="hour-row" key={hour}><span>{String(hour).padStart(2, '0')}:00</span><div><button type="button" className="hour-add" onClick={() => onAdd(date, `${String(hour).padStart(2, '0')}:00`)}>＋</button>{items.map((item) => <CalendarEventButton key={item.key} occurrence={item} onClick={() => onOpen(item.source, item.date)} />)}</div></div>;
         })}
       </div>
     </section>
   );
 }
 
-function CalendarMonth({ focusDate, days, occurrences, onOpen, onAdd, onDay }: { focusDate: Date; days: Date[]; occurrences: CalendarOccurrence[]; onOpen: (event: CalendarEventData) => void; onAdd: (date?: Date) => void; onDay: (date: Date) => void }) {
+function CalendarMonth({ focusDate, days, occurrences, onOpen, onAdd, onDay }: { focusDate: Date; days: Date[]; occurrences: CalendarOccurrence[]; onOpen: (event: CalendarEventData, occurrenceDate?: Date) => void; onAdd: (date?: Date) => void; onDay: (date: Date) => void }) {
   return (
     <section className="calendar-month-card">
       <div className="month-grid month-head">{['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Nd'].map((name) => <div key={name}>{name}</div>)}</div>
       <div className="month-grid">
         {days.map((day) => {
-          const items = occurrences.filter((item) => sameDay(item.date, day));
+          const items = occurrences.filter((item) => item.date <= endOfDay(day) && item.endDate >= startOfDay(day));
           return (
             <div key={formatDateInput(day)} className={`month-day ${day.getMonth() !== focusDate.getMonth() ? 'dim' : ''} ${sameDay(day, new Date()) ? 'today' : ''}`}>
               <div className="month-day-top"><button type="button" onClick={() => onDay(day)}>{day.getDate()}</button><button type="button" onClick={() => onAdd(day)}>＋</button></div>
-              <div className="month-events">{items.slice(0, 3).map((item) => <CalendarEventButton key={item.key} occurrence={item} onClick={() => onOpen(item.source)} />)}{items.length > 3 && <button className="more-link" type="button" onClick={() => onDay(day)}>+{items.length - 3} więcej</button>}</div>
+              <div className="month-events">{items.slice(0, 3).map((item) => <CalendarEventButton key={item.key} occurrence={item} onClick={() => onOpen(item.source, item.date)} />)}{items.length > 3 && <button className="more-link" type="button" onClick={() => onDay(day)}>+{items.length - 3} więcej</button>}</div>
             </div>
           );
         })}
@@ -1945,11 +1344,11 @@ function CalendarMonth({ focusDate, days, occurrences, onOpen, onAdd, onDay }: {
   );
 }
 
-function CalendarSide({ today, upcoming, onOpen }: { today: CalendarOccurrence[]; upcoming: CalendarOccurrence[]; onOpen: (event: CalendarEventData) => void }) {
+function CalendarSide({ today, upcoming, onOpen }: { today: CalendarOccurrence[]; upcoming: CalendarOccurrence[]; onOpen: (event: CalendarEventData, occurrenceDate?: Date) => void }) {
   return (
     <aside className="calendar-side">
-      <section><h3>📍 Dzisiaj</h3>{today.length === 0 ? <p className="muted">Brak wydarzeń.</p> : today.map((item) => <CalendarEventButton key={item.key} occurrence={item} onClick={() => onOpen(item.source)} />)}</section>
-      <section><h3>⏭️ Nadchodzące</h3>{upcoming.length === 0 ? <p className="muted">Nic w najbliższych 30 dniach.</p> : upcoming.map((item) => <CalendarEventButton key={item.key} occurrence={item} onClick={() => onOpen(item.source)} />)}</section>
+      <section><h3>📍 Dzisiaj</h3>{today.length === 0 ? <p className="muted">Brak wydarzeń.</p> : today.map((item) => <CalendarEventButton key={item.key} occurrence={item} onClick={() => onOpen(item.source, item.date)} />)}</section>
+      <section><h3>⏭️ Nadchodzące</h3>{upcoming.length === 0 ? <p className="muted">Nic w najbliższych 30 dniach.</p> : upcoming.map((item) => <CalendarEventButton key={item.key} occurrence={item} onClick={() => onOpen(item.source, item.date)} />)}</section>
     </aside>
   );
 }
@@ -1958,62 +1357,10 @@ function CalendarSide({ today, upcoming, onOpen }: { today: CalendarOccurrence[]
    TASKS + POINTS
    ========================================================= */
 
-
 const TASK_TEMPLATES = [
   ['🗑️', 'Wynieść śmieci'], ['🛏️', 'Posprzątać pokój'], ['🛁', 'Umyć łazienkę'], ['🪟', 'Umyć okna'],
   ['🧹', 'Odkurzyć'], ['🧺', 'Pranie'], ['🍽️', 'Zmywarka'], ['🐶', 'Nakarmić psa'],
 ] as const;
-
-const TASK_TEMPLATE_COLORS: Record<string, string> = {
-  'Wynieść śmieci': '#dff7ea',
-  'Posprzątać pokój': '#ffe6ee',
-  'Umyć łazienkę': '#e5f7ff',
-  'Umyć okna': '#fff1dd',
-  'Odkurzyć': '#efe7ff',
-  'Pranie': '#fff5cf',
-  'Zmywarka': '#ddf5ee',
-  'Nakarmić psa': '#ffe9df',
-};
-
-function taskTemplateIcon(title: string) {
-  const found = TASK_TEMPLATES.find(([, label]) => label === title);
-  return found?.[0] || '📝';
-}
-
-function taskRepeatLabel(repeat: TaskRepeat) {
-  switch (repeat) {
-    case 'daily': return 'Codziennie';
-    case 'weekly': return 'Co tydzień';
-    case 'monthly': return 'Co miesiąc';
-    default: return 'Jednorazowe';
-  }
-}
-
-function taskPriorityLabel(priority: TaskPriority) {
-  switch (priority) {
-    case 'high': return 'Wysoki';
-    case 'low': return 'Niski';
-    default: return 'Normalny';
-  }
-}
-
-function taskStatusLabel(item: TaskItem) {
-  if (item.done) return 'Wykonane';
-  if (item.approvalStatus === 'pending') return 'Do zatwierdzenia';
-  return 'Do zrobienia';
-}
-
-function taskStatusClass(item: TaskItem) {
-  if (item.done) return 'done';
-  if (item.approvalStatus === 'pending') return 'pending';
-  return 'todo';
-}
-
-function taskPointsTone(points: number) {
-  if (points >= 15) return 'hot';
-  if (points >= 10) return 'gold';
-  return 'green';
-}
 
 function TasksPage({ user, member }: { user: User; member: Member | null }) {
   const [items, setItems] = useState<TaskItem[]>([]);
@@ -2022,9 +1369,9 @@ function TasksPage({ user, member }: { user: User; member: Member | null }) {
   const [form, setForm] = useState<TaskForm>({ title: '', person: 'family', dueDate: '', priority: 'normal', note: '', points: 5, requireApproval: true, repeat: 'none' });
   const [filter, setFilter] = useState<'all' | 'today' | 'upcoming' | 'pending' | 'done'>('all');
   const parent = isParent(member);
-  const taskAccess = effectiveMemberPermissions(member);
+  const [savingTask, setSavingTask] = useState(false);
+  const taskSavingRef = useRef(false);
   const today = formatDateInput(new Date());
-  const tomorrow = formatDateInput(addDays(new Date(), 1));
 
   useEffect(() => onSnapshot(collection(db, 'tasks'), (snap) => {
     const next = snap.docs.map((d): TaskItem => {
@@ -2049,69 +1396,25 @@ function TasksPage({ user, member }: { user: User; member: Member | null }) {
     setItems(next);
   }), []);
 
-  const accessibleItems = useMemo(() => items.filter((item)=>parent || taskAccess.viewFamilyTasks || item.person===member?.name || item.person==='family'),[items,parent,taskAccess.viewFamilyTasks,member?.name]);
-
-  const visible = useMemo(() => accessibleItems.filter((item) => {
+  const visible = items.filter((item) => {
     if (filter === 'today') return !item.done && item.dueDate === today;
     if (filter === 'upcoming') return !item.done && !!item.dueDate && item.dueDate > today;
     if (filter === 'pending') return item.approvalStatus === 'pending';
     if (filter === 'done') return item.done;
     return true;
-  }), [accessibleItems, filter, today]);
+  });
 
   const pointsByPerson = useMemo(() => {
     const result: Record<string, number> = {};
-    for (const item of accessibleItems) {
-      if (item.done && (item.approvalStatus === 'approved' || !item.requireApproval)) {
-        result[item.person] = (result[item.person] || 0) + item.points;
-      }
+    for (const item of items) {
+      if (item.done && (item.approvalStatus === 'approved' || !item.requireApproval)) result[item.person] = (result[item.person] || 0) + item.points;
     }
     return result;
-  }, [accessibleItems]);
-
-  const totals = useMemo(() => ({
-    today: accessibleItems.filter((i) => !i.done && i.dueDate === today).length,
-    pending: accessibleItems.filter((i) => i.approvalStatus === 'pending').length,
-    done: accessibleItems.filter((i) => i.done).length,
-    points: Object.values(pointsByPerson).reduce((a, b) => a + b, 0),
-  }), [accessibleItems, pointsByPerson, today]);
-
-  const groupedSections = useMemo(() => {
-    const next: Array<{ key: string; title: string; subtitle: string; items: TaskItem[] }> = [];
-    const addSection = (key: string, title: string, subtitle: string, list: TaskItem[]) => {
-      if (list.length) next.push({ key, title, subtitle, items: list });
-    };
-
-    if (filter === 'done') {
-      addSection('done', 'Wykonane', 'Zadania zamknięte i rozliczone punktowo.', visible);
-      return next;
-    }
-    if (filter === 'pending') {
-      addSection('pending', 'Do zatwierdzenia', 'Czekają na akceptację rodzica.', visible);
-      return next;
-    }
-
-    const notDone = visible.filter((item) => !item.done);
-    addSection('today', 'Dzisiaj', capitalize(new Date().toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })), notDone.filter((item) => item.dueDate === today));
-    addSection('tomorrow', 'Jutro', capitalize(addDays(new Date(), 1).toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })), notDone.filter((item) => item.dueDate === tomorrow));
-    addSection('upcoming', 'Nadchodzące', 'Zadania zaplanowane na kolejne dni.', notDone.filter((item) => !!item.dueDate && item.dueDate > tomorrow));
-    addSection('later', 'Bez terminu', 'Stałe obowiązki i zadania bez daty.', notDone.filter((item) => !item.dueDate));
-    if (filter === 'all') addSection('completed', 'Ostatnio wykonane', 'Dla szybkiego podglądu postępów.', visible.filter((item) => item.done).slice(0, 4));
-    return next;
-  }, [visible, filter, today, tomorrow]);
-
-  const statCounts = useMemo(() => ({
-    created: accessibleItems.length,
-    completed: accessibleItems.filter((item) => item.done).length,
-    pending: accessibleItems.filter((item) => item.approvalStatus === 'pending').length,
-    assignedPoints: accessibleItems.reduce((sum, item) => sum + item.points, 0),
-  }), [accessibleItems]);
-
-  const quickList = TASK_TEMPLATES.slice(0, 4);
+  }, [items]);
 
   function openAdd(template?: string) {
     setEditing(null);
-    setForm({ title: template || '', person: 'family', dueDate: today, priority: 'normal', note: '', points: 5, requireApproval: true, repeat: 'none' });
+    setForm({ title: template || '', person: parent ? 'family' : ownPerson(member), dueDate: today, priority: 'normal', note: '', points: 5, requireApproval: true, repeat: 'none' });
     setShowForm(true);
   }
   function openEdit(item: TaskItem) {
@@ -2120,178 +1423,120 @@ function TasksPage({ user, member }: { user: User; member: Member | null }) {
     setShowForm(true);
   }
   async function save(e: React.FormEvent) {
-    e.preventDefault(); if (!form.title.trim()) return;
-    const payload = { ...form, title: form.title.trim(), points: parent ? Math.max(0, Number(form.points || 0)) : 0, updatedAt: Timestamp.now() };
-    if (editing) await updateDoc(doc(db, 'tasks', editing.id), payload);
-    else await addDoc(collection(db, 'tasks'), { ...payload, done: false, approvalStatus: 'none', createdBy: user.uid, createdAt: Timestamp.now() });
-    setShowForm(false);
+    e.preventDefault(); if (!form.title.trim() || taskSavingRef.current) return;
+    if (!parent && form.person !== ownPerson(member) && form.person !== 'family') { notify('Możesz przypisać zadanie sobie lub całej rodzinie.', 'error'); return; }
+    taskSavingRef.current = true; setSavingTask(true);
+    try {
+      const payload = { ...form, title:form.title.trim(), points:parent ? Math.min(500, Math.max(0, Number(form.points || 0))) : 0, requireApproval:parent ? form.requireApproval : true, updatedAt:Timestamp.now() };
+      if (editing) await updateDoc(doc(db, 'tasks', editing.id), payload);
+      else await addDoc(collection(db,'tasks'), { ...payload, done:false, approvalStatus:'none', createdBy:user.uid, createdAt:Timestamp.now() });
+      setShowForm(false);
+    } catch (error) { notify(errorMessage(error), 'error'); }
+    finally { taskSavingRef.current = false; setSavingTask(false); }
+  }
+
+  async function completeTask(item: TaskItem) {
+    const target = doc(db, 'tasks', item.id);
+    const nextTarget = doc(collection(db, 'tasks'));
+    await runTransaction(db, async transaction => {
+      const snapshot = await transaction.get(target);
+      if (!snapshot.exists() || snapshot.data().done === true) return;
+      const raw = snapshot.data();
+      const changes: Record<string, unknown> = { done:true, approvalStatus:raw.requireApproval ? 'approved' : 'none', completedAt:Timestamp.now(), updatedAt:Timestamp.now() };
+      if (parent && raw.repeat !== 'none' && !raw.nextTaskId) {
+        const base = new Date(`${raw.dueDate || today}T12:00:00`);
+        let nextDate = raw.repeat === 'daily' ? addDays(base, 1) : raw.repeat === 'weekly' ? addDays(base, 7) : addMonths(base, 1);
+        const anchorDay = Number(raw.repeatAnchorDay || base.getDate());
+        if (raw.repeat === 'monthly') { nextDate.setDate(1); nextDate.setDate(Math.min(anchorDay, new Date(nextDate.getFullYear(),nextDate.getMonth()+1,0).getDate())); }
+        const { nextTaskId, ...original } = raw;
+        transaction.set(nextTarget, { ...original, repeatAnchorDay:anchorDay, dueDate:formatDateInput(nextDate), done:false, approvalStatus:'none', completedAt:null, createdBy:user.uid, createdAt:Timestamp.now(), updatedAt:Timestamp.now() });
+        changes.nextTaskId = nextTarget.id;
+      }
+      transaction.update(target, changes);
+    });
   }
 
   async function toggleDone(item: TaskItem) {
+    if (!parent && item.person !== 'family' && item.person !== ownPerson(member)) return;
     if (item.done) {
       if (!parent) return;
-      await updateDoc(doc(db, 'tasks', item.id), { done: false, approvalStatus: 'none', completedAt: null, updatedAt: Timestamp.now() });
-      return;
-    }
-    if (item.requireApproval && !parent) {
-      await updateDoc(doc(db, 'tasks', item.id), { approvalStatus: 'pending', updatedAt: Timestamp.now() });
-    } else {
-      await updateDoc(doc(db, 'tasks', item.id), { done: true, approvalStatus: item.requireApproval ? 'approved' : 'none', completedAt: Timestamp.now(), updatedAt: Timestamp.now() });
-    }
+      await updateDoc(doc(db, 'tasks', item.id), { done:false, approvalStatus:'none', completedAt:null, updatedAt:Timestamp.now() });
+    } else if (item.requireApproval && !parent) {
+      await updateDoc(doc(db, 'tasks', item.id), { approvalStatus:'pending', updatedAt:Timestamp.now() });
+    } else await completeTask(item);
   }
 
-  async function approve(item: TaskItem) {
-    await updateDoc(doc(db, 'tasks', item.id), { done: true, approvalStatus: 'approved', completedAt: Timestamp.now(), updatedAt: Timestamp.now() });
-  }
+  async function approve(item: TaskItem) { if (parent) await completeTask(item); }
   async function reject(item: TaskItem) {
     await updateDoc(doc(db, 'tasks', item.id), { done: false, approvalStatus: 'none', updatedAt: Timestamp.now() });
   }
 
   return (
-    <div className="page-content compact-page tasks-versa-page">
-      <ModuleHeader icon="✅" title="Zadania" text="Obowiązki, szybkie zadania, punkty i nagrody." action={<button className="primary-button tasks-add-button" onClick={() => openAdd()}>＋ Dodaj zadanie</button>} />
+    <div className="page-content compact-page tasks-v130">
+      <ModuleHeader icon="✅" title="Zadania" text="Obowiązki, szybkie zadania, punkty i nagrody." action={<button className="primary-button" onClick={() => openAdd()}>＋ Dodaj zadanie</button>} />
 
-      <section className="tasks-top-summary">
-        <button type="button" className="tasks-summary-card summary-today" onClick={() => setFilter('today')}>
-          <span className="summary-icon">📅</span>
-          <div><strong>{totals.today}</strong><small>Dzisiaj</small><em>z {items.filter((i) => !i.done).length} zadań</em></div>
-        </button>
-        <button type="button" className="tasks-summary-card summary-pending" onClick={() => setFilter('pending')}>
-          <span className="summary-icon">⏳</span>
-          <div><strong>{totals.pending}</strong><small>Do zatwierdzenia</small><em>oczekuje na rodzica</em></div>
-        </button>
-        <button type="button" className="tasks-summary-card summary-done" onClick={() => setFilter('done')}>
-          <span className="summary-icon">✅</span>
-          <div><strong>{totals.done}</strong><small>Wykonane</small><em>w tym miesiącu</em></div>
-        </button>
-        <button type="button" className="tasks-summary-card summary-points" onClick={() => setFilter('all')}>
-          <span className="summary-icon">⭐</span>
-          <div><strong>{totals.points}</strong><small>Punkty razem</small><em>dla całej rodziny</em></div>
-        </button>
+      <section className="task-summary-v130">
+        <button onClick={() => setFilter('today')}><strong>{items.filter((i) => !i.done && i.dueDate === today).length}</strong><span>Dzisiaj</span></button>
+        <button onClick={() => setFilter('pending')}><strong>{items.filter((i) => i.approvalStatus === 'pending').length}</strong><span>Do zatwierdzenia</span></button>
+        <button onClick={() => setFilter('done')}><strong>{items.filter((i) => i.done).length}</strong><span>Wykonane</span></button>
+        <button className="points-card"><strong>⭐ {Object.values(pointsByPerson).reduce((a, b) => a + b, 0)}</strong><span>Punkty razem</span></button>
       </section>
 
-      <section className="tasks-quick-section">
-        <header>
-          <div><strong>⚡ Szybkie zadania</strong><small>Kliknij gotowiec i wybierz osobę, termin oraz punkty.</small></div>
-          <button type="button" className="tasks-link-button" onClick={() => setFilter('all')}>Zobacz wszystkie</button>
-        </header>
-        <div className="tasks-quick-grid">
-          {TASK_TEMPLATES.map(([icon, title]) => (
-            <button key={title} type="button" className="task-template-card" style={{ background: TASK_TEMPLATE_COLORS[title] || '#eff5ff' }} onClick={() => openAdd(title)}>
-              <span>{icon}</span>
-              <strong>{title}</strong>
-            </button>
-          ))}
-        </div>
+      <section className="quick-task-section">
+        <header><div><strong>⚡ Szybkie zadania</strong><small>Kliknij gotowiec i wybierz osobę, termin oraz punkty.</small></div></header>
+        <div className="quick-task-grid">{TASK_TEMPLATES.map(([icon, title]) => <button key={title} onClick={() => openAdd(title)}><span>{icon}</span><strong>{title}</strong></button>)}</div>
       </section>
 
-      <div className="tasks-layout-grid">
-        <section className="tasks-primary-column">
-          <div className="tasks-filter-row">
-            <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Wszystkie</button>
-            <button className={filter === 'today' ? 'active' : ''} onClick={() => setFilter('today')}>Dzisiaj</button>
-            <button className={filter === 'upcoming' ? 'active' : ''} onClick={() => setFilter('upcoming')}>Nadchodzące</button>
-            <button className={filter === 'pending' ? 'active' : ''} onClick={() => setFilter('pending')}>Do zatwierdzenia</button>
-            <button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}>Wykonane</button>
-            <button className="tasks-filter-ghost" type="button">⌕ Filtry</button>
-          </div>
-
-          {groupedSections.length === 0 ? <section className="module-list"><EmptyState icon="✨" text="Brak zadań w tym widoku." /></section> : groupedSections.map((section) => (
-            <section className="task-section-card" key={section.key}>
-              <header className="task-section-header">
-                <div><h3>{section.title}</h3><small>{section.subtitle}</small></div>
-              </header>
-              <div className="task-card-list">
-                {section.items.map((item) => (
-                  <article className={`task-card-row ${item.done ? 'done' : ''} ${item.approvalStatus === 'pending' ? 'pending' : ''}`} key={item.id}>
-                    <button className="check-button task-check-button" onClick={() => void toggleDone(item)}>{item.done ? '✓' : item.approvalStatus === 'pending' ? '⌛' : '○'}</button>
-                    <div className="task-icon-box">{taskTemplateIcon(item.title)}</div>
-                    <div className="task-card-main">
-                      <div className="task-title-line">
-                        <strong>{item.title}</strong>
-                        {item.repeat !== 'none' && <span className="task-repeat-chip">↻ {taskRepeatLabel(item.repeat)}</span>}
-                      </div>
-                      <small>{item.note ? `${item.note} · ` : ''}{taskPriorityLabel(item.priority)} · {item.dueDate ? formatShortDate(item.dueDate) : 'Bez terminu'}</small>
-                    </div>
-                    <div className="task-assignee-card">
-                      <span className="task-assignee-avatar" style={{ background: `${personColor(item.person)}20`, color: personColor(item.person) }}>{memberEmoji(item.person)}</span>
-                      <div><strong>{personLabel(item.person)}</strong><small>{item.dueDate ? formatShortDate(item.dueDate) : 'Cały dzień'}</small></div>
-                    </div>
-                    <span className={`task-points-pill ${taskPointsTone(item.points)}`}>⭐ +{item.points} pkt</span>
-                    <span className={`task-status-pill ${taskStatusClass(item)}`}>{taskStatusLabel(item)}</span>
-                    {parent && item.approvalStatus === 'pending' ? <div className="approval-actions tasks-approval-actions"><button onClick={() => void approve(item)}>✓ Zatwierdź</button><button onClick={() => void reject(item)}>✕ Odrzuć</button></div> : null}
-                    <div className="task-row-actions">
-                      {parent && <button className="icon-button" onClick={() => openEdit(item)}>✏️</button>}
-                      {parent && <button className="icon-danger" onClick={() => deleteDoc(doc(db, 'tasks', item.id))}>🗑️</button>}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
-          ))}
+      <div className="tasks-main-grid">
+        <section>
+          <div className="task-filters"><button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Wszystkie</button><button className={filter === 'today' ? 'active' : ''} onClick={() => setFilter('today')}>Dzisiaj</button><button className={filter === 'upcoming' ? 'active' : ''} onClick={() => setFilter('upcoming')}>Nadchodzące</button><button className={filter === 'pending' ? 'active' : ''} onClick={() => setFilter('pending')}>Do zatwierdzenia</button><button className={filter === 'done' ? 'active' : ''} onClick={() => setFilter('done')}>Wykonane</button></div>
+          <section className="module-list compact-list">
+            {visible.length === 0 ? <EmptyState icon="✨" text="Brak zadań w tym widoku." /> : visible.map((item) => (
+              <article className={`module-row task-row task-row-v130 ${item.done ? 'done' : ''} ${item.approvalStatus === 'pending' ? 'pending' : ''}`} key={item.id}>
+                <button className="check-button" aria-label={`Oznacz wykonanie: ${item.title}`} disabled={!parent && (item.done || (item.person !== 'family' && item.person !== ownPerson(member)))} onClick={() => void toggleDone(item)}>{item.done ? '✓' : item.approvalStatus === 'pending' ? '⌛' : '○'}</button>
+                <div className="row-main"><strong>{item.title}</strong><small>{personLabel(item.person)} · {item.dueDate ? formatShortDate(item.dueDate) : 'bez terminu'}{item.repeat !== 'none' ? ` · ${item.repeat === 'daily' ? 'codziennie' : item.repeat === 'weekly' ? 'co tydzień' : 'co miesiąc'}` : ''}</small></div>
+                <span className={`priority-badge ${item.priority}`}>{item.priority === 'high' ? 'Ważne' : item.priority === 'low' ? 'Niski' : 'Normalny'}</span>
+                {item.points > 0 && <span className="task-points">+{item.points} pkt</span>}
+                {parent && item.approvalStatus === 'pending' ? <div className="approval-actions"><button onClick={() => void approve(item)}>✓ Zatwierdź</button><button onClick={() => void reject(item)}>✕ Odrzuć</button></div> : null}
+                {parent && <button className="icon-button" onClick={() => openEdit(item)}>✏️</button>}
+                {parent && <button className="icon-danger" aria-label={`Usuń zadanie: ${item.title}`} onClick={() => { if (confirm(`Usunąć zadanie „${item.title}”?`)) void deleteDoc(doc(db, 'tasks', item.id)); }}>🗑️</button>}
+              </article>
+            ))}
+          </section>
         </section>
 
-        <aside className="tasks-side-column">
-          <section className="tasks-side-card rewards-card">
-            <header><div><strong>🏆 Punkty i nagrody</strong><small>100 pkt = nagroda</small></div></header>
-            {(['Nikodem', 'Paweł', 'Layla'] as PersonKey[]).map((person) => {
-              const points = pointsByPerson[person] || 0;
-              const progress = Math.max(0, Math.min(100, points % 100));
-              return (
-                <article key={person} className="reward-person-row">
-                  <div className="reward-person-title">
-                    <span className="task-assignee-avatar" style={{ background: `${personColor(person)}20`, color: personColor(person) }}>{memberEmoji(person)}</span>
-                    <div><strong>{person}</strong><small>{points} pkt</small></div>
-                  </div>
-                  <div className="reward-progress-line"><span style={{ width: `${progress}%`, background: personColor(person) }} /></div>
-                  <em>{progress}/100</em>
-                </article>
-              );
-            })}
-            <div className="reward-highlight-box"><span>🎁</span><div><strong>Nagroda przy 100 pkt</strong><small>Rodzice ustalają nagrodę razem z dzieckiem. Punkty za zadanie może ustawić tylko rodzic.</small></div></div>
-          </section>
-
-          <section className="tasks-side-card stats-card">
-            <header><div><strong>📊 Statystyki</strong><small>Ten tydzień</small></div></header>
-            <div className="stats-list">
-              <div><span>Utworzone</span><strong>{statCounts.created}</strong></div>
-              <div><span>Wykonane</span><strong>{statCounts.completed}</strong></div>
-              <div><span>Do zatwierdzenia</span><strong>{statCounts.pending}</strong></div>
-              <div><span>Punkty przyznane</span><strong>{statCounts.assignedPoints}</strong></div>
-            </div>
-          </section>
-
-          <section className="tasks-side-card quick-add-card">
-            <header><div><strong>⚡ Najszybciej dodawane</strong><small>Stałe obowiązki z ikonkami</small></div></header>
-            <div className="quick-add-list">
-              {quickList.map(([icon, title]) => (
-                <button key={title} type="button" className="quick-add-row" onClick={() => openAdd(title)}>
-                  <span className="quick-add-icon">{icon}</span>
-                  <strong>{title}</strong>
-                  <em>＋</em>
-                </button>
-              ))}
-            </div>
-          </section>
+        <aside className="points-panel">
+          <header><strong>🏆 Punkty i nagrody</strong><small>100 pkt = nagroda</small></header>
+          {(['Nikodem', 'Paweł'] as PersonKey[]).map((person) => {
+            const points = pointsByPerson[person] || 0;
+            const progress = points % 100;
+            return <article key={person}><div><span className="points-avatar">{memberEmoji(person)}</span><div><strong>{person}</strong><small>{points} pkt</small></div></div><div className="reward-progress"><span style={{ width: `${progress}%` }} /><em>{progress}/100</em></div></article>;
+          })}
+          <div className="reward-box"><span>🎁</span><div><strong>Nagroda przy 100 pkt</strong><small>Rodzice ustalają nagrodę razem z dzieckiem.</small></div></div>
+          <small className="points-note">Punkty za zadanie może ustawić tylko rodzic. Przy zadaniach z zatwierdzeniem punkty wpadają dopiero po akceptacji.</small>
         </aside>
       </div>
 
       {showForm && <Modal title={editing ? '✏️ Edytuj zadanie' : '➕ Nowe zadanie'} onClose={() => setShowForm(false)} wide>
         <form className="form-grid" onSubmit={save}>
           <label className="field field-wide"><span>Zadanie</span><input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="Np. wyrzucić śmieci…" required /></label>
-          <label className="field"><span>Osoba</span><PersonSelect value={form.person} onChange={(person) => setForm((f) => ({ ...f, person }))} /></label>
+          <label className="field"><span>Osoba</span><PersonSelect allowed={parent ? undefined : ['family', ownPerson(member)]} value={form.person} onChange={(person) => setForm((f) => ({ ...f, person }))} /></label>
           <label className="field"><span>Termin</span><input type="date" value={form.dueDate} onChange={(e) => setForm((f) => ({ ...f, dueDate: e.target.value }))} /></label>
-          <label className="field"><span>Priorytet</span><select value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value as TaskPriority }))}><option value="low">Niski</option><option value="normal">Normalny</option><option value="high">Wysoki</option></select></label>
-          <label className="field"><span>Powtarzanie</span><select value={form.repeat} onChange={(e) => setForm((f) => ({ ...f, repeat: e.target.value as TaskRepeat }))}><option value="none">Brak</option><option value="daily">Codziennie</option><option value="weekly">Co tydzień</option><option value="monthly">Co miesiąc</option></select></label>
-          <label className="field"><span>Punkty</span><input type="number" min={0} value={form.points} onChange={(e) => setForm((f) => ({ ...f, points: Number(e.target.value || 0) }))} disabled={!parent} /></label>
-          <label className="field field-wide"><span>Notatka</span><textarea value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} placeholder="Opcjonalna notatka" /></label>
-          <label className="toggle-row field-wide"><input type="checkbox" checked={form.requireApproval} onChange={(e) => setForm((f) => ({ ...f, requireApproval: e.target.checked }))} /><span>Wymaga zatwierdzenia przez rodzica</span></label>
-          <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Anuluj</button><button type="submit" className="primary-button">{editing ? 'Zapisz zmiany' : 'Dodaj zadanie'}</button></div>
+          <label className="field"><span>Priorytet</span><select aria-label="Priorytet" value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value as TaskPriority }))}><option value="low">Niski</option><option value="normal">Normalny</option><option value="high">Ważne</option></select></label>
+          <label className="field"><span>Powtarzanie</span><select aria-label="Powtarzanie" value={form.repeat} onChange={(e) => setForm((f) => ({ ...f, repeat: e.target.value as TaskRepeat }))}><option value="none">Nie powtarzaj</option><option value="daily">Codziennie</option><option value="weekly">Co tydzień</option><option value="monthly">Co miesiąc</option></select></label>
+          {parent && <label className="field"><span>Punkty za zadanie</span><div className="point-picker">{[5,10,15,20].map((p) => <button type="button" key={p} className={form.points === p ? 'active' : ''} onClick={() => setForm((f) => ({ ...f, points: p }))}>{p}</button>)}<input type="number" min="0" max="500" value={form.points} onChange={(e) => setForm((f) => ({ ...f, points: Number(e.target.value) }))} /></div></label>}
+          {parent && <label className="checkbox-field field-wide"><input type="checkbox" checked={form.requireApproval} onChange={(e) => setForm((f) => ({ ...f, requireApproval: e.target.checked }))} /><span>Wymaga zatwierdzenia rodzica po wykonaniu</span></label>}
+          <label className="field field-wide"><span>Notatka</span><textarea rows={3} value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} placeholder="Opcjonalnie…" /></label>
+          <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={() => setShowForm(false)}>Anuluj</button><button className="primary-button" disabled={savingTask}>{savingTask ? "Zapisuję…" : "✓ Zapisz"}</button></div>
         </form>
       </Modal>}
     </div>
   );
 }
+
+/* =========================================================
+   SHOPPING
+   ========================================================= */
 
 const SHOPPING_META: Record<ShoppingCategory, { label: string; icon: string }> = {
   owoce: { label: 'Owoce', icon: '🍎' }, warzywa: { label: 'Warzywa', icon: '🥕' }, nabial: { label: 'Nabiał', icon: '🥛' },
@@ -2419,12 +1664,16 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
   const [categoryChoice, setCategoryChoice] = useState<'auto' | ShoppingCategory>('auto');
   const [quickNote, setQuickNote] = useState('');
   const [quickCategory, setQuickCategory] = useState<ShoppingCategory | 'all'>('all');
-  const [quickSort, setQuickSort] = useState<'default' | 'az'>('default');
   const [editingQuick, setEditingQuick] = useState<QuickProduct | null>(null);
   const [quickMenu, setQuickMenu] = useState<QuickProduct | null>(null);
   const [quickForm, setQuickForm] = useState({ title:'', category:'inne' as ShoppingCategory, quantity:'1', unit:'szt.', imageURL:'', icon:'📦' });
   const holdTimer = useRef<number | null>(null);
   const adult = isAdultMember(member);
+  const [addingShopping, setAddingShopping] = useState(false);
+  const shoppingSavingRef = useRef(false);
+  const quickSavingRef = useRef(false);
+  const [savingQuick, setSavingQuick] = useState(false);
+  const quickInflight = useRef(new Set<string>());
 
   useEffect(() => onSnapshot(collection(db, 'shoppingItems'), (snap) => {
     const next = snap.docs.map((d): ShoppingItem => {
@@ -2447,10 +1696,8 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
     const overrides = new Map(customQuick.map((x) => [x.id, x]));
     const merged = DEFAULT_QUICK_PRODUCTS.map((base) => overrides.has(base.id) ? { ...base, ...overrides.get(base.id) } as QuickProduct : base);
     for (const custom of customQuick) if (!DEFAULT_QUICK_PRODUCTS.some((b) => b.id === custom.id)) merged.push(custom);
-    const filtered = merged.filter((p) => !p.hidden && (!p.adultOnly || adult) && (quickCategory === 'all' || p.category === quickCategory));
-    if (quickSort === 'az') return [...filtered].sort((a, b) => a.title.localeCompare(b.title, 'pl'));
-    return filtered;
-  }, [customQuick, adult, quickCategory, quickSort]);
+    return merged.filter((p) => !p.hidden && (!p.adultOnly || adult) && (quickCategory === 'all' || p.category === quickCategory));
+  }, [customQuick, adult, quickCategory]);
 
   async function addItem(productTitle: string, qty = '1', productUnit = 'szt.', category?: ShoppingCategory) {
     const clean = productTitle.trim(); if (!clean) return;
@@ -2458,13 +1705,19 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
   }
 
   async function add(e: React.FormEvent) {
-    e.preventDefault(); if (!title.trim()) return;
-    await addItem(title, quantity.trim(), unit, categoryChoice === 'auto' ? categorizeProduct(title) : categoryChoice);
-    setTitle(''); setQuantity('1'); setUnit('szt.'); setCategoryChoice('auto');
+    e.preventDefault(); if (!title.trim() || shoppingSavingRef.current) return;
+    shoppingSavingRef.current = true; setAddingShopping(true);
+    try { await addItem(title, quantity.trim(), unit, categoryChoice === 'auto' ? categorizeProduct(title) : categoryChoice); setTitle(''); setQuantity('1'); setUnit('szt.'); setCategoryChoice('auto'); }
+    catch (error) { notify(errorMessage(error), 'error'); }
+    finally { shoppingSavingRef.current = false; setAddingShopping(false); }
   }
 
   async function addQuick(product: QuickProduct) {
-    await addItem(product.title, product.defaultQuantity, product.defaultUnit, product.category);
+    if (quickInflight.current.has(product.id)) return;
+    quickInflight.current.add(product.id);
+    try { await addItem(product.title, product.defaultQuantity, product.defaultUnit, product.category); notify(`Dodano: ${product.title}`); }
+    catch (error) { notify(errorMessage(error), 'error'); }
+    finally { quickInflight.current.delete(product.id); }
   }
 
   function parseNote(value: string) {
@@ -2483,9 +1736,15 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
 
   async function addQuickNote() {
     const products = parseNote(quickNote);
-    if (!products.length) return;
-    for (const product of products) await addItem(product, '1', 'szt.', categorizeProduct(product));
-    setQuickNote('');
+    if (!products.length || shoppingSavingRef.current) return;
+    if (products.length > 200) { notify('Dodaj maksymalnie 200 produktów naraz.', 'error'); return; }
+    shoppingSavingRef.current = true; setAddingShopping(true);
+    try {
+      const batch = writeBatch(db);
+      for (const product of products) batch.set(doc(collection(db,'shoppingItems')), { title:product, done:false, category:categorizeProduct(product), quantity:'1', unit:'szt.', createdBy:user.uid, createdAt:Timestamp.now() });
+      await batch.commit(); setQuickNote('');
+    } catch (error) { notify(errorMessage(error), 'error'); }
+    finally { shoppingSavingRef.current = false; setAddingShopping(false); }
   }
 
   const grouped = useMemo(() => {
@@ -2497,7 +1756,7 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
     const done = items.filter((item) => item.done);
     if (done.length === 0) return;
     if (!window.confirm(`Usunąć kupione produkty (${done.length})?`)) return;
-    await Promise.all(done.map((item) => deleteDoc(doc(db, 'shoppingItems', item.id))));
+    for (let i=0; i<done.length; i+=400) { const batch = writeBatch(db); done.slice(i,i+400).forEach(item=>batch.delete(doc(db,'shoppingItems',item.id))); await batch.commit(); }
   }
 
   function startHold(product: QuickProduct) {
@@ -2513,48 +1772,23 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
     setQuickMenu(null);
   }
 
-  async function normalizeQuickImage(file: File) {
-    const objectUrl = URL.createObjectURL(file);
-    try {
-      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const element = new Image();
-        element.onload = () => resolve(element);
-        element.onerror = () => reject(new Error('Nie można odczytać zdjęcia.'));
-        element.src = objectUrl;
-      });
-      const size = 900;
-      const canvas = document.createElement('canvas');
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('Brak obsługi obrazu.');
-      const scale = Math.max(size / img.naturalWidth, size / img.naturalHeight);
-      const width = img.naturalWidth * scale;
-      const height = img.naturalHeight * scale;
-      const x = (size - width) / 2;
-      const y = (size - height) / 2;
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, size, size);
-      ctx.drawImage(img, x, y, width, height);
-      return await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Nie udało się przygotować zdjęcia.')), 'image/jpeg', 0.9));
-    } finally {
-      URL.revokeObjectURL(objectUrl);
-    }
-  }
-
   async function uploadQuickImage(file: File) {
-    const normalized = await normalizeQuickImage(file);
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/\.[^.]+$/, '') || 'produkt';
-    const target = storageRef(storage, `quick-products/${user.uid}/${Date.now()}-${safeName}.jpg`);
-    await uploadBytes(target, normalized, { contentType: 'image/jpeg' });
+    if (file.size > 5 * 1024 * 1024 || !['image/jpeg','image/png','image/webp','image/gif'].includes(file.type)) { notify('Wybierz zdjęcie JPG, PNG, WebP lub GIF do 5 MB.', 'error'); return; }
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+    const target = storageRef(storage, `quick-products/${user.uid}/${Date.now()}-${safeName}`);
+    await uploadBytes(target, file);
     const url = await getDownloadURL(target);
     setQuickForm((f) => ({ ...f, imageURL:url }));
   }
 
   async function saveQuick(e: React.FormEvent) {
-    e.preventDefault(); if (!editingQuick || !quickForm.title.trim()) return;
+    e.preventDefault(); if (!editingQuick || !quickForm.title.trim() || quickSavingRef.current) return;
+    quickSavingRef.current = true; setSavingQuick(true);
+    try {
     await setDoc(doc(db, 'quickProducts', editingQuick.id), { title:quickForm.title.trim(), category:quickForm.category, defaultQuantity:quickForm.quantity || '1', defaultUnit:quickForm.unit || 'szt.', imageURL:quickForm.imageURL, icon:quickForm.icon || '📦', adultOnly:editingQuick.adultOnly === true, custom:editingQuick.custom === true || !DEFAULT_QUICK_PRODUCTS.some((p) => p.id === editingQuick.id), hidden:false, updatedAt:Timestamp.now() }, { merge:true });
     setEditingQuick(null);
+    } catch (error) { notify(errorMessage(error), 'error'); }
+    finally { quickSavingRef.current = false; setSavingQuick(false); }
   }
 
   async function removeQuick(product: QuickProduct) {
@@ -2569,35 +1803,22 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
 
   return (
     <div className="page-content compact-page shopping-v130">
-      <section className="shopping-hero">
-        <div className="shopping-hero-icon">🛒</div>
-        <div className="shopping-hero-copy"><small>Nasza Rodzina</small><h1>Zakupy</h1><p>Szybkie kafelki, notatka wielu produktów i jedna wspólna lista.</p></div>
-        <div className="shopping-hero-basket" aria-hidden="true">🧺</div>
-        {items.some((i) => i.done) ? <button className="secondary-button shopping-clear-button" onClick={clearDone}>🧹 Usuń kupione</button> : null}
-      </section>
+      <ModuleHeader icon="🛒" title="Zakupy" text="Szybkie kafelki, notatka wielu produktów i jedna wspólna lista." action={items.some((i) => i.done) ? <button className="secondary-button" onClick={clearDone}>🧹 Usuń kupione</button> : undefined} />
 
       <form className="shopping-bar" onSubmit={add}>
         <input className="shopping-product" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Np. jabłka, mleko, bułki…" />
         <input className="shopping-quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="Ilość" />
-        <select value={unit} onChange={(e) => setUnit(e.target.value)}><option>szt.</option><option>kg</option><option>g</option><option>l</option><option>ml</option><option>opak.</option><option>pęczek</option></select>
-        <select value={categoryChoice} onChange={(e) => setCategoryChoice(e.target.value as 'auto' | ShoppingCategory)}><option value="auto">✨ Kategoria auto</option>{(Object.keys(SHOPPING_META) as ShoppingCategory[]).map((category) => <option key={category} value={category}>{SHOPPING_META[category].icon} {SHOPPING_META[category].label}</option>)}</select>
-        <button className="primary-button">＋ Dodaj</button>
+        <select aria-label="Jednostka" value={unit} onChange={(e) => setUnit(e.target.value)}><option>szt.</option><option>kg</option><option>g</option><option>l</option><option>ml</option><option>opak.</option><option>pęczek</option></select>
+        <select aria-label="Kategoria produktu" value={categoryChoice} onChange={(e) => setCategoryChoice(e.target.value as 'auto' | ShoppingCategory)}><option value="auto">✨ Kategoria auto</option>{(Object.keys(SHOPPING_META) as ShoppingCategory[]).map((category) => <option key={category} value={category}>{SHOPPING_META[category].icon} {SHOPPING_META[category].label}</option>)}</select>
+        <button className="primary-button" disabled={addingShopping}>{addingShopping ? "Zapisuję…" : "＋ Dodaj"}</button>
       </form>
 
-      <section className="quick-note-card"><header><strong>📝 Szybka notatka zakupowa</strong><small>Wpisz kilka rzeczy naraz — rozdzielimy je i dodamy do jednej listy.</small></header><div><textarea rows={2} value={quickNote} onChange={(e) => setQuickNote(e.target.value)} placeholder="Np. długopis, gumka, zeszyt, lampka, zegarek…" /><button className="primary-button" onClick={() => void addQuickNote()}>✨ Dodaj wszystkie</button></div></section>
-
-      <div className="shopping-category-chips"><button className={quickCategory === 'all' ? 'active' : ''} onClick={() => setQuickCategory('all')}>▦ Wszystkie</button>{(Object.keys(SHOPPING_META) as ShoppingCategory[]).map((cat) => <button key={cat} className={quickCategory === cat ? 'active' : ''} onClick={() => setQuickCategory(cat)}>{SHOPPING_META[cat].icon} {SHOPPING_META[cat].label}</button>)}</div>
+      <section className="quick-note-card"><header><strong>📝 Szybka notatka zakupowa</strong><small>Wpisz kilka rzeczy naraz — rozdzielimy je i dodamy do jednej listy.</small></header><div><textarea rows={2} value={quickNote} onChange={(e) => setQuickNote(e.target.value)} placeholder="Np. długopis, gumka, zeszyt, lampka, zegarek…" /><button className="primary-button" disabled={addingShopping} onClick={() => void addQuickNote()}>✨ Dodaj wszystkie</button></div></section>
 
       <section className="quick-products-card">
-        <header>
-          <div><strong>⭐ Szybkie zakupy</strong><small>Długie przytrzymanie: zmień zdjęcie lub edytuj produkt.</small></div>
-          <div className="quick-products-tools">
-            <select aria-label="Sortowanie szybkich zakupów" value={quickSort} onChange={(e) => setQuickSort(e.target.value as 'default' | 'az')}><option value="default">Sortuj: Najczęściej</option><option value="az">Sortuj: A–Z</option></select>
-            <button className="quick-view-button active" type="button" aria-label="Widok kafelków">▦</button>
-            <button className="quick-custom-button" type="button" onClick={() => openQuickEditor()}>＋ Własny produkt</button>
-          </div>
-        </header>
-        <div className="quick-products-grid">{quickProducts.map((product) => <button key={product.id} className={`quick-product-tile category-${product.category}`} onClick={() => void addQuick(product)} onPointerDown={() => startHold(product)} onPointerUp={cancelHold} onPointerCancel={cancelHold} onContextMenu={(e) => { e.preventDefault(); setQuickMenu(product); }}><span className="quick-product-visual">{product.imageURL ? <img src={product.imageURL} alt={product.title} /> : <span className="quick-product-emoji">{product.icon}</span>}</span><strong className="quick-product-title">{product.title}</strong><span className="quick-product-plus" aria-hidden="true">＋</span>{product.adultOnly && <em>18+</em>}<i onClick={(e) => { e.stopPropagation(); setQuickMenu(product); }}>⋯</i></button>)}</div>
+        <header><div><strong>⭐ Szybkie zakupy</strong><small>Długie przytrzymanie: zmień ikonkę lub edytuj produkt.</small></div><button onClick={() => openQuickEditor()}>＋ Własny produkt</button></header>
+        <div className="shopping-category-chips"><button className={quickCategory === 'all' ? 'active' : ''} onClick={() => setQuickCategory('all')}>Wszystkie</button>{(Object.keys(SHOPPING_META) as ShoppingCategory[]).map((cat) => <button key={cat} className={quickCategory === cat ? 'active' : ''} onClick={() => setQuickCategory(cat)}>{SHOPPING_META[cat].icon} {SHOPPING_META[cat].label}</button>)}</div>
+        <div className="quick-products-grid">{quickProducts.map((product) => <button key={product.id} className="quick-product-tile" onClick={() => void addQuick(product)} onPointerDown={() => startHold(product)} onPointerUp={cancelHold} onPointerCancel={cancelHold} onContextMenu={(e) => { e.preventDefault(); setQuickMenu(product); }}><span className="quick-product-visual">{product.imageURL ? <img src={product.imageURL} alt="" /> : product.icon}</span><strong>{product.title}</strong>{product.adultOnly && <em>18+</em>}<i onClick={(e) => { e.stopPropagation(); setQuickMenu(product); }}>⋯</i></button>)}</div>
       </section>
 
       <section className="shopping-list-title"><div><strong>🛒 Lista zakupów</strong><small>{items.filter((i) => !i.done).length} do kupienia</small></div></section>
@@ -2621,11 +1842,11 @@ function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
       {editingQuick && <Modal title={editingQuick.custom ? '➕ Własny produkt' : `🖼️ ${editingQuick.title}`} onClose={() => setEditingQuick(null)}>
         <form className="form-grid" onSubmit={saveQuick}>
           <label className="field field-wide"><span>Nazwa</span><input value={quickForm.title} onChange={(e) => setQuickForm((f) => ({ ...f, title:e.target.value }))} required /></label>
-          <label className="field"><span>Kategoria</span><select value={quickForm.category} onChange={(e) => setQuickForm((f) => ({ ...f, category:e.target.value as ShoppingCategory }))}>{(Object.keys(SHOPPING_META) as ShoppingCategory[]).map((cat) => <option key={cat} value={cat}>{SHOPPING_META[cat].label}</option>)}</select></label>
+          <label className="field"><span>Kategoria</span><select aria-label="Kategoria" value={quickForm.category} onChange={(e) => setQuickForm((f) => ({ ...f, category:e.target.value as ShoppingCategory }))}>{(Object.keys(SHOPPING_META) as ShoppingCategory[]).map((cat) => <option key={cat} value={cat}>{SHOPPING_META[cat].label}</option>)}</select></label>
           <label className="field"><span>Emoji awaryjne</span><input value={quickForm.icon} onChange={(e) => setQuickForm((f) => ({ ...f, icon:e.target.value }))} /></label>
           <label className="field"><span>Domyślna ilość</span><input value={quickForm.quantity} onChange={(e) => setQuickForm((f) => ({ ...f, quantity:e.target.value }))} /></label>
-          <label className="field"><span>Jednostka</span><select value={quickForm.unit} onChange={(e) => setQuickForm((f) => ({ ...f, unit:e.target.value }))}><option>szt.</option><option>kg</option><option>g</option><option>l</option><option>ml</option><option>opak.</option><option>pęczek</option></select></label>
-          <label className="field field-wide"><span>Własne zdjęcie / ikonka</span><small className="image-normalize-hint">Zdjęcie zostanie automatycznie wykadrowane do kwadratu i dopasowane do wszystkich kafelków.</small><input type="file" accept="image/*" onChange={(e) => { const file=e.target.files?.[0]; if (file) void uploadQuickImage(file).catch(() => alert('Nie udało się wysłać zdjęcia. Sprawdź Firebase Storage.')); }} />{quickForm.imageURL && <img className="quick-image-preview" src={quickForm.imageURL} alt="Podgląd" />}</label>
+          <label className="field"><span>Jednostka</span><select aria-label="Jednostka" value={quickForm.unit} onChange={(e) => setQuickForm((f) => ({ ...f, unit:e.target.value }))}><option>szt.</option><option>kg</option><option>g</option><option>l</option><option>ml</option><option>opak.</option><option>pęczek</option></select></label>
+          <label className="field field-wide"><span>Własne zdjęcie / ikonka</span><input type="file" accept="image/*" onChange={(e) => { const file=e.target.files?.[0]; if (file) void uploadQuickImage(file).catch(() => alert('Nie udało się wysłać zdjęcia. Sprawdź Firebase Storage.')); }} />{quickForm.imageURL && <img className="quick-image-preview" src={quickForm.imageURL} alt="Podgląd" />}</label>
           <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={() => setEditingQuick(null)}>Anuluj</button><button className="primary-button">✓ Zapisz</button></div>
         </form>
       </Modal>}
@@ -2649,62 +1870,51 @@ function ChatPage({ user, member }: { user: User; member: Member | null }) {
   const [selectedUid, setSelectedUid] = useState<string>('');
   const [messageMenu, setMessageMenu] = useState<ChatMessage | null>(null);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
-  const [search, setSearch] = useState('');
+  const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => onSnapshot(collection(db, 'members'), (snap) => {
     const next = snap.docs.map((d) => {
       const x = d.data();
-      return {
-        id: d.id,
-        name: String(x.name || 'Rodzina'),
-        role: personRole(String(x.name || ''), typeof x.role === 'string' ? x.role : ''),
-        photoURL: typeof x.photoURL === 'string' ? x.photoURL : undefined,
-        active: x.active !== false,
-      };
-    }).sort((a, b) => FAMILY_ORDER.indexOf(a.name) - FAMILY_ORDER.indexOf(b.name));
+      return { id:d.id, name:String(x.name || 'Rodzina'), role:personRole(String(x.name || ''), typeof x.role === 'string' ? x.role : ''), photoURL:typeof x.photoURL === 'string' ? x.photoURL : undefined, active:x.active !== false };
+    }).sort((a,b) => FAMILY_ORDER.indexOf(a.name)-FAMILY_ORDER.indexOf(b.name));
     setMembers(next);
   }), []);
 
-  useEffect(() => onSnapshot(collection(db, 'familyMessages'), (snap) => {
-    const loaded = snap.docs.map((d): ChatMessage => {
-      const x = d.data();
-      return {
-        id: d.id,
-        text: String(x.text || ''),
-        name: String(x.name || 'Rodzina'),
-        uid: String(x.uid || ''),
-        channel: typeof x.channel === 'string' ? x.channel : 'family',
-        createdAt: x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
-      };
-    }).sort((a, b) => (a.createdAt?.getTime() || 0) - (b.createdAt?.getTime() || 0));
-    setMessages(loaded.slice(-400));
-  }), []);
+  useEffect(() => {
+    const groups: Record<string, ChatMessage[]> = { family: [], private: [] };
+    function load(group: string, snap: import('firebase/firestore').QuerySnapshot) {
+      groups[group] = snap.docs.map((d): ChatMessage => {
+        const x = d.data();
+        return { id:d.id, text:String(x.text || ''), name:String(x.name || 'Rodzina'), uid:String(x.uid || ''), channel:String(x.channel || 'family'), createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
+      });
+      setMessages([...groups.family, ...groups.private].sort((a,b)=>(a.createdAt?.getTime() || 0)-(b.createdAt?.getTime() || 0)).slice(-300));
+    }
+    const stopFamily = onSnapshot(query(collection(db, 'familyMessages'), where('channel', '==', 'family')), snap=>load('family', snap));
+    const stopPrivate = onSnapshot(query(collection(db, 'familyMessages'), where('participants', 'array-contains', user.uid)), snap=>load('private', snap));
+    return () => { stopFamily(); stopPrivate(); };
+  }, [user.uid]);
 
   const channel = mode === 'family' ? 'family' : selectedUid ? privateChannel(user.uid, selectedUid) : '';
   const visible = messages.filter((m) => m.channel === channel);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [visible.length, channel]);
 
   const selectedMember = members.find((m) => m.id === selectedUid);
-  const privateMembers = members.filter((m) => m.id !== user.uid && m.name.toLowerCase().includes(search.trim().toLowerCase()));
 
   async function send(e: React.FormEvent) {
-    e.preventDefault();
-    if (!text.trim() || !channel) return;
-    const body = replyTo ? `↩ ${replyTo.name}: ${replyTo.text.slice(0, 60)}\n${text.trim()}` : text.trim();
-    await addDoc(collection(db, 'familyMessages'), {
-      text: body,
-      name: member?.name || 'Rodzina',
-      uid: user.uid,
-      channel,
-      createdAt: Timestamp.now(),
-    });
-    setText('');
-    setReplyTo(null);
+    e.preventDefault(); if (!text.trim() || !channel || sendingRef.current || !navigator.onLine) return;
+    sendingRef.current = true; setSending(true);
+    try {
+      const body = replyTo ? `↩ ${replyTo.name}: ${replyTo.text.slice(0, 60)}\n${text.trim()}` : text.trim();
+      await addDoc(collection(db, 'familyMessages'), { text:body, name:member?.name || 'Rodzina', uid:user.uid, channel, participants:mode === 'private' ? [user.uid, selectedUid].sort() : [], createdAt:Timestamp.now() });
+      setText(''); setReplyTo(null);
+    } catch (error) { notify(errorMessage(error), 'error'); }
+    finally { sendingRef.current = false; setSending(false); }
   }
 
   async function removeMessage(message: ChatMessage) {
-    if (message.uid !== user.uid && !isParent(member)) return;
+    if (message.uid !== user.uid && !(isParent(member) && message.channel === 'family')) return;
     await deleteDoc(doc(db, 'familyMessages', message.id));
     setMessageMenu(null);
   }
@@ -2714,98 +1924,35 @@ function ChatPage({ user, member }: { user: User; member: Member | null }) {
     return [...messages].reverse().find((m) => m.channel === ch);
   };
 
-  const lastFamily = [...messages].reverse().find((m) => m.channel === 'family');
-
-  function openFamily() {
-    setMode('family');
-    setSelectedUid('');
-  }
-
-  function openPrivate(uid?: string) {
-    setMode('private');
-    if (uid) setSelectedUid(uid);
-  }
-
   return (
-    <div className="page-content compact-page chat-page chat-v134">
-      <section className="chat-page-heading">
-        <div><small>Rodzinne centrum</small><h1>💬 Czat</h1><p>Rozmowy z całą rodziną i prywatne wiadomości 1:1.</p></div>
-      </section>
-
-      <section className="chat-mode-tabs-v134" aria-label="Tryb rozmowy">
-        <button className={mode === 'family' ? 'active' : ''} onClick={openFamily}>👥 Rodzina</button>
-        <button className={mode === 'private' ? 'active' : ''} onClick={() => openPrivate()}>👤 Prywatne</button>
-      </section>
-
-      <section className="chat-layout-v134">
-        <aside className="chat-conversations-v134">
-          <div className="chat-search-v134"><span>⌕</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Szukaj rozmów…" /></div>
-
-          <button className={`conversation-row-v134 ${mode === 'family' ? 'active' : ''}`} onClick={openFamily}>
-            <span className="conversation-group-avatar-v134">👨‍👩‍👧‍👦</span>
-            <div><strong>Czat rodzinny</strong><small>{lastFamily?.text || 'Wspólna rozmowa całej rodziny'}</small></div>
-            <time>{lastFamily?.createdAt ? formatTime(lastFamily.createdAt) : ''}</time>
-          </button>
-
-          <div className="private-conversation-list-v134">
-            {privateMembers.map((person) => {
-              const last = lastForChannel(person.id);
-              return (
-                <button key={person.id} className={`conversation-row-v134 ${mode === 'private' && selectedUid === person.id ? 'active' : ''}`} onClick={() => openPrivate(person.id)}>
-                  <span className="chat-avatar-v134">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span>
-                  <div><strong>{person.name}</strong><small>{last ? last.text : 'Rozpocznij rozmowę'}</small></div>
-                  <time>{last?.createdAt ? formatTime(last.createdAt) : ''}</time>
-                </button>
-              );
-            })}
-          </div>
+    <div className="page-content compact-page chat-page chat-v130">
+      <ModuleHeader icon="💬" title="Czat" text="Czat rodzinny i prywatne rozmowy 1:1." />
+      <section className="chat-layout-v130">
+        <aside className="chat-conversations">
+          <div className="chat-mode-tabs"><button className={mode === 'family' ? 'active' : ''} onClick={() => { setMode('family'); setSelectedUid(''); }}>Rodzina</button><button className={mode === 'private' ? 'active' : ''} onClick={() => setMode('private')}>Prywatne</button></div>
+          {mode === 'family' ? <button className="conversation-row active"><span className="conversation-group-avatar">👨‍👩‍👧‍👦</span><div><strong>Czat rodzinny</strong><small>{[...messages].reverse().find((m) => m.channel === 'family')?.text || 'Wspólna rozmowa całej rodziny'}</small></div></button> : <div className="private-list">{members.filter((m) => m.id !== user.uid).map((person) => { const last=lastForChannel(person.id); return <button key={person.id} className={`conversation-row ${selectedUid === person.id ? 'active' : ''}`} onClick={() => setSelectedUid(person.id)}><span className="chat-avatar">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span><div><strong>{person.name}</strong><small>{last ? last.text : 'Rozpocznij rozmowę'}</small></div><time>{last?.createdAt ? formatTime(last.createdAt) : ''}</time></button>; })}</div>}
         </aside>
 
-        <section className="chat-shell-v134">
-          <header className="chat-room-header-v134">
-            <span className="chat-avatar-v134 large">{mode === 'family' ? '👨‍👩‍👧‍👦' : selectedMember?.photoURL ? <img src={selectedMember.photoURL} alt="" /> : selectedMember ? memberEmoji(selectedMember.name) : '💬'}</span>
-            <div>
-              <strong>{mode === 'family' ? 'Czat rodzinny' : selectedMember?.name || 'Wybierz osobę'}</strong>
-              <small>{mode === 'family' ? `${members.length || 5} uczestników` : selectedMember ? 'Prywatna rozmowa 1:1' : 'Wybierz członka rodziny z listy'}</small>
-            </div>
-          </header>
-
-          <div className="chat-messages-v134">
+        <section className="chat-shell">
+          <header className="chat-room-header"><span className="chat-avatar large">{mode === 'family' ? '👨‍👩‍👧‍👦' : selectedMember?.photoURL ? <img src={selectedMember.photoURL} alt="" /> : selectedMember ? memberEmoji(selectedMember.name) : '💬'}</span><div><strong>{mode === 'family' ? 'Czat rodzinny' : selectedMember?.name || 'Wybierz osobę'}</strong><small>{mode === 'family' ? members.map((m) => m.name).join(', ') : selectedMember ? `${selectedMember.role}` : 'Prywatna rozmowa 1:1'}</small></div></header>
+          <div className="chat-messages">
             {!channel ? <EmptyState icon="👤" text="Wybierz osobę z listy prywatnych rozmów." /> : visible.length === 0 ? <EmptyState icon="💬" text="Napisz pierwszą wiadomość." /> : visible.map((message, index) => {
               const previous = visible[index - 1];
               const showIdentity = !previous || previous.uid !== message.uid;
               const person = members.find((m) => m.id === message.uid);
-              return (
-                <div key={message.id} className={`chat-message-line-v134 ${message.uid === user.uid ? 'mine' : ''}`}>
-                  {message.uid !== user.uid && <span className={`chat-avatar-v134 message-avatar ${showIdentity ? '' : 'ghost'}`}>{showIdentity ? (person?.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(message.name)) : ''}</span>}
-                  <div className={`chat-bubble-v134 ${message.uid === user.uid ? 'mine' : ''}`}>
-                    {showIdentity && message.uid !== user.uid && <strong>{message.name}</strong>}
-                    <p>{message.text}</p>
-                    <small>{message.createdAt ? formatTime(message.createdAt) : ''}{message.uid === user.uid ? '  ✓✓' : ''}</small>
-                    <button className="message-more-v134" type="button" aria-label="Opcje wiadomości" onClick={() => setMessageMenu(message)}>⋯</button>
-                  </div>
-                </div>
-              );
+              return <div key={message.id} className={`chat-message-line ${message.uid === user.uid ? 'mine' : ''}`} onContextMenu={(e) => { e.preventDefault(); setMessageMenu(message); }}>
+                {message.uid !== user.uid && <span className={`chat-avatar ${showIdentity ? '' : 'ghost'}`}>{showIdentity ? (person?.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(message.name)) : ''}</span>}
+                <div className={`chat-bubble ${message.uid === user.uid ? 'mine' : ''}`}>{showIdentity && message.uid !== user.uid && <strong>{message.name}</strong>}<p>{message.text}</p><small>{message.createdAt ? formatTime(message.createdAt) : ''}</small><button className="message-more" onClick={() => setMessageMenu(message)}>⋯</button></div>
+              </div>;
             })}
             <div ref={endRef} />
           </div>
-
-          {replyTo && <div className="reply-banner-v134"><span>Odpowiadasz: <strong>{replyTo.name}</strong> — {replyTo.text.slice(0, 80)}</span><button onClick={() => setReplyTo(null)}>✕</button></div>}
-
-          <form className="chat-compose-v134" onSubmit={send}>
-            <input value={text} onChange={(e) => setText(e.target.value)} placeholder={channel ? 'Napisz wiadomość…' : 'Najpierw wybierz rozmowę'} disabled={!channel} />
-            <button className="chat-send-v134" disabled={!channel || !text.trim()}>Wyślij</button>
-          </form>
+          {replyTo && <div className="reply-banner"><span>Odpowiadasz: <strong>{replyTo.name}</strong> — {replyTo.text.slice(0,80)}</span><button onClick={() => setReplyTo(null)}>✕</button></div>}
+          <form className="chat-compose" onSubmit={send}><input value={text} onChange={(e) => setText(e.target.value)} placeholder={channel ? 'Napisz wiadomość…' : 'Najpierw wybierz rozmowę'} maxLength={4000} disabled={!channel || sending} /><button type="button" onClick={() => setText((v) => `${v} 😊`)}>😊</button><button className="primary-button" disabled={!channel || sending || !text.trim() || !navigator.onLine}>{sending ? "Wysyłanie…" : "Wyślij"}</button></form>
         </section>
       </section>
 
-      {messageMenu && <div className="chat-menu-backdrop-v134" onClick={() => setMessageMenu(null)}>
-        <div className="message-menu-v134" onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => { setReplyTo(messageMenu); setMessageMenu(null); }}>↩ Odpowiedz</button>
-          <button onClick={() => { void navigator.clipboard?.writeText(messageMenu.text); setMessageMenu(null); }}>📋 Kopiuj</button>
-          {(messageMenu.uid === user.uid || isParent(member)) && <button className="danger" onClick={() => void removeMessage(messageMenu)}>🗑️ Usuń</button>}
-        </div>
-      </div>}
+      {messageMenu && <div className="quick-product-menu-backdrop" onClick={() => setMessageMenu(null)}><div className="message-menu" onClick={(e) => e.stopPropagation()}><div className="reaction-row"><button onClick={() => setText((v) => `${v} ❤️`)}>❤️</button><button onClick={() => setText((v) => `${v} 👍`)}>👍</button><button onClick={() => setText((v) => `${v} 😂`)}>😂</button></div><button onClick={() => { setReplyTo(messageMenu); setMessageMenu(null); }}>↩ Odpowiedz</button><button onClick={() => { void navigator.clipboard?.writeText(messageMenu.text); setMessageMenu(null); }}>📋 Kopiuj</button>{(messageMenu.uid === user.uid || (isParent(member) && messageMenu.channel === 'family')) && <button className="danger" onClick={() => void removeMessage(messageMenu)}>🗑️ Usuń</button>}</div></div>}
     </div>
   );
 }
@@ -2826,294 +1973,189 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
   const [records, setRecords] = useState<HealthRecord[]>([]);
   const [contacts, setContacts] = useState<MedicalContact[]>([]);
   const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
-  const [intakes, setIntakes] = useState<MedicationIntake[]>([]);
-  const [alerts, setAlerts] = useState<HealthAlert[]>([]);
-  const parent = isParent(member);
-  const healthAccess = effectiveMemberPermissions(member);
-  const ownPerson = isPersonKey(member?.name) ? member!.name as PersonKey : 'family';
-  const [person, setPerson] = useState<PersonKey>(() => parent ? (ownPerson === 'family' ? 'Sebastian' : ownPerson) : ownPerson);
-  const [healthTab, setHealthTab] = useState<'summary' | 'visits' | 'meds' | 'results' | 'documents' | 'contacts' | 'notes'>('summary');
+  const [person, setPerson] = useState<PersonKey>('family');
   const [specialtyFilter, setSpecialtyFilter] = useState<string>('all');
   const [showForm, setShowForm] = useState(false);
   const [showContactForm, setShowContactForm] = useState(false);
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => typeof Notification === 'undefined' ? 'denied' : Notification.permission);
-
-  const emptyForm = (): HealthForm => ({
-    title: '', person: person === 'family' ? (parent ? 'Paweł' : ownPerson) : person, type: 'visit', date: formatDateInput(new Date()), time: '12:00',
-    doctor: '', location: '', note: '', specialty: '', status: 'planned', referralCode: '', nextControl: '', callReminderDate: '',
-    privateToParents: false, sharedWithPerson: false, blocksSchoolDay: false, dose: '', medicineTime: '08:00', medicineTimes: ['08:00', '20:00'], escalationMinutes: 15,
-    addToCalendar: true, file: null,
-  });
+  const parent = isParent(member);
+  const [recordType, setRecordType] = useState<HealthType | 'all'>('all');
+  const [editingHealth, setEditingHealth] = useState<HealthRecord | null>(null);
+  const [savingHealth, setSavingHealth] = useState(false);
+  const healthSavingRef = useRef(false);
+  const [savingContact, setSavingContact] = useState(false);
+  const [editingContact, setEditingContact] = useState<MedicalContact | null>(null);
+  const contactSavingRef = useRef(false);
+  const emptyForm = (): HealthForm => ({ title: '', person: !parent ? ownPerson(member) : person === 'family' ? 'Paweł' : person, type: 'visit', date: formatDateInput(new Date()), time: '12:00', doctor: '', location: '', note: '', specialty: '', status: 'planned', referralCode: '', nextControl: '', callReminderDate: '', privateToParents: false, dose: '', medicineTime: '20:00', addToCalendar: true, file: null });
   const [form, setForm] = useState<HealthForm>(emptyForm);
   const [contactForm, setContactForm] = useState({ person:'family' as PersonKey, specialty:'', name:'', doctor:'', phone:'', address:'', note:'' });
 
   useEffect(() => onSnapshot(collection(db, 'members'), (snap) => {
-    const next = snap.docs.map((d) => {
-      const x=d.data();
-      return {
-        id:d.id, name:String(x.name || 'Rodzina'), role:personRole(String(x.name || ''), typeof x.role === 'string' ? x.role : ''),
-        photoURL:typeof x.photoURL === 'string' ? x.photoURL : undefined, active:x.active !== false,
-        birthDate:typeof x.birthDate === 'string' ? x.birthDate : FAMILY_BIRTHDAYS[String(x.name || '') as PersonKey],
-      } as FamilyMemberDoc;
-    }).sort((a,b)=>FAMILY_ORDER.indexOf(a.name)-FAMILY_ORDER.indexOf(b.name));
+    const next = snap.docs.map((d) => { const x=d.data(); return { id:d.id, name:String(x.name || 'Rodzina'), role:personRole(String(x.name || ''), typeof x.role === 'string' ? x.role : ''), photoURL:typeof x.photoURL === 'string' ? x.photoURL : undefined, active:x.active !== false, birthDate:typeof x.birthDate === 'string' ? x.birthDate : FAMILY_BIRTHDAYS[String(x.name || '') as PersonKey] }; }).sort((a,b)=>FAMILY_ORDER.indexOf(a.name)-FAMILY_ORDER.indexOf(b.name));
     setMembers(next);
-    if (!parent && ownPerson !== 'family') setPerson(ownPerson);
-  }), [parent, ownPerson]);
+  }), []);
 
-  useEffect(() => onSnapshot(collection(db, 'healthRecords'), (snap) => {
+  useEffect(() => onSnapshot(parent ? collection(db, 'healthRecords') : query(collection(db, 'healthRecords'), where('privateToParents', '==', false), where('person', 'in', ['family', ownPerson(member)])), (snap) => {
     const next = snap.docs.map((d): HealthRecord => {
       const x = d.data();
-      const legacyTime = typeof x.medicineTime === 'string' ? x.medicineTime : (typeof x.time === 'string' ? x.time : '');
-      const rawTimes = Array.isArray(x.medicineTimes) ? x.medicineTimes.filter((v: unknown) => typeof v === 'string') : [];
       return {
-        id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', type:isHealthType(x.type) ? x.type : 'history',
-        date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', doctor:typeof x.doctor === 'string' ? x.doctor : '',
-        location:typeof x.location === 'string' ? x.location : '', note:typeof x.note === 'string' ? x.note : '', specialty:typeof x.specialty === 'string' ? x.specialty : '',
-        status:isHealthStatus(x.status) ? x.status : (x.type === 'visit' ? 'planned' : 'done'), referralCode:typeof x.referralCode === 'string' ? x.referralCode : '',
-        nextControl:typeof x.nextControl === 'string' ? x.nextControl : '', callReminderDate:typeof x.callReminderDate === 'string' ? x.callReminderDate : '',
-        documentURL:typeof x.documentURL === 'string' ? x.documentURL : '', privateToParents:x.privateToParents === true, sharedWithPerson:x.sharedWithPerson === true, blocksSchoolDay:x.blocksSchoolDay === true,
-        dose:typeof x.dose === 'string' ? x.dose : '', medicineTime:legacyTime, medicineTimes:rawTimes.length ? rawTimes : (legacyTime ? [legacyTime] : []),
-        escalationMinutes:Number.isFinite(Number(x.escalationMinutes)) ? Math.max(1, Number(x.escalationMinutes)) : 15,
-        confirmedDate:typeof x.confirmedDate === 'string' ? x.confirmedDate : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
+        id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', type:isHealthType(x.type) ? x.type : 'history', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', doctor:typeof x.doctor === 'string' ? x.doctor : '', location:typeof x.location === 'string' ? x.location : '', note:typeof x.note === 'string' ? x.note : '', specialty:typeof x.specialty === 'string' ? x.specialty : '', status:isHealthStatus(x.status) ? x.status : (x.type === 'visit' ? 'planned' : 'done'), referralCode:typeof x.referralCode === 'string' ? x.referralCode : '', nextControl:typeof x.nextControl === 'string' ? x.nextControl : '', callReminderDate:typeof x.callReminderDate === 'string' ? x.callReminderDate : '', documentURL:typeof x.documentURL === 'string' ? x.documentURL : '', documentPath:typeof x.documentPath === 'string' ? x.documentPath : '', privateToParents:x.privateToParents === true, dose:typeof x.dose === 'string' ? x.dose : '', medicineTime:typeof x.medicineTime === 'string' ? x.medicineTime : (typeof x.time === 'string' ? x.time : ''), confirmedDate:typeof x.confirmedDate === 'string' ? x.confirmedDate : '', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
       };
     });
     next.sort((a,b)=>(b.date || '').localeCompare(a.date || '') || (b.createdAt?.getTime() || 0)-(a.createdAt?.getTime() || 0));
     setRecords(next);
   }), []);
 
-  useEffect(() => onSnapshot(collection(db, 'medicalContacts'), (snap) => {
+  useEffect(() => onSnapshot(parent ? collection(db, 'medicalContacts') : query(collection(db, 'medicalContacts'), where('person', 'in', ['family', ownPerson(member)])), (snap) => {
     setContacts(snap.docs.map((d) => { const x=d.data(); return { id:d.id, person:isPersonKey(x.person) ? x.person : 'family', specialty:String(x.specialty || ''), name:String(x.name || ''), doctor:String(x.doctor || ''), phone:String(x.phone || ''), address:String(x.address || ''), note:String(x.note || '') }; }));
   }), []);
 
-  useEffect(() => onSnapshot(collection(db, 'healthMedicationIntakes'), (snap) => {
-    setIntakes(snap.docs.map((d): MedicationIntake => {
-      const x=d.data();
-      return { id:d.id, recordId:String(x.recordId || ''), person:isPersonKey(x.person) ? x.person : 'family', date:String(x.date || ''), time:String(x.time || ''), confirmedBy:String(x.confirmedBy || ''), confirmedAt:x.confirmedAt instanceof Timestamp ? x.confirmedAt.toDate() : undefined };
-    }));
-  }), []);
+  useEffect(() => {
+    const check = () => {
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+      let preferences;
+      try { preferences = JSON.parse(localStorage.getItem('nr-notifications') || '{}'); } catch { preferences = {}; }
+      if (preferences.medicines === false) return;
+      const now = new Date();
+      const today = formatDateInput(now);
+      records.filter((r) => r.type === 'medicine' && r.medicineTime && r.confirmedDate !== today).forEach((r) => {
+        if (!(parent || r.person === member?.name)) return;
+        const due = parseLocalDate(today, r.medicineTime);
+        const minutes = (now.getTime()-due.getTime())/60000;
+        const key = `nr-med-${r.id}-${today}-${parent ? 'parent' : 'person'}`;
+        if (minutes >= 0 && minutes < 5 && !localStorage.getItem(key)) {
+          new Notification(`${r.person} — czas na lek`, { body: `${r.title}${r.dose ? ` · ${r.dose}` : ''}` }); localStorage.setItem(key, '1');
+        }
+        if (parent && minutes >= 15 && !localStorage.getItem(`${key}-late`)) {
+          new Notification(`Brak potwierdzenia leku — ${r.person}`, { body: `Sprawdź, czy ${r.title} został przyjęty.` }); localStorage.setItem(`${key}-late`, '1');
+        }
+      });
+    };
+    check(); const timer=window.setInterval(check,60000); return()=>window.clearInterval(timer);
+  }, [records, parent, member?.name]);
 
-  useEffect(() => onSnapshot(collection(db, 'healthAlerts'), (snap) => {
-    setAlerts(snap.docs.map((d): HealthAlert => {
-      const x=d.data();
-      return { id:d.id, recordId:String(x.recordId || ''), person:isPersonKey(x.person) ? x.person : 'family', date:String(x.date || ''), time:String(x.time || ''), title:String(x.title || ''), dose:String(x.dose || ''), status:x.status === 'acknowledged' || x.status === 'resolved' ? x.status : 'open', createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
-    }));
-  }), []);
-
-  const allowedRecords = records.filter((r) => {
-    if (r.privateToParents) {
-      if (parent) return true;
-      return r.person === ownPerson && r.sharedWithPerson;
-    }
-    if (parent || healthAccess.viewFamilyHealth) return true;
-    return r.person === ownPerson || r.person === 'family';
-  });
-  const selectableMembers = (parent || healthAccess.viewFamilyHealth) ? members : members.filter((m) => m.name === ownPerson);
+  const allowedRecords = records.filter((r) => !r.privateToParents || parent);
   const personRecords = allowedRecords.filter((r) => person === 'family' || r.person === person);
-  const visibleRecords = personRecords.filter((r) => specialtyFilter === 'all' || r.specialty === specialtyFilter);
-  const today = formatDateInput(new Date());
-  const upcomingVisits = personRecords.filter((r) => r.type === 'visit' && r.date && r.date >= today && r.status !== 'cancelled').sort((a,b)=>a.date.localeCompare(b.date)).slice(0,5);
+  const visibleRecords = personRecords.filter((r) => (specialtyFilter === 'all' || r.specialty === specialtyFilter) && (recordType === 'all' || r.type === recordType));
+  const upcomingVisits = personRecords.filter((r) => r.type === 'visit' && r.date && r.date >= formatDateInput(new Date()) && r.status !== 'cancelled' && r.status !== 'done').sort((a,b)=>a.date.localeCompare(b.date)).slice(0,4);
   const medicines = personRecords.filter((r) => r.type === 'medicine');
-  const results = visibleRecords.filter((r) => r.type === 'result').sort((a,b)=>(b.date || '').localeCompare(a.date || ''));
-  const history = visibleRecords.filter((r) => r.type === 'visit' || r.type === 'history' || r.type === 'result').sort((a,b)=>(b.date || '').localeCompare(a.date || '')).slice(0,10);
-  const documents = personRecords.filter((r) => r.type === 'document' || r.type === 'result').slice(0,12);
+  const history = visibleRecords.filter((r) => r.type === 'visit' || r.type === 'history' || r.type === 'result').sort((a,b)=>(b.date || '').localeCompare(a.date || '')).slice(0,8);
+  const documents = personRecords.filter((r) => r.type === 'document' || r.type === 'result').slice(0,8);
   const controlItems = personRecords.filter((r) => r.nextControl || r.callReminderDate).slice(0,6);
-  const visibleContacts = contacts.filter((c) => c.person === 'family' || person === 'family' || c.person === person).slice(0,8);
-  const importantDocs = personRecords.filter((r) => r.type === 'document' && r.privateToParents).slice(0,6);
-  const activeAlerts = alerts.filter((a) => a.status !== 'resolved' && a.date === today && (person === 'family' || a.person === person));
+  const visibleContacts = contacts.filter((c) => c.person === 'family' || person === 'family' || c.person === person);
+  const importantPawelDocs = allowedRecords.filter((r) => r.person === 'Paweł' && r.type === 'document' && r.privateToParents).slice(0,4);
 
-  function intakeId(recordId: string, date: string, time: string) { return `${recordId}_${date}_${time.replace(':','')}`; }
-  function isDoseConfirmed(recordId: string, time: string, date = today) { return intakes.some((i) => i.recordId === recordId && i.date === date && i.time === time); }
-  function medicineTimes(record: HealthRecord) { return record.medicineTimes.length ? record.medicineTimes : (record.medicineTime ? [record.medicineTime] : []); }
+  function openAdd(type: HealthType = 'visit') { setEditingHealth(null); setForm({ ...emptyForm(), type, person: !parent ? ownPerson(member) : person === 'family' ? 'Paweł' : person, privateToParents:parent && type === 'document' }); setShowForm(true); }
 
-  async function requestNotifications() {
-    if (typeof Notification === 'undefined') return;
-    const result = await Notification.requestPermission();
-    setNotificationPermission(result);
+  function editHealth(record: HealthRecord) {
+    setEditingHealth(record);
+    const { id, createdAt, confirmedDate, documentURL, documentPath, ...fields } = record;
+    setForm({ ...fields, addToCalendar:false, file:null }); setShowForm(true);
   }
 
-  useEffect(() => {
-    const check = async () => {
-      const now = new Date();
-      const currentDate = formatDateInput(now);
-      for (const r of records.filter((x) => x.type === 'medicine')) {
-        const times = medicineTimes(r);
-        for (const time of times) {
-          if (isDoseConfirmed(r.id, time, currentDate)) continue;
-          const due = parseLocalDate(currentDate, time);
-          const minutes = (now.getTime() - due.getTime()) / 60000;
-          const selfKey = `nr-med-${r.id}-${currentDate}-${time}-self`;
-          if (member?.name === r.person && minutes >= 0 && minutes < 10 && notificationPermission === 'granted' && !localStorage.getItem(selfKey)) {
-            new Notification('Czas na lek', { body: `${r.title}${r.dose ? ` · ${r.dose}` : ''} · ${time}` });
-            localStorage.setItem(selfKey, '1');
-          }
-          if (minutes >= r.escalationMinutes && minutes < 24 * 60) {
-            const alertId = intakeId(r.id, currentDate, time);
-            const existingAlert = alerts.find((a) => a.id === alertId);
-            if (!existingAlert) {
-              const alertRef = doc(db, 'healthAlerts', alertId);
-              await setDoc(alertRef, { recordId:r.id, person:r.person, date:currentDate, time, title:r.title, dose:r.dose, status:'open', createdAt:Timestamp.now() }, { merge:true });
-            }
-          }
-        }
-      }
-    };
-    void check();
-    const timer=window.setInterval(() => void check(),60000);
-    return()=>window.clearInterval(timer);
-  }, [records, intakes, alerts, member?.name, notificationPermission]);
-
-  useEffect(() => {
-    if (!parent || notificationPermission !== 'granted') return;
-    alerts.filter((a) => a.status === 'open' && a.date === today).forEach((a) => {
-      const key=`nr-parent-alert-${a.id}`;
-      if (!localStorage.getItem(key)) {
-        new Notification(`Brak potwierdzenia leku — ${a.person}`, { body:`${a.title}${a.dose ? ` · ${a.dose}` : ''} · plan ${a.time}` });
-        localStorage.setItem(key,'1');
-      }
-    });
-  }, [alerts, parent, notificationPermission, today]);
-
-  function openAdd(type: HealthType = 'visit') {
-    const base=emptyForm();
-    const selectedPerson = person === 'family' ? (parent ? 'Paweł' : ownPerson) : person;
-    setForm({ ...base, type, person:selectedPerson, privateToParents:type === 'document' && selectedPerson === 'Paweł', medicineTimes:type === 'medicine' ? ['08:00','20:00'] : base.medicineTimes });
-    setShowForm(true);
+  async function openDocument(record: HealthRecord) {
+    if (!record.documentPath) { notify('Ten plik wymaga migracji do chronionego magazynu. Instrukcja znajduje się w paczce projektu.', 'error'); return; }
+    const preview = window.open('', '_blank');
+    try {
+      const blob = await getBlob(storageRef(storage, record.documentPath), 10 * 1024 * 1024);
+      const url = URL.createObjectURL(blob);
+      if (preview) { preview.opener = null; preview.location.replace(url); }
+      else { const a = document.createElement('a'); a.href = url; a.download = record.title; a.click(); }
+      window.setTimeout(()=>URL.revokeObjectURL(url), 60000);
+    } catch (error) { preview?.close(); notify(errorMessage(error), 'error'); }
   }
 
   async function uploadHealthFile(file: File, recordPerson: PersonKey) {
-    const safe=file.name.replace(/[^a-zA-Z0-9._-]/g,'-');
-    const target=storageRef(storage, `health/${recordPerson}/${Date.now()}-${safe}`);
-    await uploadBytes(target,file); return getDownloadURL(target);
+    if (file.size > 10 * 1024 * 1024 || !['application/pdf','image/jpeg','image/png','image/webp'].includes(file.type)) throw new Error('Wybierz PDF lub zdjęcie do 10 MB.');
+    const safe = file.name.replace(/[^a-zA-Z0-9._-]/g,'-');
+    const path = `health/${form.privateToParents ? 'parents' : 'shared'}/${recordPerson}/${user.uid}/${Date.now()}-${safe}`;
+    await uploadBytes(storageRef(storage, path), file); return path;
   }
 
   async function save(e: React.FormEvent) {
-    e.preventDefault(); if (!form.title.trim()) return;
-    let documentURL='';
-    if (form.file) {
-      try { documentURL=await uploadHealthFile(form.file,form.person); }
-      catch { alert('Nie udało się wysłać pliku. Włącz Firebase Storage i sprawdź reguły.'); return; }
-    }
-    const { addToCalendar, file, ...record }=form;
-    const cleanTimes = form.type === 'medicine' ? Array.from(new Set(form.medicineTimes.filter(Boolean))).sort() : [];
-    await addDoc(collection(db,'healthRecords'), { ...record, medicineTimes:cleanTimes, medicineTime:cleanTimes[0] || form.medicineTime || '', title:form.title.trim(), documentURL, confirmedDate:'', createdBy:user.uid, createdAt:Timestamp.now() });
-    if (addToCalendar && form.type === 'visit' && form.date) {
-      const start=parseLocalDate(form.date,form.time || '12:00'); const end=new Date(start.getTime()+3600000);
-      await addDoc(collection(db,'calendarEvents'), { title:`❤️ ${form.title.trim()}`, person:form.person, date:Timestamp.fromDate(start), endDate:Timestamp.fromDate(end), allDay:false, description:[form.specialty,form.doctor,form.location,form.referralCode ? `Kod skierowania: ${form.referralCode}` : ''].filter(Boolean).join(' · '), repeat:'none', repeatUntil:null, createdBy:user.uid, createdAt:Timestamp.now() });
-    }
-    setShowForm(false);
+    e.preventDefault(); if (!form.title.trim() || healthSavingRef.current) return;
+    if (editingHealth?.documentPath && (editingHealth.privateToParents !== form.privateToParents || editingHealth.person !== form.person) && !form.file) { notify('Przy zmianie osoby lub prywatności załącz plik ponownie, aby nadać mu właściwe uprawnienia.', 'error'); return; }
+    healthSavingRef.current = true; setSavingHealth(true);
+    try {
+      const documentPath = form.file ? await uploadHealthFile(form.file, form.person) : editingHealth?.documentPath || '';
+      const { addToCalendar, file, ...record } = form;
+      const batch = writeBatch(db);
+      const target = editingHealth ? doc(db, 'healthRecords', editingHealth.id) : doc(collection(db, 'healthRecords'));
+      const payload = { ...record, title:form.title.trim(), documentPath, documentURL:'', updatedAt:Timestamp.now() };
+      if (editingHealth) batch.update(target, payload);
+      else batch.set(target, { ...payload, confirmedDate:'', createdBy:user.uid, createdAt:Timestamp.now() });
+      if (!editingHealth && addToCalendar && !form.privateToParents && form.type === 'visit' && form.date) {
+        const start = parseLocalDate(form.date, form.time || '12:00');
+        batch.set(doc(collection(db,'calendarEvents')), { title:`❤️ ${form.title.trim()}`, person:form.person, date:Timestamp.fromDate(start), endDate:Timestamp.fromDate(new Date(start.getTime()+3600000)), allDay:false, description:[form.specialty,form.doctor,form.location].filter(Boolean).join(' · '), repeat:'none', repeatUntil:null, createdBy:user.uid, createdAt:Timestamp.now() });
+      }
+      await batch.commit(); setShowForm(false);
+      if (editingHealth?.documentPath && editingHealth.documentPath !== documentPath) {
+        try { await deleteObject(storageRef(storage, editingHealth.documentPath)); } catch { notify('Zapisano wpis. Nie udało się usunąć poprzedniego pliku — administrator powinien usunąć go z magazynu.', 'error'); }
+      }
+    } catch (error) { notify(error instanceof Error && error.message.startsWith('Wybierz') ? error.message : errorMessage(error), 'error'); }
+    finally { healthSavingRef.current = false; setSavingHealth(false); }
+  }
+
+  async function removeHealth(record: HealthRecord) {
+    if (!parent || !confirm(`Usunąć wpis „${record.title}”?`)) return;
+    await deleteDoc(doc(db, 'healthRecords', record.id));
+    if (record.documentPath) { try { await deleteObject(storageRef(storage, record.documentPath)); } catch { notify('Usunięto wpis, lecz plik pozostał w magazynie. Administrator powinien usunąć plik.', 'error'); } }
   }
 
   async function saveContact(e: React.FormEvent) {
-    e.preventDefault(); if (!contactForm.name.trim()) return;
-    await addDoc(collection(db,'medicalContacts'), { ...contactForm, createdBy:user.uid, createdAt:Timestamp.now() }); setShowContactForm(false);
+    e.preventDefault(); if (!parent || !contactForm.name.trim() || contactSavingRef.current) return;
+    contactSavingRef.current = true; setSavingContact(true);
+    try {
+      if (editingContact) await updateDoc(doc(db,'medicalContacts',editingContact.id), { ...contactForm, updatedAt:Timestamp.now() });
+      else await addDoc(collection(db,'medicalContacts'), { ...contactForm, createdBy:user.uid, createdAt:Timestamp.now() });
+      setShowContactForm(false);
+    }
+    catch (error) { notify(errorMessage(error), 'error'); }
+    finally { contactSavingRef.current = false; setSavingContact(false); }
   }
 
-  async function confirmMedicine(record: HealthRecord, time: string) {
-    const id=intakeId(record.id,today,time);
-    await setDoc(doc(db,'healthMedicationIntakes',id), { recordId:record.id, person:record.person, date:today, time, confirmedBy:user.uid, confirmedAt:Timestamp.now() }, { merge:true });
-    await updateDoc(doc(db,'healthRecords',record.id), { confirmedDate:today, updatedAt:Timestamp.now() });
-    await setDoc(doc(db,'healthAlerts',id), { recordId:record.id, person:record.person, date:today, time, title:record.title, dose:record.dose, status:'resolved', resolvedAt:Timestamp.now() }, { merge:true });
-  }
-
-  async function acknowledgeAlert(alert: HealthAlert) {
-    await updateDoc(doc(db,'healthAlerts',alert.id), { status:'acknowledged', acknowledgedBy:user.uid, acknowledgedAt:Timestamp.now() });
-  }
-
-  async function toggleDocumentShare(record: HealthRecord) {
-    if (!parent) return;
-    await updateDoc(doc(db,'healthRecords',record.id), { sharedWithPerson:!record.sharedWithPerson, updatedAt:Timestamp.now() });
-  }
+  async function confirmMedicine(record: HealthRecord) { await updateDoc(doc(db,'healthRecords',record.id), { confirmedDate:formatDateInput(new Date()), updatedAt:Timestamp.now() }); }
 
   const selectedMember = members.find((m) => m.name === person);
-  const tabItems: Array<[typeof healthTab, string, string]> = [
-    ['summary','⌂','Podsumowanie'], ['visits','🩺','Wizyty'], ['meds','💊','Leki'], ['results','🧪','Wyniki'], ['documents','📄','Dokumenty'], ['contacts','☎','Kontakty'], ['notes','✎','Notatki'],
-  ];
-
-  const recordList = (type: HealthType | 'notes') => {
-    const list = type === 'notes' ? personRecords.filter((r)=>!!r.note) : personRecords.filter((r)=>r.type === type);
-    if (!list.length) return <p className="health-empty">Brak wpisów w tej sekcji.</p>;
-    return <div className="health-generic-list">{list.map((r)=><article key={r.id}><span className="health-icon-tile">{type === 'notes' ? '✎' : HEALTH_META[r.type].icon}</span><div><strong>{r.title}</strong><small>{[r.date ? formatShortDate(r.date) : '', r.doctor, r.location, r.note].filter(Boolean).join(' · ')}</small></div>{r.documentURL && <a href={r.documentURL} target="_blank" rel="noreferrer">Otwórz</a>}</article>)}</div>;
-  };
 
   return (
-    <div className="page-content compact-page health-versa-page">
-      <section className="health-title-row">
-        <div><small>Rodzinne centrum</small><h1><span>❤️</span> Zdrowie</h1><p>Wizyty, leki, wyniki, dokumenty i kontakty całej rodziny.</p></div>
-        <div className="health-title-actions">
-          {notificationPermission !== 'granted' && <button className="secondary-button" onClick={() => void requestNotifications()}>🔔 Włącz powiadomienia</button>}
-          <button className="primary-button health-add-button" onClick={() => openAdd('visit')}>＋ Dodaj wizytę / wpis</button>
-        </div>
+    <div className="page-content compact-page health-v130">
+      <ModuleHeader icon="❤️" title="Zdrowie" text="Kartoteka, wizyty, leki, dokumenty i kontakty całej rodziny." action={<button className="primary-button" onClick={() => openAdd('visit')}>＋ Dodaj wizytę / wpis</button>} />
+
+      <section className="health-person-switch">
+        <button className={person === 'family' ? 'active' : ''} onClick={() => setPerson('family')}><span className="health-avatar">👨‍👩‍👧‍👦</span><strong>Cała rodzina</strong><small>Wspólnie</small></button>
+        {members.filter(m=>parent || m.name === ownPerson(member)).map((m) => <button key={m.id} className={person === m.name ? 'active' : ''} onClick={() => setPerson(m.name as PersonKey)}><span className="health-avatar">{m.photoURL ? <img src={m.photoURL} alt="" /> : memberEmoji(m.name)}</span><strong>{m.name}</strong><small>{personRole(m.name,m.role)}</small></button>)}
       </section>
 
-      {parent && activeAlerts.length > 0 && <section className="health-alert-strip">
-        <div><strong>🚨 Brak potwierdzenia leku</strong><small>{activeAlerts.length} {activeAlerts.length === 1 ? 'powiadomienie wymaga' : 'powiadomienia wymagają'} uwagi rodzica.</small></div>
-        <div className="health-alert-list">{activeAlerts.slice(0,3).map((a)=><button key={a.id} onClick={() => void acknowledgeAlert(a)}><span>{a.person}</span><strong>{a.title}</strong><em>{a.time}</em></button>)}</div>
-      </section>}
+      {person !== 'family' && <section className="health-profile-bar"><span className="health-profile-avatar">{selectedMember?.photoURL ? <img src={selectedMember.photoURL} alt="" /> : memberEmoji(person)}</span><div><h2>{person}</h2><p>{personRole(person, selectedMember?.role)} · pełna kartoteka zdrowia</p></div></section>}
 
-      <section className="health-family-cards">
-        {selectableMembers.map((m) => <button key={m.id} className={person === m.name ? 'active' : ''} onClick={() => { setPerson(m.name as PersonKey); setHealthTab('summary'); }}>
-          <span className="health-family-photo">{m.photoURL ? <img src={m.photoURL} alt="" /> : memberEmoji(m.name)}</span>
-          <div><strong>{m.name}</strong><small>{personRole(m.name,m.role)}</small></div><em>›</em>
-        </button>)}
+      <section className="specialty-chips"><button className={specialtyFilter === 'all' ? 'active' : ''} onClick={() => setSpecialtyFilter('all')}>Chronologia</button>{SPECIALTIES.map((s)=><button key={s} className={specialtyFilter === s ? 'active' : ''} onClick={() => setSpecialtyFilter(s)}>{s}</button>)}</section>
+
+      <div className="health-dashboard-grid">
+        <article className="health-card upcoming-health"><header><strong>📅 Najbliższe wizyty{person !== 'family' ? ` — ${person}` : ''}</strong><button onClick={() => openAdd('visit')}>Dodaj +</button></header>{upcomingVisits.length === 0 ? <p className="health-empty">Brak zaplanowanych wizyt.</p> : upcomingVisits.map((r)=><div className="health-list-row" key={r.id}><span className="health-date-tile"><b>{new Date(`${r.date}T12:00`).getDate()}</b><small>{new Date(`${r.date}T12:00`).toLocaleDateString('pl-PL',{month:'short'}).toUpperCase()}</small></span><div><strong>{r.person} — {r.specialty || r.title}</strong><small>{r.doctor || r.location || r.title}</small><p>{r.time}{r.referralCode ? ` · skierowanie: ${r.referralCode}` : ''}</p></div><span className="health-status">{r.status === 'toBook' ? 'Do umówienia' : r.status === 'booked' ? 'Umówiona' : 'Zaplanowana'}</span></div>)}</article>
+
+        <article className="health-card"><header><strong>🔔 Przypomnienia</strong></header>{medicines.slice(0,3).map((r)=><div className="health-list-row" key={r.id}><span className="health-icon-tile">💊</span><div><strong>{r.title} — {r.person}</strong><small>{r.medicineTime || r.time}{r.dose ? ` · ${r.dose}` : ''}</small></div><button className={r.confirmedDate === formatDateInput(new Date()) ? 'confirmed-button' : 'medicine-confirm'} onClick={() => void confirmMedicine(r)}>{r.confirmedDate === formatDateInput(new Date()) ? '✓ Przyjęte' : 'Potwierdź'}</button></div>)}{controlItems.map((r)=><div className="health-list-row" key={`control-${r.id}`}><span className="health-icon-tile">☎️</span><div><strong>{r.nextControl ? `Kontrola: ${r.nextControl}` : 'Zadzwoń do rejestracji'}</strong><small>{r.callReminderDate ? `Przypomnienie: ${formatShortDate(r.callReminderDate)}` : r.specialty}</small></div></div>)}</article>
+
+        {person === 'Paweł' && parent && <article className="health-card important-docs"><header><strong>🔒 Ważne dokumenty Pawła</strong><button onClick={() => openAdd('document')}>Dodaj +</button></header>{importantPawelDocs.length === 0 ? <p className="health-empty">Dodaj orzeczenie lub ważny dokument, aby mieć go zawsze pod ręką.</p> : importantPawelDocs.map((r)=><div className="document-row" key={r.id}><span>📁</span><div><strong>{r.title}</strong><small>Tylko rodzice</small></div>{(r.documentPath || r.documentURL) && <button onClick={()=>void openDocument(r)}>Pokaż lekarzowi</button>}</div>)}</article>}
+
+        <article className="health-card"><header><strong>🕘 Historia wizyt</strong><small>Od najnowszych do najstarszych</small></header>{history.length === 0 ? <p className="health-empty">Brak historii.</p> : history.map((r)=><div className="timeline-health-row" key={r.id}><time>{r.date ? formatShortDate(r.date) : '—'}</time><span style={{ background:personColor(r.person) }} /><div><strong>{r.specialty || r.title}</strong><small>{r.person}{r.doctor ? ` · ${r.doctor}` : ''}</small><p>{r.note || r.location}</p></div></div>)}</article>
+
+        <article className="health-card"><header><strong>📄 Dokumenty i wyniki</strong><button onClick={() => openAdd('result')}>Dodaj plik +</button></header>{documents.length === 0 ? <p className="health-empty">Brak dokumentów.</p> : documents.map((r)=><div className="document-row" key={r.id}><span>📄</span><div><strong>{r.title}</strong><small>{r.date ? formatShortDate(r.date) : ''} · {r.person}</small></div>{r.documentPath || r.documentURL ? <button onClick={()=>void openDocument(r)}>Otwórz</button> : <span>Bez pliku</span>}</div>)}</article>
+
+        <article className="health-card medical-contacts"><header><strong>👥 Kontakty medyczne</strong>{parent && <button onClick={() => { setEditingContact(null); setContactForm({ person:person === 'family' ? 'family' : person, specialty:'', name:'', doctor:'', phone:'', address:'', note:'' }); setShowContactForm(true); }}>Dodaj +</button>}</header>{visibleContacts.length === 0 ? <p className="health-empty">Dodaj szpital, poradnię lub lekarza.</p> : visibleContacts.map((c)=><div className="contact-row" key={c.id}><span>🏥</span><div><strong>{c.name}</strong><small>{[c.specialty,c.doctor,c.address].filter(Boolean).join(' · ')}</small></div>{c.phone && <a href={`tel:${c.phone.replace(/\s/g,'')}`}>☎ {c.phone}</a>}{parent && <div className="health-record-actions"><button aria-label={`Edytuj kontakt: ${c.name}`} onClick={()=>{ const { id, ...fields } = c; setContactForm(fields); setEditingContact(c); setShowContactForm(true); }}>Edytuj</button><button aria-label={`Usuń kontakt: ${c.name}`} onClick={()=>{ if(confirm(`Usunąć kontakt „${c.name}”?`)) void deleteDoc(doc(db,'medicalContacts',c.id)); }}>Usuń</button></div>}</div>)}</article>
+      </div>
+
+      <section className="health-manager"><header><strong>Wszystkie wpisy</strong><span>{visibleRecords.length} wpisów</span></header>
+        <div className="health-type-filter">{(['all', ...Object.keys(HEALTH_META)] as Array<HealthType | 'all'>).map(type=><button key={type} className={recordType === type ? 'active' : ''} onClick={()=>setRecordType(type)}>{type === 'all' ? 'Wszystkie' : HEALTH_META[type].label}</button>)}</div>
+        {visibleRecords.length === 0 ? <EmptyState icon="❤️" text="Brak wpisów w tym widoku." /> : visibleRecords.map(record=><article className="module-row" key={record.id}><div className="row-main"><strong>{record.title}</strong><small>{record.person} · {HEALTH_META[record.type].label} · {record.date ? formatShortDate(record.date) : 'bez daty'}{record.privateToParents ? ' · tylko rodzice' : ''}</small><p>{record.note}</p></div><div className="health-record-actions">{(record.documentPath || record.documentURL) && <button onClick={()=>void openDocument(record)}>Plik</button>}{parent && <><button onClick={()=>editHealth(record)}>Edytuj</button><button onClick={()=>void removeHealth(record)}>Usuń</button></>}</div></article>)}
       </section>
-
-      {parent && <div className="health-family-all-row"><button className={person === 'family' ? 'active' : ''} onClick={()=>{setPerson('family');setHealthTab('summary');}}>👨‍👩‍👧‍👦 Cała rodzina</button></div>}
-
-      {person !== 'family' && <section className="health-profile-bar-versa">
-        <span className="health-profile-avatar-versa">{selectedMember?.photoURL ? <img src={selectedMember.photoURL} alt="" /> : memberEmoji(person)}</span>
-        <div><h2>{person}</h2><p>{personRole(person, selectedMember?.role)} · kartoteka zdrowia</p></div>
-      </section>}
-
-      <nav className="health-tabs-versa">
-        {tabItems.map(([key,icon,label])=><button key={key} className={healthTab === key ? 'active' : ''} onClick={()=>setHealthTab(key)}><span>{icon}</span>{label}</button>)}
-      </nav>
-
-      {healthTab === 'summary' && <div className="health-summary-grid">
-        <article className="health-card-versa">
-          <header><div><strong>📅 Najbliższe wizyty</strong><small>{person === 'family' ? 'Cała rodzina' : person}</small></div><button onClick={()=>setHealthTab('visits')}>Zobacz wszystkie ›</button></header>
-          {upcomingVisits.length === 0 ? <p className="health-empty">Brak zaplanowanych wizyt.</p> : upcomingVisits.slice(0,3).map((r)=><div className="health-visit-row" key={r.id}><span className="health-date-tile"><b>{new Date(`${r.date}T12:00`).getDate()}</b><small>{new Date(`${r.date}T12:00`).toLocaleDateString('pl-PL',{month:'short'}).toUpperCase()}</small></span><div><strong>{r.specialty || r.title}</strong><small>{[r.time,r.doctor,r.location].filter(Boolean).join(' · ')}</small></div><span>›</span></div>)}
-        </article>
-
-        <article className="health-card-versa reminders-card-versa">
-          <header><div><strong>🔔 Przypomnienia</strong><small>Leki i kontrole</small></div><button onClick={()=>setHealthTab('meds')}>Zobacz wszystkie ›</button></header>
-          {medicines.length === 0 && controlItems.length === 0 ? <p className="health-empty">Brak aktywnych przypomnień.</p> : null}
-          {medicines.slice(0,3).flatMap((r)=>medicineTimes(r).map((time)=><div className="health-reminder-row" key={`${r.id}-${time}`}><span className="health-icon-tile medicine">💊</span><div><strong>{r.title}</strong><small>{r.person} · {time}{r.dose ? ` · ${r.dose}` : ''}</small></div><button className={isDoseConfirmed(r.id,time) ? 'confirmed' : ''} onClick={()=>void confirmMedicine(r,time)}>{isDoseConfirmed(r.id,time) ? '✓ Przyjęte' : 'Potwierdź'}</button></div>))}
-          {controlItems.slice(0,2).map((r)=><div className="health-reminder-row" key={`control-${r.id}`}><span className="health-icon-tile">🩺</span><div><strong>{r.nextControl || 'Kontrola'}</strong><small>{r.callReminderDate ? `Przypomnienie ${formatShortDate(r.callReminderDate)}` : r.specialty}</small></div></div>)}
-        </article>
-
-        {person === 'Paweł' && parent && <article className="health-card-versa important-docs-versa">
-          <header><div><strong>🔒 Ważne dokumenty</strong><small>Zawsze pod ręką</small></div><button onClick={()=>openAdd('document')}>Dodaj +</button></header>
-          {importantDocs.length === 0 ? <p className="health-empty">Dodaj orzeczenia, decyzje lub inne ważne dokumenty.</p> : importantDocs.map((r)=><div className="health-document-row" key={r.id}><span>📄</span><div><strong>{r.title}</strong><small>{r.sharedWithPerson ? 'Udostępniony właścicielowi profilu' : 'Tylko rodzice'}</small></div><div>{r.documentURL && <a href={r.documentURL} target="_blank" rel="noreferrer">Otwórz</a>}<button onClick={()=>void toggleDocumentShare(r)}>{r.sharedWithPerson ? 'Cofnij dostęp' : 'Udostępnij'}</button></div></div>)}
-        </article>}
-
-        <article className="health-card-versa">
-          <header><div><strong>🧪 Ostatnie wyniki</strong><small>Najświeższe wpisy</small></div><button onClick={()=>setHealthTab('results')}>Zobacz wszystkie ›</button></header>
-          {results.length === 0 ? <p className="health-empty">Brak wyników.</p> : results.slice(0,4).map((r)=><div className="health-result-row" key={r.id}><span>📄</span><div><strong>{r.title}</strong><small>{r.date ? formatShortDate(r.date) : ''}</small></div><em>{r.note || 'Zapisano'}</em></div>)}
-        </article>
-
-        <article className="health-card-versa quick-health-actions">
-          <header><div><strong>⭐ Szybkie akcje</strong><small>Dodaj nowy wpis</small></div></header>
-          <div><button onClick={()=>openAdd('visit')}><span>＋</span><strong>Dodaj wizytę</strong></button><button onClick={()=>openAdd('medicine')}><span>💊</span><strong>Dodaj lek</strong></button><button onClick={()=>openAdd('result')}><span>📄</span><strong>Dodaj wynik</strong></button><button onClick={()=>openAdd('document')}><span>📁</span><strong>Dodaj dokument</strong></button></div>
-        </article>
-      </div>}
-
-      {healthTab !== 'summary' && <section className="health-section-card">
-        <header><div><h2>{tabItems.find(([k])=>k===healthTab)?.[2]}</h2><p>{person === 'family' ? 'Widok całej rodziny' : `Profil: ${person}`}</p></div>{healthTab === 'visits' && <button className="primary-button" onClick={()=>openAdd('visit')}>＋ Dodaj wizytę</button>}{healthTab === 'meds' && <button className="primary-button" onClick={()=>openAdd('medicine')}>＋ Dodaj lek</button>}{healthTab === 'results' && <button className="primary-button" onClick={()=>openAdd('result')}>＋ Dodaj wynik</button>}{healthTab === 'documents' && <button className="primary-button" onClick={()=>openAdd('document')}>＋ Dodaj dokument</button>}{healthTab === 'contacts' && <button className="primary-button" onClick={()=>{setContactForm({person:person==='family'?'family':person,specialty:'',name:'',doctor:'',phone:'',address:'',note:''});setShowContactForm(true);}}>＋ Dodaj kontakt</button>}</header>
-        {healthTab === 'visits' && recordList('visit')}
-        {healthTab === 'results' && recordList('result')}
-        {healthTab === 'documents' && <div className="health-documents-full">{documents.length===0?<p className="health-empty">Brak dokumentów.</p>:documents.map((r)=><article key={r.id}><span>📄</span><div><strong>{r.title}</strong><small>{r.privateToParents ? (r.sharedWithPerson ? 'Rodzice + właściciel profilu' : 'Tylko rodzice') : 'Widoczny zgodnie z profilem'} · {r.date ? formatShortDate(r.date) : ''}</small></div>{r.documentURL&&<a href={r.documentURL} target="_blank" rel="noreferrer">Otwórz</a>}{parent&&r.privateToParents&&<button onClick={()=>void toggleDocumentShare(r)}>{r.sharedWithPerson?'Cofnij udostępnienie':'Udostępnij właścicielowi'}</button>}</article>)}</div>}
-        {healthTab === 'contacts' && <div className="health-generic-list">{visibleContacts.length===0?<p className="health-empty">Brak kontaktów medycznych.</p>:visibleContacts.map((c)=><article key={c.id}><span className="health-icon-tile">🏥</span><div><strong>{c.name}</strong><small>{[c.specialty,c.doctor,c.address].filter(Boolean).join(' · ')}</small></div>{c.phone&&<a href={`tel:${c.phone.replace(/\s/g,'')}`}>{c.phone}</a>}</article>)}</div>}
-        {healthTab === 'notes' && recordList('notes')}
-        {healthTab === 'meds' && <div className="medicine-schedule-list">{medicines.length===0?<p className="health-empty">Brak leków stałych.</p>:medicines.map((r)=><article key={r.id}><header><span className="health-icon-tile medicine">💊</span><div><strong>{r.title}</strong><small>{r.person}{r.dose?` · ${r.dose}`:''}</small></div><em>eskalacja po {r.escalationMinutes} min</em></header><div className="medicine-times-grid">{medicineTimes(r).map((time)=><button key={time} className={isDoseConfirmed(r.id,time)?'confirmed':''} onClick={()=>void confirmMedicine(r,time)}><strong>{time}</strong><span>{isDoseConfirmed(r.id,time)?'✓ Przyjęte':'Potwierdź dawkę'}</span></button>)}</div></article>)}</div>}
-      </section>}
 
       {showForm && <Modal title={`❤️ ${HEALTH_META[form.type].label}`} onClose={() => setShowForm(false)} wide>
         <form className="form-grid" onSubmit={save}>
-          <label className="field"><span>Osoba</span><PersonSelect includeFamily={false} value={form.person} onChange={(value)=>setForm((f)=>({...f,person:value}))} /></label>
-          <label className="field"><span>Rodzaj</span><select value={form.type} onChange={(e)=>setForm((f)=>({...f,type:e.target.value as HealthType}))}>{(Object.keys(HEALTH_META) as HealthType[]).map((t)=><option key={t} value={t}>{HEALTH_META[t].icon} {HEALTH_META[t].label}</option>)}</select></label>
-          <label className="field field-wide"><span>Nazwa / opis</span><input value={form.title} onChange={(e)=>setForm((f)=>({...f,title:e.target.value}))} placeholder={form.type === 'medicine' ? 'Np. lek stały' : 'Np. neurolog — kontrola'} required /></label>
-          <label className="field"><span>Specjalizacja</span><select value={form.specialty} onChange={(e)=>setForm((f)=>({...f,specialty:e.target.value}))}><option value="">—</option>{SPECIALTIES.map((s)=><option key={s}>{s}</option>)}</select></label>
-          <label className="field"><span>Status</span><select value={form.status} onChange={(e)=>setForm((f)=>({...f,status:e.target.value as HealthStatus}))}><option value="planned">Zaplanowana</option><option value="toBook">Do umówienia</option><option value="booked">Umówiona</option><option value="done">Odbyta</option><option value="cancelled">Anulowana</option></select></label>
+          <label className="field"><span>Osoba</span>{!parent ? <input value={ownPerson(member)} readOnly /> : <PersonSelect includeFamily={false} value={form.person} onChange={(value)=>setForm((f)=>({...f,person:value}))} />}</label>
+          <label className="field"><span>Rodzaj</span><select aria-label="Rodzaj" value={form.type} onChange={(e)=>setForm((f)=>({...f,type:e.target.value as HealthType}))}>{(Object.keys(HEALTH_META) as HealthType[]).map((t)=><option key={t} value={t}>{HEALTH_META[t].icon} {HEALTH_META[t].label}</option>)}</select></label>
+          <label className="field field-wide"><span>Nazwa / opis</span><input value={form.title} onChange={(e)=>setForm((f)=>({...f,title:e.target.value}))} placeholder="Np. neurolog — kontrola" required /></label>
+          <label className="field"><span>Specjalizacja</span><select aria-label="Specjalizacja" value={form.specialty} onChange={(e)=>setForm((f)=>({...f,specialty:e.target.value}))}><option value="">—</option>{SPECIALTIES.map((s)=><option key={s}>{s}</option>)}</select></label>
+          <label className="field"><span>Status</span><select aria-label="Status" value={form.status} onChange={(e)=>setForm((f)=>({...f,status:e.target.value as HealthStatus}))}><option value="planned">Zaplanowana</option><option value="toBook">Do umówienia</option><option value="booked">Umówiona</option><option value="done">Odbyta</option><option value="cancelled">Anulowana</option></select></label>
           <label className="field"><span>Data</span><input type="date" value={form.date} onChange={(e)=>setForm((f)=>({...f,date:e.target.value}))} /></label>
           <label className="field"><span>Godzina</span><input type="time" value={form.time} onChange={(e)=>setForm((f)=>({...f,time:e.target.value}))} /></label>
           <label className="field"><span>Lekarz</span><input value={form.doctor} onChange={(e)=>setForm((f)=>({...f,doctor:e.target.value}))} /></label>
@@ -3121,24 +2163,17 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
           <label className="field"><span>Kod skierowania</span><input value={form.referralCode} onChange={(e)=>setForm((f)=>({...f,referralCode:e.target.value}))} /></label>
           <label className="field"><span>Kontrola / orientacyjny termin</span><input value={form.nextControl} onChange={(e)=>setForm((f)=>({...f,nextControl:e.target.value}))} placeholder="Np. za 6 miesięcy" /></label>
           <label className="field"><span>Przypomnij, aby zadzwonić</span><input type="date" value={form.callReminderDate} onChange={(e)=>setForm((f)=>({...f,callReminderDate:e.target.value}))} /></label>
-          {form.type === 'medicine' && <>
-            <label className="field"><span>Dawka</span><input value={form.dose} onChange={(e)=>setForm((f)=>({...f,dose:e.target.value}))} placeholder="Np. 1 tabletka" /></label>
-            <label className="field"><span>Eskalacja do rodzica po</span><select value={form.escalationMinutes} onChange={(e)=>setForm((f)=>({...f,escalationMinutes:Number(e.target.value)}))}><option value={5}>5 min</option><option value={10}>10 min</option><option value={15}>15 min</option><option value={30}>30 min</option><option value={60}>60 min</option></select></label>
-            <div className="field field-wide medicine-times-editor"><span>Godziny przyjmowania</span><div>{form.medicineTimes.map((time,index)=><label key={index}><input type="time" value={time} onChange={(e)=>setForm((f)=>({...f,medicineTimes:f.medicineTimes.map((v,i)=>i===index?e.target.value:v)}))} /><button type="button" onClick={()=>setForm((f)=>({...f,medicineTimes:f.medicineTimes.filter((_,i)=>i!==index)}))}>✕</button></label>)}<button type="button" className="secondary-button" onClick={()=>setForm((f)=>({...f,medicineTimes:[...f.medicineTimes,'20:00']}))}>＋ Dodaj godzinę</button></div></div>
-          </>}
+          {form.type === 'medicine' && <><label className="field"><span>Dawka</span><input value={form.dose} onChange={(e)=>setForm((f)=>({...f,dose:e.target.value}))} /></label><label className="field"><span>Godzina leku</span><input type="time" value={form.medicineTime} onChange={(e)=>setForm((f)=>({...f,medicineTime:e.target.value}))} /></label></>}
           <label className="field field-wide"><span>Notatka / zalecenia</span><textarea rows={3} value={form.note} onChange={(e)=>setForm((f)=>({...f,note:e.target.value}))} /></label>
-          <label className="field field-wide"><span>Plik (PDF / zdjęcie)</span><input type="file" accept="image/*,.pdf" onChange={(e)=>setForm((f)=>({...f,file:e.target.files?.[0] || null}))} /></label>
-          {parent && form.type === 'document' && <><label className="checkbox-field field-wide"><input type="checkbox" checked={form.privateToParents} onChange={(e)=>setForm((f)=>({...f,privateToParents:e.target.checked}))} /><span>🔒 Widoczne tylko dla rodziców</span></label>{form.privateToParents&&<label className="checkbox-field field-wide"><input type="checkbox" checked={form.sharedWithPerson} onChange={(e)=>setForm((f)=>({...f,sharedWithPerson:e.target.checked}))} /><span>Udostępnij także właścicielowi profilu</span></label>}</>}
-          {form.type === 'visit' && <>
-            <label className="checkbox-field field-wide"><input type="checkbox" checked={form.blocksSchoolDay} onChange={(e)=>setForm((f)=>({...f,blocksSchoolDay:e.target.checked}))} /><span>🏥 Nieobecność w szkole tego dnia (np. wyjazd do lekarza)</span></label>
-            <label className="checkbox-field field-wide"><input type="checkbox" checked={form.addToCalendar} onChange={(e)=>setForm((f)=>({...f,addToCalendar:e.target.checked}))} /><span>Dodaj również do rodzinnego Kalendarza</span></label>
-          </>}
-          <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={()=>setShowForm(false)}>Anuluj</button><button className="primary-button">✓ Zapisz</button></div>
+          <label className="field field-wide"><span>Plik (PDF / zdjęcie)</span><input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(e)=>setForm((f)=>({...f,file:e.target.files?.[0] || null}))} /></label>
+          {parent && <label className="checkbox-field field-wide"><input type="checkbox" checked={form.privateToParents} onChange={(e)=>setForm((f)=>({...f,privateToParents:e.target.checked}))} /><span>🔒 Widoczne tylko dla rodziców</span></label>}
+          {form.type === 'visit' && !form.privateToParents && !editingHealth && <label className="checkbox-field field-wide"><input type="checkbox" checked={form.addToCalendar} onChange={(e)=>setForm((f)=>({...f,addToCalendar:e.target.checked}))} /><span>Dodaj również do rodzinnego Kalendarza</span></label>}
+          <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={()=>setShowForm(false)}>Anuluj</button><button className="primary-button" disabled={savingHealth}>{savingHealth ? "Zapisuję…" : "✓ Zapisz"}</button></div>
         </form>
       </Modal>}
 
-      {showContactForm && <Modal title="☎️ Nowy kontakt medyczny" onClose={()=>setShowContactForm(false)}>
-        <form className="form-grid" onSubmit={saveContact}><label className="field"><span>Osoba / rodzina</span><PersonSelect value={contactForm.person} onChange={(value)=>setContactForm((f)=>({...f,person:value}))} /></label><label className="field"><span>Specjalizacja</span><input value={contactForm.specialty} onChange={(e)=>setContactForm((f)=>({...f,specialty:e.target.value}))} /></label><label className="field field-wide"><span>Nazwa placówki</span><input value={contactForm.name} onChange={(e)=>setContactForm((f)=>({...f,name:e.target.value}))} required /></label><label className="field"><span>Lekarz</span><input value={contactForm.doctor} onChange={(e)=>setContactForm((f)=>({...f,doctor:e.target.value}))} /></label><label className="field"><span>Telefon</span><input value={contactForm.phone} onChange={(e)=>setContactForm((f)=>({...f,phone:e.target.value}))} /></label><label className="field field-wide"><span>Adres</span><input value={contactForm.address} onChange={(e)=>setContactForm((f)=>({...f,address:e.target.value}))} /></label><label className="field field-wide"><span>Notatka</span><textarea value={contactForm.note} onChange={(e)=>setContactForm((f)=>({...f,note:e.target.value}))} /></label><div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={()=>setShowContactForm(false)}>Anuluj</button><button className="primary-button">✓ Zapisz</button></div></form>
+      {showContactForm && <Modal title={editingContact ? "☎️ Edytuj kontakt medyczny" : "☎️ Nowy kontakt medyczny"} onClose={()=>setShowContactForm(false)}>
+        <form className="form-grid" onSubmit={saveContact}><label className="field"><span>Osoba / rodzina</span><PersonSelect value={contactForm.person} onChange={(value)=>setContactForm((f)=>({...f,person:value}))} /></label><label className="field"><span>Specjalizacja</span><input value={contactForm.specialty} onChange={(e)=>setContactForm((f)=>({...f,specialty:e.target.value}))} /></label><label className="field field-wide"><span>Nazwa placówki</span><input value={contactForm.name} onChange={(e)=>setContactForm((f)=>({...f,name:e.target.value}))} required /></label><label className="field"><span>Lekarz</span><input value={contactForm.doctor} onChange={(e)=>setContactForm((f)=>({...f,doctor:e.target.value}))} /></label><label className="field"><span>Telefon</span><input value={contactForm.phone} onChange={(e)=>setContactForm((f)=>({...f,phone:e.target.value}))} /></label><label className="field field-wide"><span>Adres</span><input value={contactForm.address} onChange={(e)=>setContactForm((f)=>({...f,address:e.target.value}))} /></label><label className="field field-wide"><span>Notatka</span><textarea value={contactForm.note} onChange={(e)=>setContactForm((f)=>({...f,note:e.target.value}))} /></label><div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={()=>setShowContactForm(false)}>Anuluj</button><button className="primary-button" disabled={savingContact}>{savingContact ? "Zapisuję…" : "✓ Zapisz"}</button></div></form>
       </Modal>}
     </div>
   );
@@ -3149,327 +2184,20 @@ function HealthPage({ user, member }: { user: User; member: Member | null }) {
    ========================================================= */
 
 const SCHOOL_META: Record<SchoolType, { label: string; icon: string }> = {
-  lesson: { label: 'Plan lekcji', icon: '📚' },
-  homework: { label: 'Zadania domowe', icon: '📝' },
-  test: { label: 'Sprawdziany / kartkówki', icon: '📅' },
-  grade: { label: 'Oceny', icon: '⭐' },
-  message: { label: 'Wiadomości', icon: '💬' },
-  activity: { label: 'Zajęcia dodatkowe', icon: '🎯' },
-  attendance: { label: 'Frekwencja', icon: '📊' },
+  lesson: { label: 'Plan lekcji', icon: '📚' }, homework: { label: 'Zadania domowe', icon: '📝' }, test: { label: 'Sprawdziany / kartkówki', icon: '📅' }, grade: { label: 'Oceny', icon: '⭐' }, message: { label: 'Wiadomości', icon: '💬' }, activity: { label: 'Zajęcia dodatkowe', icon: '🎯' },
 };
 function isSchoolType(value: unknown): value is SchoolType { return typeof value === 'string' && Object.prototype.hasOwnProperty.call(SCHOOL_META, value); }
-
-function schoolDaysUntil(value: string) {
-  if (!value) return '';
-  const today = startOfDay(new Date());
-  const date = startOfDay(new Date(`${value}T12:00:00`));
-  const days = Math.round((date.getTime() - today.getTime()) / 86400000);
-  if (days < 0) return 'po terminie';
-  if (days === 0) return 'dzisiaj';
-  if (days === 1) return 'jutro';
-  return `za ${days} dni`;
-}
-
-function schoolGradeTone(value: string) {
-  const number = Number(String(value).replace(',', '.').match(/[1-6]/)?.[0] || 0);
-  if (number >= 5) return 'great';
-  if (number >= 4) return 'good';
-  if (number >= 3) return 'mid';
-  return 'low';
-}
-
-function SchoolPage({ user, member }: { user: User; member: Member | null }) {
-  const [records, setRecords] = useState<SchoolRecord[]>([]);
-  const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
-  const parent = isParent(member);
-  const schoolAccess = effectiveMemberPermissions(member);
-  const ownStudent = member?.name === 'Paweł' || member?.name === 'Nikodem' ? member.name as 'Paweł' | 'Nikodem' : null;
-  const [selectedStudent, setSelectedStudent] = useState<SchoolStudentFilter>(ownStudent || 'Paweł');
-  const [tab, setTab] = useState<SchoolTab>('summary');
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState<SchoolForm>({ title:'', person:ownStudent || 'Paweł', type:'lesson', subject:'', date:'', time:'08:00', endTime:'08:45', weekday:1, note:'', addToCalendar:false });
-  const today = formatDateInput(new Date());
-  const todayWeekday = new Date().getDay() === 0 ? 7 : new Date().getDay();
-
-  useEffect(() => onSnapshot(collection(db, 'schoolItems'), (snap) => {
-    const next = snap.docs.map((d): SchoolRecord => {
-      const x=d.data();
-      return {
-        id:d.id,
-        title:String(x.title || ''),
-        person:isPersonKey(x.person) ? x.person : 'Nikodem',
-        type:isSchoolType(x.type) ? x.type : 'homework',
-        subject:typeof x.subject === 'string' ? x.subject : '',
-        date:typeof x.date === 'string' ? x.date : '',
-        time:typeof x.time === 'string' ? x.time : '',
-        endTime:typeof x.endTime === 'string' ? x.endTime : '',
-        weekday:Number(x.weekday || 0),
-        note:typeof x.note === 'string' ? x.note : '',
-        createdAt:x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined,
-      };
-    });
-    next.sort((a,b)=>(a.weekday || 9)-(b.weekday || 9) || (a.time || '99:99').localeCompare(b.time || '99:99') || (a.date || '9999').localeCompare(b.date || '9999'));
-    setRecords(next);
-  }), []);
-
-  useEffect(() => onSnapshot(collection(db, 'members'), (snap) => {
-    const next = snap.docs.map((d): FamilyMemberDoc => {
-      const x=d.data();
-      return { id:d.id, name:String(x.name || ''), role:personRole(String(x.name || ''), typeof x.role === 'string' ? x.role : ''), photoURL:typeof x.photoURL === 'string' ? x.photoURL : undefined, active:x.active !== false, birthDate:typeof x.birthDate === 'string' ? x.birthDate : undefined };
-    });
-    setMembers(next.filter((x)=>x.name === 'Paweł' || x.name === 'Nikodem'));
-  }), []);
-
-  useEffect(() => {
-    if (!parent && !schoolAccess.viewFamilySchool && ownStudent) setSelectedStudent(ownStudent);
-  }, [parent, schoolAccess.viewFamilySchool, ownStudent]);
-
-  const students: Array<'Paweł' | 'Nikodem'> = (parent || schoolAccess.viewFamilySchool) ? ['Paweł','Nikodem'] : ownStudent ? [ownStudent] : [];
-  const selectedPeople: Array<'Paweł' | 'Nikodem'> = selectedStudent === 'all' ? students : (students.includes(selectedStudent as 'Paweł'|'Nikodem') ? [selectedStudent as 'Paweł'|'Nikodem'] : students.slice(0,1));
-  const selectedRecords = records.filter((r)=>selectedPeople.includes(r.person as 'Paweł' | 'Nikodem'));
-
-  function photoFor(person: 'Paweł' | 'Nikodem') {
-    return members.find((m)=>m.name === person)?.photoURL;
-  }
-
-  function selectStudent(value: SchoolStudentFilter) {
-    setSelectedStudent(value);
-    setTab('summary');
-  }
-
-  function openAdd(person: PersonKey, type: SchoolType = 'lesson') {
-    const target = person === 'family' ? (selectedStudent === 'all' ? 'Paweł' : selectedStudent) : person;
-    setForm({
-      title:type === 'attendance' ? 'Obecność' : '',
-      person:target,
-      type,
-      subject:'',
-      date: type === 'lesson' || type === 'activity' ? '' : today,
-      time:type === 'activity' ? '17:00' : '08:00',
-      endTime:type === 'activity' ? '18:00' : '08:45',
-      weekday:todayWeekday <= 5 ? todayWeekday : 1,
-      note:'',
-      addToCalendar:type === 'activity',
-    });
-    setShowForm(true);
-  }
-
-  async function save(e: React.FormEvent) {
-    e.preventDefault(); if (!form.title.trim()) return;
-    const { addToCalendar, ...record }=form;
-    await addDoc(collection(db,'schoolItems'), { ...record, title:form.title.trim(), createdBy:user.uid, createdAt:Timestamp.now() });
-    if (addToCalendar && form.date) {
-      const start=parseLocalDate(form.date,form.time || '08:00');
-      const end=parseLocalDate(form.date,form.endTime || form.time || '09:00');
-      await addDoc(collection(db,'calendarEvents'), { title:`🎒 ${form.title.trim()}`, person:form.person, date:Timestamp.fromDate(start), endDate:Timestamp.fromDate(end), allDay:false, description:[form.subject,form.note].filter(Boolean).join(' · '), repeat:'none', repeatUntil:null, createdBy:user.uid, createdAt:Timestamp.now() });
-    }
-    setShowForm(false);
-  }
-
-  const todayLessons = selectedRecords
-    .filter((r)=>r.type === 'lesson' && (r.weekday === todayWeekday || (!r.weekday && r.date === today)))
-    .sort((a,b)=>(a.time || '').localeCompare(b.time || ''));
-  const upcomingTests = selectedRecords
-    .filter((r)=>r.type === 'test' && (!r.date || r.date >= today))
-    .sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,6);
-  const homework = selectedRecords
-    .filter((r)=>r.type === 'homework' && (!r.date || r.date >= today))
-    .sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,6);
-  const grades = selectedRecords.filter((r)=>r.type === 'grade').slice(-8).reverse();
-  const messages = selectedRecords.filter((r)=>r.type === 'message').slice(-5).reverse();
-  const attendance = selectedRecords.filter((r)=>r.type === 'attendance');
-  const presentCount = attendance.filter((r)=>normalizeProduct(r.title).includes('obecn') && !normalizeProduct(r.title).includes('nieobecn')).length;
-  const absentCount = attendance.filter((r)=>normalizeProduct(r.title).includes('nieobecn')).length;
-  const lateCount = attendance.filter((r)=>normalizeProduct(r.title).includes('spozn') || normalizeProduct(r.title).includes('spóź')).length;
-  const attendanceBase = presentCount + absentCount;
-  const attendancePercent = attendanceBase ? Math.round((presentCount / attendanceBase) * 100) : 100;
-
-  const tabs: Array<[SchoolTab,string,string]> = [
-    ['summary','⌂','Podsumowanie'], ['plan','▣','Plan lekcji'], ['homework','☷','Zadania'],
-    ['tests','📖','Sprawdziany'], ['grades','⭐','Oceny'], ['attendance','📊','Frekwencja'], ['messages','✉️','Wiadomości'],
-  ];
-
-  function personMark(person: PersonKey) {
-    if (selectedStudent !== 'all') return null;
-    return <span className="school-person-mark" style={{ color: personColor(person) }}>{person}</span>;
-  }
-
-  function sectionHeader(title: string, actionType?: SchoolType, actionText = 'Dodaj') {
-    return <header className="school-card-header"><strong>{title}</strong>{parent && actionType ? <button type="button" onClick={()=>openAdd(selectedStudent === 'all' ? 'Paweł' : selectedStudent, actionType)}>{actionText}</button> : null}</header>;
-  }
-
-  function SummaryView() {
-    return <div className="school-summary-grid">
-      <section className="school-card school-today-card">
-        {sectionHeader('🗓️ Dzisiejszy plan','lesson','Zobacz cały plan →')}
-        <div className="school-list">
-          {todayLessons.length === 0 ? <p className="school-empty">Brak lekcji na dziś. Plan możesz uzupełnić ręcznie.</p> : todayLessons.map((r)=><article className="school-lesson-line" key={r.id}>
-            <time>{r.time || '—'}{r.endTime ? <small>– {r.endTime}</small> : null}</time>
-            <span className="school-subject-icon">{subjectIcon(r.subject || r.title)}</span>
-            <div><strong>{r.subject || r.title}</strong><small>{r.note || r.title}</small>{personMark(r.person)}</div>
-            {parent && <button className="school-row-menu" type="button" onClick={()=>deleteDoc(doc(db,'schoolItems',r.id))}>⋯</button>}
-          </article>)}
-        </div>
-      </section>
-
-      <section className="school-card school-tests-card">
-        {sectionHeader('🗓️ Najbliższe sprawdziany','test','Zobacz wszystkie →')}
-        <div className="school-list">
-          {upcomingTests.length === 0 ? <p className="school-empty">Brak zaplanowanych sprawdzianów.</p> : upcomingTests.slice(0,4).map((r)=><article className="school-test-line" key={r.id}>
-            <span className="school-date-tile"><b>{r.date ? new Date(`${r.date}T12:00:00`).getDate() : '—'}</b><small>{r.date ? new Date(`${r.date}T12:00:00`).toLocaleDateString('pl-PL',{month:'short'}).replace('.','') : ''}</small></span>
-            <span className="school-subject-icon">{subjectIcon(r.subject || r.title)}</span>
-            <div><strong>{r.subject || r.title}</strong><small>{r.title}{r.note ? ` · ${r.note}` : ''}</small>{personMark(r.person)}</div>
-            <em className="school-due-chip">{schoolDaysUntil(r.date)}</em>
-          </article>)}
-        </div>
-      </section>
-
-      <section className="school-card school-homework-card">
-        {sectionHeader('✏️ Zadania domowe','homework','Zobacz wszystkie →')}
-        <div className="school-list">
-          {homework.length === 0 ? <p className="school-empty">Brak zadań domowych.</p> : homework.slice(0,4).map((r)=><article className="school-homework-line" key={r.id}>
-            <span className="school-task-check" />
-            <span className="school-subject-icon">{subjectIcon(r.subject || r.title)}</span>
-            <div><strong>{r.subject || r.title}</strong><small>{r.title}{r.note ? ` · ${r.note}` : ''}</small>{personMark(r.person)}</div>
-            <em className="school-due-chip">{schoolDaysUntil(r.date)}</em>
-          </article>)}
-        </div>
-      </section>
-
-      <section className="school-card school-grades-card">
-        {sectionHeader('⭐ Ostatnie oceny','grade','Zobacz wszystkie →')}
-        <div className="school-grade-list">
-          {grades.length === 0 ? <p className="school-empty">Brak ocen.</p> : grades.slice(0,5).map((r)=><article key={r.id}>
-            <span className="school-subject-icon">{subjectIcon(r.subject || r.title)}</span>
-            <strong>{r.subject || 'Przedmiot'}</strong>
-            <b className={`school-grade-badge ${schoolGradeTone(r.title)}`}>{r.title}</b>
-            {personMark(r.person)}
-          </article>)}
-        </div>
-      </section>
-
-      <section className="school-card school-attendance-card">
-        {sectionHeader('📊 Frekwencja','attendance','Ten miesiąc')}
-        <div className="attendance-summary">
-          <div className="attendance-ring" style={{ background: `conic-gradient(#38c976 ${attendancePercent * 3.6}deg, #e7eef5 0deg)` }}><span><strong>{attendancePercent}%</strong><small>obecności</small></span></div>
-          <div className="attendance-legend"><span><i className="green" /> Obecności <b>{presentCount}</b></span><span><i className="red" /> Nieobecności <b>{absentCount}</b></span><span><i className="blue" /> Spóźnienia <b>{lateCount}</b></span></div>
-        </div>
-      </section>
-
-      <section className="school-card school-messages-card">
-        {sectionHeader('✉️ Wiadomości ze szkoły','message','Zobacz wszystkie →')}
-        <div className="school-list compact">
-          {messages.length === 0 ? <p className="school-empty">Brak wiadomości.</p> : messages.slice(0,3).map((r)=><article className="school-message-line" key={r.id}><span>✉️</span><div><strong>{r.title}</strong><small>{r.note || r.subject}</small>{personMark(r.person)}</div><time>{r.date ? formatShortDate(r.date) : ''}</time></article>)}
-        </div>
-      </section>
-    </div>;
-  }
-
-  function PlanView() {
-    const weekdays = [1,2,3,4,5];
-    const names = ['Poniedziałek','Wtorek','Środa','Czwartek','Piątek'];
-    return <section className="school-card school-full-card">
-      {sectionHeader('▣ Plan lekcji','lesson','＋ Dodaj lekcję')}
-      <div className="school-week-grid">
-        {weekdays.map((day,index)=>{
-          const rows=selectedRecords.filter((r)=>r.type === 'lesson' && r.weekday === day).sort((a,b)=>(a.time || '').localeCompare(b.time || ''));
-          return <div className="school-week-day" key={day}><header><strong>{names[index]}</strong></header>{rows.length === 0 ? <p>Brak lekcji</p> : rows.map((r)=><article key={r.id}><time>{r.time}</time><span>{subjectIcon(r.subject || r.title)}</span><div><strong>{r.subject || r.title}</strong><small>{r.endTime ? `do ${r.endTime}` : ''}{r.note ? ` · ${r.note}` : ''}</small>{personMark(r.person)}</div></article>)}</div>;
-        })}
-      </div>
-    </section>;
-  }
-
-  function ListView({ type, title, icon }: { type: SchoolType; title: string; icon: string }) {
-    const list=selectedRecords.filter((r)=>r.type === type).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999'));
-    return <section className="school-card school-full-card">
-      {sectionHeader(`${icon} ${title}`,type,`＋ Dodaj`)}
-      <div className="school-detailed-list">
-        {list.length === 0 ? <p className="school-empty">Brak wpisów w tej sekcji.</p> : list.map((r)=><article key={r.id}>
-          <span className="school-subject-icon">{type === 'message' ? '✉️' : type === 'attendance' ? '📊' : subjectIcon(r.subject || r.title)}</span>
-          <div><strong>{r.subject || r.title}</strong><small>{type === 'grade' ? `Ocena: ${r.title}` : r.title}{r.note ? ` · ${r.note}` : ''}</small>{personMark(r.person)}</div>
-          <span>{r.date ? formatShortDate(r.date) : type === 'lesson' ? ['','Pon','Wt','Śr','Czw','Pt','Sob','Nd'][r.weekday] : ''}</span>
-          {parent && <button className="icon-danger" type="button" onClick={()=>deleteDoc(doc(db,'schoolItems',r.id))}>🗑️</button>}
-        </article>)}
-      </div>
-    </section>;
-  }
-
-  return (
-    <div className="page-content compact-page school-versa-page">
-      <section className="school-versa-header">
-        <div><small>Rodzinne centrum</small><h1>🎒 Szkoła</h1><p>Ręczny plan lekcji, zajęcia dodatkowe, zadania, sprawdziany i oceny.</p></div>
-        <div className="school-header-actions">
-          <span className="school-source-chip manual">✏️ <b>Źródło danych: Ręcznie</b><i>ⓘ</i></span>
-          <button className="school-source-chip vulcan" type="button" onClick={()=>alert('Miejsce przygotowane na przyszłą, bezpieczną integrację z VULCAN-em. Na tym etapie dane wpisujemy ręcznie.')}>🔗 <b>VULCAN</b><small>opcjonalna synchronizacja</small><i>ⓘ</i></button>
-          {parent && <button className="primary-button school-add-button" type="button" onClick={()=>openAdd(selectedStudent === 'all' ? 'Paweł' : selectedStudent,'lesson')}>＋ Dodaj</button>}
-        </div>
-      </section>
-
-      <section className="school-student-cards">
-        {students.map((person)=>{
-          const photo=photoFor(person);
-          return <button type="button" key={person} className={`school-student-card ${selectedStudent === person ? 'active' : ''}`} onClick={()=>selectStudent(person)}>
-            <span className="school-student-photo">{photo ? <img src={photo} alt="" /> : memberEmoji(person)}</span>
-            <div><strong>{person}</strong><small>Szkoła / plan zajęć</small></div><em>›</em>
-          </button>;
-        })}
-        {parent && <button type="button" className={`school-student-card all ${selectedStudent === 'all' ? 'active' : ''}`} onClick={()=>selectStudent('all')}><span className="school-student-photo">👥</span><div><strong>Wszyscy uczniowie</strong><small>Zobacz łączne informacje</small></div><em>›</em></button>}
-      </section>
-
-      <nav className="school-main-tabs" aria-label="Sekcje szkoły">
-        {tabs.map(([key,icon,label])=><button type="button" key={key} className={tab === key ? 'active' : ''} onClick={()=>setTab(key)}><span>{icon}</span>{label}</button>)}
-      </nav>
-
-      {tab === 'summary' && <SummaryView />}
-      {tab === 'plan' && <PlanView />}
-      {tab === 'homework' && <ListView type="homework" title="Zadania domowe" icon="✏️" />}
-      {tab === 'tests' && <ListView type="test" title="Sprawdziany i kartkówki" icon="🗓️" />}
-      {tab === 'grades' && <ListView type="grade" title="Oceny" icon="⭐" />}
-      {tab === 'attendance' && <ListView type="attendance" title="Frekwencja" icon="📊" />}
-      {tab === 'messages' && <ListView type="message" title="Wiadomości" icon="✉️" />}
-
-      {showForm && <Modal title={`🎒 ${SCHOOL_META[form.type].label} — ${form.person}`} onClose={()=>setShowForm(false)} wide>
-        <form className="form-grid" onSubmit={save}>
-          {parent && <label className="field"><span>Dziecko</span><PersonSelect schoolOnly value={form.person} onChange={(value)=>setForm((f)=>({...f,person:value}))} /></label>}
-          <label className="field"><span>Rodzaj</span><select value={form.type} onChange={(e)=>{
-            const type=e.target.value as SchoolType;
-            setForm((f)=>({...f,type,title:type === 'attendance' ? 'Obecność' : f.title}));
-          }}>{(Object.keys(SCHOOL_META) as SchoolType[]).map((type)=><option key={type} value={type}>{SCHOOL_META[type].icon} {SCHOOL_META[type].label}</option>)}</select></label>
-          {form.type === 'attendance' ? <label className="field field-wide"><span>Status</span><select value={form.title} onChange={(e)=>setForm((f)=>({...f,title:e.target.value}))}><option>Obecność</option><option>Nieobecność</option><option>Spóźnienie</option></select></label> : <label className="field field-wide"><span>Nazwa</span><input value={form.title} onChange={(e)=>setForm((f)=>({...f,title:e.target.value}))} placeholder="Np. Matematyka / Kartkówka / Zadanie" required /></label>}
-          <label className="field"><span>Przedmiot</span><input value={form.subject} onChange={(e)=>setForm((f)=>({...f,subject:e.target.value}))} placeholder="Matematyka" /></label>
-          {(form.type === 'lesson' || form.type === 'activity') && <label className="field"><span>Dzień tygodnia</span><select value={form.weekday} onChange={(e)=>setForm((f)=>({...f,weekday:Number(e.target.value)}))}><option value={1}>Poniedziałek</option><option value={2}>Wtorek</option><option value={3}>Środa</option><option value={4}>Czwartek</option><option value={5}>Piątek</option><option value={6}>Sobota</option><option value={7}>Niedziela</option></select></label>}
-          {(form.type !== 'lesson' && form.type !== 'activity') && <label className="field"><span>Data / termin</span><input type="date" value={form.date} onChange={(e)=>setForm((f)=>({...f,date:e.target.value}))} /></label>}
-          <label className="field"><span>Od</span><input type="time" value={form.time} onChange={(e)=>setForm((f)=>({...f,time:e.target.value}))} /></label>
-          {(form.type === 'lesson' || form.type === 'activity') && <label className="field"><span>Do</span><input type="time" value={form.endTime} onChange={(e)=>setForm((f)=>({...f,endTime:e.target.value}))} /></label>}
-          <label className="field field-wide"><span>Notatka / sala / opis</span><textarea rows={3} value={form.note} onChange={(e)=>setForm((f)=>({...f,note:e.target.value}))} /></label>
-          {form.type === 'activity' && <label className="checkbox-field field-wide"><input type="checkbox" checked={form.addToCalendar} onChange={(e)=>setForm((f)=>({...f,addToCalendar:e.target.checked}))} /><span>Dodaj również do rodzinnego Kalendarza (jeśli ustawisz konkretną datę)</span></label>}
-          <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={()=>setShowForm(false)}>Anuluj</button><button className="primary-button">✓ Zapisz</button></div>
-        </form>
-      </Modal>}
-    </div>
-  );
-}
 
 /* =========================================================
    FAMILY
    ========================================================= */
 
-function FamilyPage({ user, member, goTo }: { user: User; member: Member | null; goTo: (page: Page) => void }) {
-  type FamilyTab = 'summary' | 'schedule' | 'tasks' | 'school' | 'health' | 'important';
+function FamilyPage({ member, goTo }: { member: Member | null; goTo: (page: Page) => void }) {
   const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
-  const [selected, setSelected] = useState<PersonKey>(() => {
-    try { const saved=sessionStorage.getItem('nr-family-focus'); return saved && isPersonKey(saved) ? saved : 'family'; }
-    catch { return 'family'; }
-  });
-  useEffect(() => { try { sessionStorage.removeItem('nr-family-focus'); } catch { /* ignore */ } }, []);
-  const [tab, setTab] = useState<FamilyTab>('summary');
+  const [selected, setSelected] = useState<PersonKey>('family');
   const [events, setEvents] = useState<CalendarEventData[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [school, setSchool] = useState<SchoolRecord[]>([]);
-  const [photoBusy, setPhotoBusy] = useState<string>('');
-  const photoInputRef = useRef<HTMLInputElement | null>(null);
-  const [photoTarget, setPhotoTarget] = useState<FamilyMemberDoc | null>(null);
-  const parent = isParent(member);
 
   useEffect(() => onSnapshot(collection(db, 'members'), (snap) => {
     const next = snap.docs.map((d): FamilyMemberDoc => {
@@ -3501,235 +2229,60 @@ function FamilyPage({ user, member, goTo }: { user: User; member: Member | null;
     setTasks(snap.docs.map((d): TaskItem => { const x=d.data(); return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', done:x.done === true, dueDate:typeof x.dueDate === 'string' ? x.dueDate : '', priority:x.priority === 'low' || x.priority === 'high' ? x.priority : 'normal', note:typeof x.note === 'string' ? x.note : '', points:Number(x.points || 0), requireApproval:x.requireApproval === true, approvalStatus:x.approvalStatus === 'pending' || x.approvalStatus === 'approved' ? x.approvalStatus : 'none', repeat:x.repeat === 'daily' || x.repeat === 'weekly' || x.repeat === 'monthly' ? x.repeat : 'none' }; }));
   }), []);
 
-  useEffect(() => onSnapshot(collection(db,'schoolItems'), (snap) => {
+  useEffect(() => onSnapshot(schoolQuery(member), (snap) => {
     setSchool(snap.docs.map((d): SchoolRecord => { const x=d.data(); return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'Nikodem', type:isSchoolType(x.type) ? x.type : 'homework', subject:typeof x.subject === 'string' ? x.subject : '', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', endTime:typeof x.endTime === 'string' ? x.endTime : '', weekday:Number(x.weekday || 0), note:typeof x.note === 'string' ? x.note : '' }; }));
   }), []);
 
-  const now = new Date();
-  const today = formatDateInput(now);
-  const weekday = now.getDay() === 0 ? 7 : now.getDay();
-  const todayCalendar = useMemo(() => events.flatMap((e)=>generateOccurrences(e,startOfDay(now),endOfDay(now))).sort((a,b)=>a.date.getTime()-b.date.getTime()), [events, today]);
-  const todaySchool = useMemo(() => school.filter((r)=>(r.type === 'lesson' || r.type === 'activity') && (r.weekday === weekday || r.date === today)).sort((a,b)=>(a.time || '99:99').localeCompare(b.time || '99:99')), [school, weekday, today]);
-
-  function rowsFor(name: PersonKey) {
-    const cal = todayCalendar.filter((o)=>o.source.person === name || o.source.person === 'family').map((o)=>({
-      start:o.date,
-      end:o.endDate,
-      title:o.source.title,
-      icon:eventActivityIcon(o.source.title),
-      source:'calendar' as const,
-    }));
-    const schoolRows = todaySchool.filter((r)=>r.person === name).map((r)=>({
-      start:parseLocalDate(today,r.time || '08:00'),
-      end:parseLocalDate(today,r.endTime || r.time || '08:45'),
-      title:r.type === 'activity' ? r.title : (r.subject || r.title),
-      icon:subjectIcon(r.subject || r.title),
-      source:'school' as const,
-    }));
-    return [...cal,...schoolRows].sort((a,b)=>a.start.getTime()-b.start.getTime());
-  }
+  const now=new Date(); const today=formatDateInput(now); const weekday=now.getDay() === 0 ? 7 : now.getDay();
+  const todayCalendar=useMemo(()=>events.flatMap((e)=>generateOccurrences(e,startOfDay(now),endOfDay(now))).sort((a,b)=>a.date.getTime()-b.date.getTime()), [events, today]);
+  const todaySchool=useMemo(()=>school.filter((r)=>(r.type === 'lesson' || r.type === 'activity') && (r.weekday === weekday || r.date === today)).sort((a,b)=>(a.time || '99:99').localeCompare(b.time || '99:99')), [school, weekday, today]);
 
   function statusFor(name:string) {
     const key=name as PersonKey;
-    const rows=rowsFor(key);
-    const active=rows.find((r)=>r.start <= now && r.end > now);
-    if (active) return `${active.icon} ${active.title} do ${formatTime(active.end)}`;
-    const next=rows.find((r)=>r.start > now);
-    if (next) return `${next.icon} ${next.title} ${formatTime(next.start)}`;
-    return name === 'Layla' ? '🏠 W domu' : '🟢 Wolny';
+    const cal=todayCalendar.filter((o)=>o.source.person === key);
+    const schoolRows=todaySchool.filter((r)=>r.person === key).map((r)=>({ start:parseLocalDate(today,r.time || '08:00'), end:parseLocalDate(today,r.endTime || r.time || '08:45'), title:r.type === 'activity' ? r.title : (r.subject || r.title), icon:subjectIcon(r.subject || r.title) }));
+    const rows=[...cal.map((o)=>({start:o.date,end:o.endDate,title:o.source.title,icon:eventActivityIcon(o.source.title)})),...schoolRows].sort((a,b)=>a.start.getTime()-b.start.getTime());
+    const active=rows.find((r)=>r.start <= now && r.end > now); if (active) return `${active.icon} ${active.title} do ${formatTime(active.end)}`;
+    const next=rows.find((r)=>r.start > now); if (next) return `${next.icon} ${next.title} ${formatTime(next.start)}`;
+    return '🟢 Wolny';
   }
 
-  function currentOrEndStatus(name: string) {
-    const rows=rowsFor(name as PersonKey);
-    const active=rows.find((r)=>r.start <= now && r.end > now);
-    if (active) return `${active.title} do ${formatTime(active.end)}`;
-    const last=rows[rows.length-1];
-    if (last && last.source === 'school' && last.end > now) return `Szkoła do ${formatTime(last.end)}`;
-    const next=rows.find((r)=>r.start > now);
-    if (next) return `${next.title} ${formatTime(next.start)}`;
-    return name === 'Layla' ? 'W domu' : 'Wolny';
-  }
-
-  const selectedMember = selected === 'family' ? null : members.find((m)=>m.name === selected) || null;
-  const selectedTasks = tasks.filter((t)=>!t.done && (selected === 'family' ? true : t.person === selected || t.person === 'family')).slice(0,8);
-  const selectedPlanRows = selected === 'family'
-    ? members.flatMap((m)=>rowsFor(m.name as PersonKey).slice(0,3).map((r)=>({ ...r, person:m.name as PersonKey }))).sort((a,b)=>a.start.getTime()-b.start.getTime()).slice(0,10)
-    : rowsFor(selected).map((r)=>({ ...r, person:selected })).slice(0,10);
-  const selectedSchool = school.filter((r)=>selected !== 'family' && r.person === selected);
-  const selectedTodaySchool = selectedSchool.filter((r)=>(r.type === 'lesson' || r.type === 'activity') && (r.weekday === weekday || r.date === today)).sort((a,b)=>(a.time || '99:99').localeCompare(b.time || '99:99'));
-  const selectedHomework = school.filter((r)=>r.type === 'homework' && (selected === 'family' ? true : r.person === selected)).sort((a,b)=>(a.date || '9999').localeCompare(b.date || '9999')).slice(0,6);
-  const selectedGrades = school.filter((r)=>r.type === 'grade' && (selected === 'family' ? true : r.person === selected)).sort((a,b)=>(b.date || '').localeCompare(a.date || '')).slice(0,6);
-  const upcoming = events.flatMap((e)=>generateOccurrences(e,new Date(),endOfDay(addDays(new Date(),30))))
-    .filter((o)=>o.date >= new Date() && (selected === 'family' || o.source.person === selected || o.source.person === 'family'))
-    .sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,6);
-  const isStudent = selected === 'Paweł' || selected === 'Nikodem';
-  const age = ageFromBirthDate(selectedMember?.birthDate);
-
-  function canEditPhoto(target: FamilyMemberDoc) {
-    return parent || target.id === user.uid || target.name === member?.name;
-  }
-
-  function startPhotoChange(target: FamilyMemberDoc, event?: React.MouseEvent) {
-    event?.stopPropagation();
-    if (!canEditPhoto(target)) return;
-    setPhotoTarget(target);
-    requestAnimationFrame(()=>photoInputRef.current?.click());
-  }
-
-  async function squarePhotoDataUrl(file: File) {
-    if (!file.type.startsWith('image/')) throw new Error('Wybierz plik graficzny.');
-    const source = await new Promise<string>((resolve,reject)=>{
-      const reader=new FileReader();
-      reader.onload=()=>resolve(String(reader.result || ''));
-      reader.onerror=()=>reject(new Error('Nie udało się odczytać zdjęcia.'));
-      reader.readAsDataURL(file);
-    });
-    const image = await new Promise<HTMLImageElement>((resolve,reject)=>{
-      const img=new Image();
-      img.onload=()=>resolve(img);
-      img.onerror=()=>reject(new Error('Nie udało się otworzyć zdjęcia.'));
-      img.src=source;
-    });
-    const size=360;
-    const canvas=document.createElement('canvas');
-    canvas.width=size; canvas.height=size;
-    const ctx=canvas.getContext('2d');
-    if (!ctx) throw new Error('Brak obsługi obrazu.');
-    const sourceSize=Math.min(image.naturalWidth,image.naturalHeight);
-    const sx=(image.naturalWidth-sourceSize)/2;
-    const sy=(image.naturalHeight-sourceSize)/2;
-    ctx.drawImage(image,sx,sy,sourceSize,sourceSize,0,0,size,size);
-    return canvas.toDataURL('image/jpeg',0.78);
-  }
-
-  async function handlePhotoFile(file?: File) {
-    if (!file || !photoTarget) return;
-    try {
-      setPhotoBusy(photoTarget.id);
-      const photoURL=await squarePhotoDataUrl(file);
-      await updateDoc(doc(db,'members',photoTarget.id), { photoURL, updatedAt:Timestamp.now() });
-    } catch (error) {
-      console.error('Błąd zdjęcia profilowego:',error);
-      alert(error instanceof Error ? error.message : 'Nie udało się zapisać zdjęcia.');
-    } finally {
-      setPhotoBusy('');
-      setPhotoTarget(null);
-      if (photoInputRef.current) photoInputRef.current.value='';
-    }
-  }
-
-  function selectPerson(name: PersonKey) {
-    setSelected(name);
-    setTab('summary');
-  }
-
-  const tabs: Array<[FamilyTab,string,string]> = [
-    ['summary','⌂','Podsumowanie'],
-    ['schedule','▣','Grafik'],
-    ['tasks','☑','Zadania'],
-    ['school','🎓','Szkoła'],
-    ['health','♡','Zdrowie'],
-    ['important','ⓘ','Ważne informacje'],
-  ];
-
-  function renderScheduleRows() {
-    if (selectedPlanRows.length === 0) return <p className="family-versa-empty">Brak planu na dziś.</p>;
-    return <div className="family-today-list">{selectedPlanRows.map((r,index)=><div className={`family-today-row family-tone-${index%5}`} key={`${r.person}-${r.start.getTime()}-${index}`}>
-      <span className="family-mini-avatar">{members.find((m)=>m.name===r.person)?.photoURL ? <img src={members.find((m)=>m.name===r.person)?.photoURL} alt="" /> : memberEmoji(r.person)}</span>
-      <strong>{r.person}</strong>
-      <time>{formatTime(r.start)}–{formatTime(r.end)}</time>
-      <span>{r.icon} {r.title}</span>
-      <em>›</em>
-    </div>)}</div>;
-  }
+  const selectedMember=members.find((m)=>m.name === selected);
+  const selectedTasks=tasks.filter((t)=>!t.done && (selected === 'family' ? true : t.person === selected || t.person === 'family')).slice(0,5);
+  const selectedPlan=selected === 'family' ? todayCalendar.slice(0,8) : todayCalendar.filter((o)=>o.source.person === selected || o.source.person === 'family').slice(0,6);
+  const selectedSchool=todaySchool.filter((r)=>selected !== 'family' && r.person === selected).slice(0,7);
+  const upcoming=events.flatMap((e)=>generateOccurrences(e,new Date(),endOfDay(addDays(new Date(),30)))).filter((o)=>o.date >= new Date() && (selected === 'family' || o.source.person === selected || o.source.person === 'family')).sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,4);
+  const isStudent=selected === 'Paweł' || selected === 'Nikodem';
+  const age=ageFromBirthDate(selectedMember?.birthDate);
 
   return (
-    <div className="page-content compact-page family-versa-page">
-      <input ref={photoInputRef} className="family-photo-input" type="file" accept="image/*" onChange={(e)=>void handlePhotoFile(e.target.files?.[0])} />
-      <section className="family-versa-title">
-        <div><small>Nasza Rodzina</small><h1>👥 Rodzina</h1><p>Profile, plany, zadania i szybki dostęp do informacji każdego z nas.</p></div>
+    <div className="page-content compact-page family-v130">
+      <ModuleHeader icon="👨‍👩‍👧‍👦" title="Rodzina" text="Profile, plany i szybki dostęp do informacji każdej osoby." />
+      <section className="family-hub-strip">
+        <button className={selected === 'family' ? 'active' : ''} onClick={()=>setSelected('family')}><span className="family-hub-avatar group">👨‍👩‍👧‍👦</span><strong>Cała rodzina</strong><small>Wspólnie</small></button>
+        {members.map((m)=><button key={m.id} className={selected === m.name ? 'active' : ''} onClick={()=>setSelected(m.name as PersonKey)}><span className="family-hub-avatar">{m.photoURL ? <img src={m.photoURL} alt="" /> : memberEmoji(m.name)}</span><strong>{m.name}</strong><small>{statusFor(m.name)}</small></button>)}
       </section>
 
-      <section className="family-member-cards">
-        {members.map((m)=>{
-          const active=selected === m.name;
-          const editable=canEditPhoto(m);
-          return <button type="button" key={m.id} className={`family-member-card ${active ? 'active' : ''}`} onClick={()=>selectPerson(m.name as PersonKey)}>
-            <span className="family-member-photo">{m.photoURL ? <img src={m.photoURL} alt={m.name} /> : memberEmoji(m.name)}</span>
-            {editable && <span role="button" tabIndex={0} className="family-photo-edit" title="Zmień zdjęcie" onClick={(e)=>startPhotoChange(m,e)} onKeyDown={(e)=>{ if (e.key==='Enter' || e.key===' ') { e.preventDefault(); setPhotoTarget(m); requestAnimationFrame(()=>photoInputRef.current?.click()); } }}>✎</span>}
-            {m.name === member?.name && <span className="family-owner-badge">Ty</span>}
-            <div><strong>{m.name}</strong><small>{personRole(m.name,m.role)}</small><p>{photoBusy===m.id ? 'Zapisywanie zdjęcia…' : currentOrEndStatus(m.name)}</p></div>
-          </button>;
-        })}
-      </section>
-
-      <div className="family-view-switch">
-        <button className={selected==='family' ? 'active' : ''} onClick={()=>selectPerson('family')}>👨‍👩‍👧‍👦 Cała rodzina</button>
-        {selected !== 'family' && selectedMember && <div className="family-selected-pill"><span>{selectedMember.photoURL ? <img src={selectedMember.photoURL} alt="" /> : memberEmoji(selected)}</span><strong>{selected}</strong><small>{personRole(selected,selectedMember.role)}{age !== null ? ` · ${age} lat` : ''}</small>{canEditPhoto(selectedMember) && <button type="button" onClick={()=>startPhotoChange(selectedMember)}>Zmień zdjęcie</button>}</div>}
-      </div>
-
-      <nav className="family-versa-tabs">
-        {tabs.map(([key,icon,label])=><button key={key} className={tab===key ? 'active' : ''} onClick={()=>setTab(key)}><span>{icon}</span>{label}</button>)}
-      </nav>
-
-      {tab === 'summary' && <>
-        <section className="family-versa-main-grid">
-          <article className="family-versa-card family-today-card">
-            <header><div><strong>📅 Dziś – {capitalize(now.toLocaleDateString('pl-PL',{weekday:'long',day:'numeric',month:'long'}))}</strong><small>{selected==='family' ? 'Plan całej rodziny' : `Plan: ${selected}`}</small></div><button onClick={()=>goTo('Kalendarz')}>Zobacz cały dzień ›</button></header>
-            {renderScheduleRows()}
-          </article>
-          <article className="family-versa-card family-upcoming-card">
-            <header><div><strong>🗓️ Najbliższe wydarzenia</strong><small>To, o czym warto pamiętać</small></div><button onClick={()=>goTo('Kalendarz')}>Zobacz wszystko ›</button></header>
-            {upcoming.length===0 ? <p className="family-versa-empty">Brak najbliższych wydarzeń.</p> : <div className="family-upcoming-list">{upcoming.map((o)=><div key={o.key}><span>{eventActivityIcon(o.source.title)}</span><div><strong>{o.source.title}</strong><small>{personLabel(o.source.person)} · {capitalize(o.date.toLocaleDateString('pl-PL',{weekday:'short',day:'numeric',month:'short'}))} · {o.source.allDay?'cały dzień':formatTime(o.date)}</small></div><em>›</em></div>)}</div>}
-          </article>
+      {selected === 'family' ? <>
+        <section className="family-overview-grid">
+          {members.map((m)=><article key={m.id} className="family-status-card"><div className="family-hub-avatar">{m.photoURL ? <img src={m.photoURL} alt="" /> : memberEmoji(m.name)}</div><div><strong>{m.name}</strong><small>{personRole(m.name,m.role)}</small><p>{statusFor(m.name)}</p></div><button onClick={()=>setSelected(m.name as PersonKey)}>Profil ›</button></article>)}
         </section>
-
-        <section className="family-bottom-grid">
-          <article className="family-versa-card">
-            <header><div><strong>☑ Zadania</strong><small>{selected==='family' ? 'Najbliższe zadania rodziny' : `Zadania: ${selected}`}</small></div><button onClick={()=>goTo('Zadania')}>Zobacz wszystkie ›</button></header>
-            {selectedTasks.length===0 ? <p className="family-versa-empty">Brak otwartych zadań.</p> : <div className="family-simple-list">{selectedTasks.slice(0,5).map((t)=><div key={t.id}><span className="family-task-check">□</span><div><strong>{t.title}</strong><small>{personLabel(t.person)}{t.dueDate?` · ${formatShortDate(t.dueDate)}`:''}{t.points?` · +${t.points} pkt`:''}</small></div></div>)}</div>}
-          </article>
-
-          <article className="family-versa-card">
-            <header><div><strong>⭐ Ostatnie oceny</strong><small>Paweł i Nikodem</small></div><button onClick={()=>goTo('Szkoła')}>Szkoła ›</button></header>
-            {selectedGrades.length===0 ? <p className="family-versa-empty">Brak zapisanych ocen.</p> : <div className="family-grade-list">{selectedGrades.slice(0,5).map((r)=><div key={r.id}><span className="family-mini-avatar">{memberEmoji(r.person)}</span><strong>{r.person}</strong><b>{r.title || r.note || '—'}</b><span>{r.subject || 'Przedmiot'}</span><small>{r.date?formatShortDate(r.date):''}</small></div>)}</div>}
-          </article>
-
-          <article className="family-versa-card family-school-mini">
-            <header><div><strong>🎓 Plan lekcji – dziś</strong><small>{isStudent ? selected : 'Uczniowie'}</small></div><button onClick={()=>goTo('Szkoła')}>Zobacz plan ›</button></header>
-            {selected === 'family' ? <div className="family-school-switch"><span>Nikodem</span><span>Paweł</span></div> : null}
-            {(selected === 'family' ? todaySchool : selectedTodaySchool).slice(0,7).length===0 ? <p className="family-versa-empty">Brak lekcji na dziś.</p> : <ol>{(selected === 'family' ? todaySchool : selectedTodaySchool).slice(0,7).map((r)=><li key={r.id}><time>{r.time}</time><strong>{r.subject || r.title}</strong><small>{r.endTime ? `do ${r.endTime}` : ''}</small></li>)}</ol>}
-          </article>
+        <section className="family-hub-columns">
+          <article className="family-hub-card"><header><strong>📅 Najbliższe rodzinne wydarzenia</strong><button onClick={()=>goTo('Kalendarz')}>Kalendarz ›</button></header>{upcoming.length === 0 ? <p className="family-empty">Brak wydarzeń.</p> : upcoming.map((o)=><div className="family-hub-row" key={o.key}><span className="date-badge"><b>{o.date.getDate()}</b><small>{o.date.toLocaleDateString('pl-PL',{month:'short'}).replace('.','')}</small></span><div><strong>{o.source.title}</strong><small>{personLabel(o.source.person)} · {o.source.allDay ? 'cały dzień' : formatTime(o.date)}</small></div></div>)}</article>
+          <article className="family-hub-card"><header><strong>✅ Zadania rodziny</strong><button onClick={()=>goTo('Zadania')}>Zadania ›</button></header>{selectedTasks.length === 0 ? <p className="family-empty">Brak otwartych zadań.</p> : selectedTasks.map((t)=><div className="family-hub-row" key={t.id}><span>○</span><div><strong>{t.title}</strong><small>{personLabel(t.person)}{t.dueDate ? ` · ${formatShortDate(t.dueDate)}` : ''}</small></div></div>)}</article>
+        </section>
+      </> : <>
+        <section className="family-profile-hero">
+          <div className="family-profile-avatar large">{selectedMember?.photoURL ? <img src={selectedMember.photoURL} alt="" /> : memberEmoji(selected)}</div>
+          <div className="family-profile-copy"><h2>{selected}</h2><p>{personRole(selected,selectedMember?.role)}{age !== null ? ` · ${age} lat` : ''}</p><span>{statusFor(selected)}</span></div>
+          <div className="family-profile-actions"><button onClick={()=>goTo('Kalendarz')}>📅 Plan dnia</button>{isStudent ? <button onClick={()=>goTo('Szkoła')}>🎒 Szkoła</button> : <button onClick={()=>goTo('Kalendarz')}>💼 Praca / aktywności</button>}<button onClick={()=>goTo('Zadania')}>✅ Zadania</button><button onClick={()=>goTo('Zdrowie')}>❤️ Zdrowie</button></div>
+        </section>
+        <section className="family-hub-columns three">
+          <article className="family-hub-card"><header><strong>🕒 Dzisiejszy plan</strong><button onClick={()=>goTo('Kalendarz')}>Pełny plan ›</button></header>{selectedPlan.length === 0 && selectedSchool.length === 0 ? <p className="family-empty">Brak planu na dziś.</p> : <>{selectedPlan.map((o)=><div className="family-hub-row" key={o.key}><time>{o.source.allDay ? 'Cały dzień' : `${formatTime(o.date)}–${formatTime(o.endDate)}`}</time><div><strong>{eventActivityIcon(o.source.title)} {o.source.title}</strong><small>{o.source.description}</small></div></div>)}{selectedSchool.map((r)=><div className="family-hub-row" key={`school-${r.id}`}><time>{r.time}{r.endTime ? `–${r.endTime}` : ''}</time><div><strong>{subjectIcon(r.subject || r.title)} {r.subject || r.title}</strong><small>{r.type === 'activity' ? r.title : r.note}</small></div></div>)}</>}</article>
+          <article className="family-hub-card"><header><strong>✅ Zadania</strong><button onClick={()=>goTo('Zadania')}>Wszystkie ›</button></header>{selectedTasks.length === 0 ? <p className="family-empty">Brak otwartych zadań.</p> : selectedTasks.map((t)=><div className="family-hub-row" key={t.id}><span>○</span><div><strong>{t.title}</strong><small>{t.dueDate ? formatShortDate(t.dueDate) : 'Bez terminu'}{t.points ? ` · +${t.points} pkt` : ''}</small></div></div>)}</article>
+          <article className="family-hub-card"><header><strong>{isStudent ? '🎒 Szkoła i zajęcia' : '📅 Najbliższe aktywności'}</strong><button onClick={()=>goTo(isStudent ? 'Szkoła' : 'Kalendarz')}>Otwórz ›</button></header>{isStudent ? (selectedSchool.length ? selectedSchool.map((r)=><div className="family-hub-row" key={`mini-${r.id}`}><span>{subjectIcon(r.subject || r.title)}</span><div><strong>{r.subject || r.title}</strong><small>{r.time}{r.endTime ? `–${r.endTime}` : ''}</small></div></div>) : <p className="family-empty">Brak szkolnych wpisów na dziś.</p>) : (upcoming.length ? upcoming.map((o)=><div className="family-hub-row" key={`up-${o.key}`}><span>{eventActivityIcon(o.source.title)}</span><div><strong>{o.source.title}</strong><small>{formatShortDate(formatDateInput(o.date))} · {formatTime(o.date)}</small></div></div>) : <p className="family-empty">Brak najbliższych aktywności.</p>)}</article>
         </section>
       </>}
-
-      {tab === 'schedule' && <section className="family-versa-card family-full-section">
-        <header><div><strong>▣ Grafik i plan dnia</strong><small>{selected==='family' ? 'Dzisiejszy plan wszystkich członków rodziny' : `Dzisiejszy plan: ${selected}`}</small></div><button onClick={()=>goTo('Kalendarz')}>Otwórz Kalendarz ›</button></header>
-        {renderScheduleRows()}
-      </section>}
-
-      {tab === 'tasks' && <section className="family-versa-card family-full-section">
-        <header><div><strong>☑ Zadania</strong><small>{selected==='family' ? 'Otwarte zadania rodziny' : `Otwarte zadania: ${selected}`}</small></div><button onClick={()=>goTo('Zadania')}>Otwórz Zadania ›</button></header>
-        {selectedTasks.length===0 ? <p className="family-versa-empty">Brak otwartych zadań.</p> : <div className="family-simple-list large">{selectedTasks.map((t)=><div key={t.id}><span className="family-task-check">□</span><div><strong>{t.title}</strong><small>{personLabel(t.person)} · {t.dueDate?formatShortDate(t.dueDate):'bez terminu'}{t.points?` · +${t.points} pkt`:''}</small></div><em>{t.priority==='high'?'Wysoki':t.priority==='low'?'Niski':'Normalny'}</em></div>)}</div>}
-      </section>}
-
-      {tab === 'school' && <section className="family-versa-card family-full-section">
-        <header><div><strong>🎓 Szkoła</strong><small>{selected==='family' ? 'Podgląd Pawła i Nikodema' : isStudent ? `Szkoła: ${selected}` : 'Ten profil nie ma planu szkolnego'}</small></div><button onClick={()=>goTo('Szkoła')}>Otwórz Szkołę ›</button></header>
-        {!isStudent && selected!=='family' ? <p className="family-versa-empty">Dla tego profilu nie ma danych szkolnych.</p> : <div className="family-school-tab-grid"><div><h3>Dzisiejszy plan</h3>{(selected==='family'?todaySchool:selectedTodaySchool).slice(0,8).map((r)=><div className="family-school-row" key={r.id}><time>{r.time}</time><span>{subjectIcon(r.subject || r.title)}</span><strong>{r.subject || r.title}</strong><small>{r.endTime?`do ${r.endTime}`:''}</small></div>)}</div><div><h3>Zadania domowe</h3>{selectedHomework.length===0?<p className="family-versa-empty">Brak zadań.</p>:selectedHomework.map((r)=><div className="family-homework-row" key={r.id}><span>□</span><div><strong>{r.subject || r.title}</strong><small>{r.title}{r.date?` · ${formatShortDate(r.date)}`:''}</small></div></div>)}</div></div>}
-      </section>}
-
-      {tab === 'health' && <section className="family-versa-card family-full-section family-health-link">
-        <span>♡</span><div><h2>Zdrowie</h2><p>Wizyty, leki, wyniki i dokumenty są przechowywane w osobnym module Zdrowie z odpowiednimi uprawnieniami.</p></div><button className="primary-button" onClick={()=>goTo('Zdrowie')}>Otwórz Zdrowie</button>
-      </section>}
-
-      {tab === 'important' && <section className="family-important-grid">
-        {(selected==='family' ? members : selectedMember ? [selectedMember] : []).map((m)=>{
-          const a=ageFromBirthDate(m.birthDate);
-          const openTasks=tasks.filter((t)=>!t.done && (t.person===m.name || t.person==='family')).length;
-          const schoolEndValues=todaySchool.filter((r)=>r.person===m.name).map((r)=>r.endTime).filter(Boolean).sort(); const schoolEnd=schoolEndValues.length ? schoolEndValues[schoolEndValues.length-1] : '';
-          return <article className="family-versa-card" key={m.id}><div className="family-important-title"><span className="family-mini-avatar">{m.photoURL?<img src={m.photoURL} alt=""/>:memberEmoji(m.name)}</span><div><strong>{m.name}</strong><small>{personRole(m.name,m.role)}</small></div></div><dl><div><dt>Aktualnie</dt><dd>{currentOrEndStatus(m.name)}</dd></div>{a!==null&&<div><dt>Wiek</dt><dd>{a} lat</dd></div>}<div><dt>Otwarte zadania</dt><dd>{openTasks}</dd></div>{schoolEnd&&<div><dt>Koniec szkoły</dt><dd>{schoolEnd}</dd></div>}</dl></article>;
-        })}
-      </section>}
     </div>
   );
 }
@@ -3738,194 +2291,90 @@ function FamilyPage({ user, member, goTo }: { user: User; member: Member | null;
    SETTINGS
    ========================================================= */
 
-function SettingsPage({ member, theme, setTheme, goTo }: { member: Member | null; theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void; goTo: (page: Page) => void }) {
-  const defaultPrefs = { app:true, email:false, push:true, medicines:true, school:true };
+function downloadFile(contents:string, name:string, type:string) {
+  const url = URL.createObjectURL(new Blob([contents], { type }));
+  const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+  window.setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+function SettingsPage({ user, member, theme, setTheme }: { user: User; member: Member | null; theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void }) {
+  const defaultPrefs = { medicines:true, visits:true, tasks:true, school:true, chat:true };
   const [prefs, setPrefs] = useState<Record<keyof typeof defaultPrefs, boolean>>(() => {
-    try { return { ...defaultPrefs, ...JSON.parse(localStorage.getItem('nr-notifications-v138') || '{}') }; }
+    try { return { ...defaultPrefs, ...JSON.parse(localStorage.getItem('nr-notifications') || '{}') }; }
     catch { return defaultPrefs; }
   });
-  const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
-  const [permissionsOpen, setPermissionsOpen] = useState(false);
-  const [permissionMemberId, setPermissionMemberId] = useState('');
-  const [accent, setAccent] = useState<'blue'|'violet'|'pink'|'green'|'orange'>(() => {
-    try {
-      const saved = localStorage.getItem('nr-accent');
-      return saved === 'violet' || saved === 'pink' || saved === 'green' || saved === 'orange' ? saved : 'blue';
-    } catch { return 'blue'; }
-  });
-  const [textSize, setTextSize] = useState<'small'|'medium'|'large'>(() => {
-    try {
-      const saved = localStorage.getItem('nr-text-size');
-      return saved === 'small' || saved === 'large' ? saved : 'medium';
-    } catch { return 'medium'; }
-  });
-  const parent = isParent(member);
-  useEffect(() => {
-    try {
-      const focus=sessionStorage.getItem('nr-settings-focus');
-      if (focus==='notifications') requestAnimationFrame(()=>document.getElementById('settings-notifications')?.scrollIntoView({behavior:'smooth',block:'center'}));
-      sessionStorage.removeItem('nr-settings-focus');
-    } catch { /* ignore */ }
-  }, []);
-
-  useEffect(() => onSnapshot(collection(db, 'members'), (snapshot) => {
-    const next = snapshot.docs.map((memberDoc): FamilyMemberDoc => {
-      const data = memberDoc.data();
-      return {
-        id: memberDoc.id,
-        name: String(data.name || 'Rodzina'),
-        role: personRole(String(data.name || ''), typeof data.role === 'string' ? data.role : ''),
-        photoURL: typeof data.photoURL === 'string' ? data.photoURL : undefined,
-        active: data.active !== false,
-        birthDate: typeof data.birthDate === 'string' ? data.birthDate : undefined,
-        permissions: normalizeMemberPermissions(data.permissions),
-      };
-    });
-    next.sort((a,b)=>FAMILY_ORDER.indexOf(a.name)-FAMILY_ORDER.indexOf(b.name));
-    setMembers(next);
-  }), []);
-
-  useEffect(() => {
-    document.documentElement.dataset.accent = accent;
-    try { localStorage.setItem('nr-accent', accent); } catch { /* ignore */ }
-  }, [accent]);
-
-  useEffect(() => {
-    document.documentElement.dataset.textSize = textSize;
-    try { localStorage.setItem('nr-text-size', textSize); } catch { /* ignore */ }
-  }, [textSize]);
+  const parent=isParent(member);
 
   async function togglePref(key:keyof typeof defaultPrefs) {
     const nextValue=!prefs[key];
-    if (key === 'push' && nextValue && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+    if (nextValue && typeof Notification !== 'undefined' && Notification.permission === 'default') {
       try { await Notification.requestPermission(); } catch { /* browser may block */ }
     }
-    const next={...prefs,[key]:nextValue};
-    setPrefs(next);
-    try { localStorage.setItem('nr-notifications-v138',JSON.stringify(next)); } catch { /* ignore */ }
+    const next={...prefs,[key]:nextValue}; setPrefs(next);
+    try { localStorage.setItem('nr-notifications',JSON.stringify(next)); } catch { /* ignore */ }
   }
 
-  function openPermissions() {
-    if (!parent) { alert('Uprawnieniami członków rodziny zarządza rodzic / administrator.'); return; }
-    const firstEditable=members.find((person)=>!PARENT_NAMES.has(person.name)) || members[0];
-    setPermissionMemberId(firstEditable?.id || '');
-    setPermissionsOpen(true);
+  const [exporting, setExporting] = useState(false);
+  async function downloadBackup() {
+    if (!parent || exporting) return;
+    setExporting(true);
+    try {
+      const names = ['members','calendarEvents','tasks','shoppingItems','quickProducts','healthRecords','medicalContacts','schoolItems'];
+      const snapshots = await Promise.all(names.map(name=>getDocs(collection(db,name))));
+      const data = Object.fromEntries(names.map((name,i)=>[name,snapshots[i].docs.map(row=>({ id:row.id, data:row.data() }))]));
+      downloadFile(JSON.stringify({ schemaVersion:1, appVersion:APP_VERSION, exportedAt:new Date().toISOString(), data }, null, 2), `nasza-rodzina-kopia-${dateKey()}.json`, 'application/json');
+      notify('Pobrano kopię danych. Przechowuj ten plik prywatnie; pliki dokumentów i wiadomości nie są częścią kopii.');
+    } catch (error) { notify(errorMessage(error), 'error'); }
+    finally { setExporting(false); }
   }
-
-  async function setMemberPermission(key:keyof MemberPermissions,value:boolean) {
-    if (!parent || !permissionMemberId) return;
-    await updateDoc(doc(db,'members',permissionMemberId), { [`permissions.${key}`]:value, updatedAt:Timestamp.now() });
+  async function downloadCalendar() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const snapshot = await getDocs(collection(db, 'calendarEvents'));
+      const escape = (value:string)=>value.replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;');
+      const date = (value:Date)=>`${formatDateInput(value).replace(/-/g,'')}T${formatTimeInput(value).replace(':','')}00`;
+      const lines = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Nasza Rodzina//PL','CALSCALE:GREGORIAN'];
+      for (const row of snapshot.docs) {
+        const x = row.data(); if (!(x.date instanceof Timestamp)) continue;
+        const start = x.date.toDate(); const end = x.endDate instanceof Timestamp ? x.endDate.toDate() : addDays(start,1);
+        lines.push('BEGIN:VEVENT', `UID:${row.id}@nasza-rodzina`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d{3}/,'')}`, `SUMMARY:${escape(String(x.title || 'Wydarzenie'))}`, `DESCRIPTION:${escape(String(x.description || ''))}`);
+        if (x.allDay) lines.push(`DTSTART;VALUE=DATE:${formatDateInput(start).replace(/-/g,'')}`, `DTEND;VALUE=DATE:${formatDateInput(addDays(startOfDay(end),1)).replace(/-/g,'')}`);
+        else lines.push(`DTSTART:${date(start)}`, `DTEND:${date(end)}`);
+        const freq:Record<string,string> = { daily:'DAILY', weekly:'WEEKLY', monthly:'MONTHLY', yearly:'YEARLY' };
+        if (freq[x.repeat]) lines.push(`RRULE:FREQ=${freq[x.repeat]}${x.repeatUntil instanceof Timestamp ? ';UNTIL=' + date(x.repeatUntil.toDate()) : ''}`);
+        lines.push('END:VEVENT');
+      }
+      lines.push('END:VCALENDAR');
+      downloadFile(lines.join('\r\n')+'\r\n', `nasza-rodzina-kalendarz-${dateKey()}.ics`, 'text/calendar;charset=utf-8');
+    } catch (error) { notify(errorMessage(error), 'error'); }
+    finally { setExporting(false); }
   }
-
-  function integrationInfo(name:string) {
-    alert(`${name}: miejsce integracji jest przygotowane. Pełne połączenie zrobimy w etapie integracji po zakończeniu wszystkich zakładek.`);
-  }
-
-  const accountEmail = auth.currentUser?.email || 'E-mail konta';
-  const roleLabel = personRole(member?.name || '', member?.role);
-  const accentOptions: Array<['blue'|'violet'|'pink'|'green'|'orange', string]> = [
-    ['blue','#3b9cff'],['violet','#8b67ff'],['pink','#ff5aa8'],['green','#4acb8a'],['orange','#ff9a46']
-  ];
 
   return (
-    <div className="page-content compact-page settings-versa-page">
-      <section className="settings-versa-heading">
-        <div className="settings-title-copy"><span className="settings-title-icon">⚙️</span><div><small>Nasza Rodzina</small><h1>Ustawienia</h1><p>Konto, wygląd, powiadomienia, synchronizacja i bezpieczeństwo.</p></div></div>
-        <div className="settings-brand-mini"><img src="/nasza-rodzina-logo.svg" alt="Nasza Rodzina"/><span>Nasza Rodzina v{APP_VERSION}</span></div>
+    <div className="page-content compact-page settings-v130">
+      <ModuleHeader icon="⚙️" title="Ustawienia" text="Konto, wygląd, powiadomienia, synchronizacja i bezpieczeństwo." />
+      <section className="settings-dashboard">
+        <article className="settings-section account-settings"><header><span>👤</span><div><strong>Twoje konto</strong><small>Profil zalogowanej osoby</small></div></header><div className="settings-profile"><span className="family-profile-avatar">{member?.photoURL ? <img src={member.photoURL} alt="" /> : memberEmoji(member?.name || '')}</span><div><strong>{member?.name || 'Użytkownik'}</strong><small>{personRole(member?.name || '',member?.role)}</small></div><span className="setting-badge green">Aktywne</span></div></article>
+
+        <article className="settings-section"><header><span>🎨</span><div><strong>Motyw aplikacji</strong><small>Wygląd zapisuje się na tym urządzeniu</small></div></header><div className="theme-choice big"><button className={theme === 'light' ? 'active' : ''} onClick={()=>setTheme('light')}>☀️ <span><b>Jasny</b><small>Kolorowy i czytelny</small></span></button><button className={theme === 'dark' ? 'active' : ''} onClick={()=>setTheme('dark')}>🌙 <span><b>Ciemny</b><small>Delikatny dla oczu</small></span></button></div></article>
+
+        <article className="settings-section notifications-settings"><header><span>🔔</span><div><strong>Powiadomienia</strong><small>Przypomnienia o lekach przy otwartej zakładce Zdrowie</small></div></header>{([['medicines','💊','Leki']] as Array<[keyof typeof defaultPrefs,string,string]>).map(([key,icon,label])=><button className="settings-toggle-row" key={key} onClick={()=>void togglePref(key)}><span>{icon}</span><strong>{label}</strong><i className={prefs[key] ? 'toggle-on' : 'toggle-off'}>{prefs[key] ? 'Wł.' : 'Wył.'}</i></button>)}<p className="settings-footnote">Przypomnienia działają tylko przy otwartej zakładce Zdrowie i zgodzie przeglądarki. Na iPhonie system może ograniczać powiadomienia; aplikacja nie zastępuje alarmu na lek.</p></article>
+
+        <article className="settings-section calendars-settings"><header><span>📅</span><div><strong>Kalendarz poza aplikacją</strong><small>Plik do otwarcia w Apple Calendar, Google Calendar lub Outlook</small></div></header><div className="data-tools"><button className="secondary-button" disabled={exporting} onClick={()=>void downloadCalendar()}>Pobierz kalendarz .ics</button></div><p className="settings-footnote">Plik jest kopią bieżącego kalendarza. Zmiany po imporcie nie synchronizują się automatycznie. Godziny przyjmują strefę Twojego kalendarza.</p></article>
+
+        <article className="settings-section"><header><span>👨‍👩‍👧‍👦</span><div><strong>Uprawnienia rodzinne</strong><small>Role i dostęp do danych</small></div></header><div className="permission-summary"><span className={parent ? 'parent-role' : 'child-role'}>{parent ? '👑 Rodzic — pełny dostęp' : '👤 Członek rodziny — dostęp ograniczony'}</span><p>Rodzice zarządzają punktami, profilami dzieci oraz szczególnie wrażliwymi dokumentami.</p></div></article>
+
+        <article className="settings-section"><header><span>🔐</span><div><strong>Prywatność i bezpieczeństwo</strong><small>Dane rodzinne są dostępne po zalogowaniu</small></div></header><div className="settings-info-list"><span>🔒 Ważne dokumenty Pawła: tylko rodzice</span><span>🗂️ Dokumenty zdrowotne: zgodnie z rolą</span><span>🔑 Hasła do zewnętrznych usług nie są zapisywane w aplikacji</span></div></article>
+
+        <article className="settings-section"><header><span>📁</span><div><strong>Dane i pliki</strong><small>Zdjęcia, dokumenty i własne ikonki</small></div></header><div className="settings-info-list"><span>🖼️ Zdjęcia i dokumenty — magazyn rodziny</span><span>☁️ Dane są wspólne na wszystkich urządzeniach</span></div></article>
+
+        {parent && <article className="settings-section"><header><span>💾</span><div><strong>Kopia danych rodziny</strong><small>Pobierz dane jako prywatny plik JSON</small></div></header><button className="secondary-button" disabled={exporting} onClick={()=>void downloadBackup()}>{exporting ? "Przygotowuję…" : "Pobierz kopię danych"}</button><p className="settings-footnote">Kopia zawiera dane zdrowotne. Dokumenty i wiadomości czatu wymagają oddzielnej kopii. Konta i hasła nie są eksportowane.</p></article>}
+
+        <article className="settings-section whats-new-v130"><header><span>✨</span><div><strong>Co nowego?</strong><small>Ta sekcja będzie przy każdej wersji</small></div><b className="version-pill">v{APP_VERSION}</b></header><ul><li>Czytelne układy na telefonie, tablecie i komputerze</li><li>Ochrona prywatnych rozmów i dokumentów przez uprawnienia</li><li>Edycja szkolnych i zdrowotnych wpisów</li><li>Import szkoły z pliku i eksport kalendarza</li><li>Zadania powtarzające się z zatwierdzaniem rodzica</li></ul></article>
+
+        <article className="settings-section app-about"><header><span>ℹ️</span><div><strong>O aplikacji</strong><small>Nasza Rodzina</small></div></header><div className="about-version"><img src="/nasza-rodzina-logo.svg" alt="" /><div><strong>Nasza Rodzina v{APP_VERSION}</strong><small>Aktualizacja: {APP_UPDATED}</small></div></div></article>
       </section>
-
-      <section className="settings-versa-grid">
-        <article className="settings-versa-card settings-account-card">
-          <header><span className="settings-card-icon">👤</span><div><strong>Profil i konto</strong><small>Zalogowana osoba</small></div><button className="settings-chevron" onClick={()=>goTo('Rodzina')}>›</button></header>
-          <div className="settings-account-profile">
-            <span className="settings-main-avatar">{member?.photoURL ? <img src={member.photoURL} alt=""/> : memberEmoji(member?.name || '')}<i>📷</i></span>
-            <div><strong>{member?.name || 'Użytkownik'}</strong><small>{roleLabel}{parent ? ' · Administrator' : ''}</small><em>● Aktywne</em></div>
-            <button onClick={()=>goTo('Rodzina')}>Edytuj profil</button>
-          </div>
-          <div className="settings-menu-list">
-            <button onClick={()=>goTo('Rodzina')}><span>📷</span><b>Zmień zdjęcie</b><em>›</em></button>
-            <button onClick={()=>goTo('Rodzina')}><span>👥</span><b>Imię i rola</b><small>{member?.name || ''} · {roleLabel}</small><em>›</em></button>
-            <button><span>✉️</span><b>E-mail</b><small>{accountEmail}</small></button>
-            <button onClick={()=>alert('Zmianę hasła dodamy w etapie bezpieczeństwa konta.')}><span>🔗</span><b>Hasło</b><small>Zmień</small><em>›</em></button>
-            <button className="danger" onClick={()=>void signOut(auth)}><span>↪️</span><b>Wyloguj z konta</b></button>
-          </div>
-        </article>
-
-        <article className="settings-versa-card settings-family-card">
-          <header><span className="settings-card-icon">👥</span><div><strong>Członkowie rodziny</strong><small>Profile i role</small></div><button className="settings-chevron" onClick={()=>goTo('Rodzina')}>›</button></header>
-          <div className="settings-family-list">
-            {members.map((person)=><button key={person.id} onClick={()=>goTo('Rodzina')}>
-              <span className="settings-member-avatar">{person.photoURL?<img src={person.photoURL} alt=""/>:memberEmoji(person.name)}</span>
-              <div><strong>{person.name}</strong><small>{personRole(person.name,person.role)}{person.name===member?.name ? ' · Ty' : ''}</small></div>
-              <i className={person.active === false ? 'offline' : ''}>{person.active === false ? 'Nieaktywne' : 'Aktywne'}</i><em>›</em>
-            </button>)}
-          </div>
-          <button className="settings-wide-action" onClick={()=>goTo('Rodzina')}>Otwórz profile rodziny</button>
-        </article>
-
-        <article className="settings-versa-card settings-appearance-card">
-          <header><span className="settings-card-icon">🎨</span><div><strong>Wygląd aplikacji</strong><small>Motyw i czytelność</small></div></header>
-          <div className="settings-theme-pair">
-            <button className={theme==='light'?'active':''} onClick={()=>setTheme('light')}><span>☀️</span><strong>Jasny</strong></button>
-            <button className={theme==='dark'?'active':''} onClick={()=>setTheme('dark')}><span>🌙</span><strong>Ciemny</strong></button>
-          </div>
-          <label>Motyw kolorystyczny</label>
-          <div className="settings-accent-row">{accentOptions.map(([key,color])=><button key={key} aria-label={key} className={accent===key?'active':''} style={{background:color}} onClick={()=>setAccent(key)} />)}</div>
-          <label>Rozmiar tekstu</label>
-          <div className="settings-text-size"><button className={textSize==='small'?'active':''} onClick={()=>setTextSize('small')}>A <span>Mały</span></button><button className={textSize==='medium'?'active':''} onClick={()=>setTextSize('medium')}>A <span>Średni</span></button><button className={textSize==='large'?'active':''} onClick={()=>setTextSize('large')}>A <span>Duży</span></button></div>
-          <div className="settings-logo-row"><img src="/nasza-rodzina-logo.svg" alt=""/><div><strong>Nasza Rodzina</strong><small>v{APP_VERSION}</small></div><span>Logo aplikacji</span></div>
-        </article>
-
-        <article id="settings-notifications" className="settings-versa-card settings-notifications-card">
-          <header><span className="settings-card-icon">🔔</span><div><strong>Powiadomienia</strong><small>Wybierz, o czym przypominać</small></div><button className="settings-chevron">›</button></header>
-          <div className="settings-toggle-list">
-            {([['app','🔔','Powiadomienia w aplikacji','Ważne wydarzenia i zadania'],['email','✉️','Powiadomienia e-mail','Podsumowanie dnia'],['push','📱','Powiadomienia push (Web)','Wymaga zgody przeglądarki'],['medicines','❤️','Przypomnienia o lekach','Zdrowie · leki i wizyty'],['school','🎓','Przypomnienia szkolne','Sprawdziany, zadania, oceny']] as Array<[keyof typeof defaultPrefs,string,string,string]>).map(([key,icon,label,desc])=><button key={key} onClick={()=>void togglePref(key)}><span>{icon}</span><div><strong>{label}</strong><small>{desc}</small></div><i className={prefs[key]?'on':''}><b/></i></button>)}
-          </div>
-        </article>
-
-        <article className="settings-versa-card settings-calendars-card">
-          <header><span className="settings-card-icon">📅</span><div><strong>Synchronizacja kalendarzy</strong><small>Zewnętrzne źródła</small></div><button className="settings-chevron">›</button></header>
-          <div className="settings-integrations-list">
-            {[['Google Calendar','G','Połącz kalendarz rodzinny'],['Apple Calendar / iCloud','','Połącz kalendarz rodzinny'],['Outlook / Microsoft 365','O','Połącz kalendarz rodzinny'],['ICS (inny kalendarz)','ICS','Import / eksport']].map(([name,icon,desc])=><button key={name} onClick={()=>integrationInfo(name)}><span>{icon}</span><div><strong>{name}</strong><small>{desc}</small></div><em>Połącz</em></button>)}
-          </div>
-        </article>
-
-        <div className="settings-right-stack">
-          <article className="settings-versa-card settings-security-card">
-            <header><span className="settings-card-icon">🛡️</span><div><strong>Prywatność i bezpieczeństwo</strong><small>Dostęp do danych</small></div></header>
-            <div className="settings-menu-list compact">
-              <button><span>👥</span><b>Dane rodzinne</b><small>Zarządzaj swoimi danymi</small><em>›</em></button>
-              <button onClick={openPermissions}><span>👤</span><b>Uprawnienia i role</b><small>{parent?'Zarządzaj dostępem rodziny':'Dostęp ustala rodzic'}</small><em>›</em></button>
-              <button><span>☁️</span><b>Kopie zapasowe</b><small>Etap integracji</small><em>›</em></button>
-              <button className="danger" onClick={()=>alert('Usuwanie konta wymaga dodatkowego potwierdzenia i zostanie dodane w etapie bezpieczeństwa.')}><span>🗑️</span><b>Usuń swoje konto</b><small>Trwałe usunięcie danych</small><em>›</em></button>
-            </div>
-          </article>
-
-          <article className="settings-versa-card settings-about-card">
-            <header><span className="settings-card-icon">ℹ️</span><div><strong>Informacje o aplikacji</strong><small>Nasza Rodzina</small></div></header>
-            <div className="settings-about-row"><img src="/nasza-rodzina-logo.svg" alt=""/><div><strong>Nasza Rodzina</strong><small>Wersja {APP_VERSION} · {APP_UPDATED}</small></div><em>›</em></div>
-          </article>
-        </div>
-      </section>
-
-      {permissionsOpen && <Modal title="🛡️ Uprawnienia i role" subtitle="Prywatność rodzinna" onClose={()=>setPermissionsOpen(false)} wide>
-        <div className="permission-editor">
-          <div className="permission-members">{members.map((person)=><button type="button" key={person.id} className={permissionMemberId===person.id?'active':''} onClick={()=>setPermissionMemberId(person.id)}><span className="settings-member-avatar">{person.photoURL?<img src={person.photoURL} alt=""/>:memberEmoji(person.name)}</span><strong>{person.name}</strong><small>{personRole(person.name,person.role)}</small></button>)}</div>
-          {(()=>{
-            const selected=members.find((person)=>person.id===permissionMemberId);
-            if(!selected) return <p>Wybierz członka rodziny.</p>;
-            if(PARENT_NAMES.has(selected.name)) return <div className="permission-parent-note"><strong>✓ {selected.name} ma pełny dostęp rodzica</strong><small>Rodzice mają dostęp do modułów rodzinnych i ustawień administracyjnych.</small></div>;
-            const permissions=normalizeMemberPermissions(selected.permissions);
-            const options:Array<[keyof MemberPermissions,string,string,string]>=[
-              ['viewFamilySchedule','📅','Grafik całej rodziny','Statusy, godziny zakończenia i wspólny plan dnia'],
-              ['viewFamilyTasks','✅','Zadania całej rodziny','Podgląd zadań innych członków rodziny'],
-              ['viewFamilySchool','🎓','Szkoła rodzeństwa','Plan, zadania i sprawdziany drugiego dziecka'],
-              ['viewFamilyHealth','❤️','Zdrowie rodziny','Niepoufne wizyty i informacje zdrowotne innych osób'],
-            ];
-            return <><div className="settings-toggle-list permission-toggle-list">{options.map(([key,icon,label,desc])=><button type="button" key={key} onClick={()=>void setMemberPermission(key,!permissions[key])}><span>{icon}</span><div><strong>{label}</strong><small>{desc}</small></div><i className={permissions[key]?'on':''}><b/></i></button>)}</div><div className="permission-sensitive-note"><strong>🔒 Prywatne dokumenty medyczne</strong><small>Orzeczenia i dokumenty oznaczone „tylko rodzice” pozostają niewidoczne niezależnie od ustawień powyżej. Udostępnia się je osobno przy konkretnym dokumencie.</small></div></>;
-          })()}
-        </div>
-      </Modal>}
     </div>
   );
 }
@@ -3934,28 +2383,50 @@ function SettingsPage({ member, theme, setTheme, goTo }: { member: Member | null
    MOBILE NAV
    ========================================================= */
 
-function MobileNavigation({ page, goTo, onMore }: { page: Page; goTo: (page: Page) => void; onMore: () => void }) {
-  const items: Array<[Page, NavIconName, string]> = [
-    ['Start', 'start', 'Start'], ['Kalendarz', 'calendar', 'Kalendarz'], ['Zadania', 'tasks', 'Zadania'], ['Zakupy', 'shopping', 'Zakupy'],
-  ];
-  const moreActive = !items.some(([target]) => target === page);
+function MobileNavigation({ page, goTo, moreOpen, onMore }: { page: Page; goTo: (page: Page) => void; moreOpen: boolean; onMore: () => void }) {
+  const items: Page[] = ['Start', 'Kalendarz', 'Zadania', 'Zakupy'];
+  const moreActive = !items.includes(page) || moreOpen;
   return (
-    <nav className="mobile-navigation" aria-label="Nawigacja główna">
-      {items.map(([target, icon, label]) => <button type="button" key={target} className={page === target ? 'active' : ''} onClick={() => goTo(target)}><span className="mobile-nav-icon"><AppNavIcon name={icon} /></span><small>{label}</small></button>)}
-      <button type="button" className={moreActive ? 'active' : ''} onClick={onMore}><span className="mobile-nav-icon"><AppNavIcon name="more" /></span><small>Więcej</small></button>
+    <nav className="mobile-navigation family-menu" aria-label="Nawigacja">
+      {items.map((target) => <button type="button" aria-label={target} aria-current={page === target ? 'page' : undefined} key={target} className={page === target && !moreOpen ? 'active' : ''} onClick={() => goTo(target)}><span className="mobile-nav-icon"><AppIcon page={target} size={22} /></span><small>{target}</small></button>)}
+      <button type="button" aria-label="Więcej" aria-haspopup="dialog" aria-expanded={moreOpen} aria-controls="family-more-menu" className={moreActive ? 'active' : ''} onClick={onMore}><span className="mobile-nav-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1.8"/><rect x="14" y="4" width="6" height="6" rx="1.8"/><rect x="4" y="14" width="6" height="6" rx="1.8"/><rect x="14" y="14" width="6" height="6" rx="1.8"/></svg></span><small>Więcej</small></button>
     </nav>
   );
 }
 
 function MobileMoreMenu({ page, goTo, onClose, onLogout }: { page: Page; goTo: (page: Page) => void; onClose: () => void; onLogout: () => void }) {
-  const items: Array<[Page, NavIconName]> = [['Czat', 'chat'], ['Zdrowie', 'health'], ['Szkoła', 'school'], ['Rodzina', 'family'], ['Ustawienia', 'settings']];
+  const items: Array<[Page, string]> = [['Czat', 'Rodzinne rozmowy'], ['Zdrowie', 'Wizyty i dokumenty'], ['Szkoła', 'Lekcje i oceny'], ['Rodzina', 'Nasi najbliżsi'], ['Ustawienia', 'Dopasuj aplikację']];
+  const panel = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    panel.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); onClose(); }
+      if (event.key !== 'Tab') return;
+      const buttons = panel.current?.querySelectorAll<HTMLButtonElement>('button');
+      if (!buttons?.length) return;
+      const first = buttons[0], last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', keyboard);
+    return () => { document.body.style.overflow = overflow; document.removeEventListener('keydown', keyboard); previous?.focus(); };
+  }, [onClose]);
   return (
     <div className="mobile-more-backdrop" onClick={onClose}>
-      <section className="mobile-more" onClick={(e) => e.stopPropagation()}><header><strong>Więcej</strong><button onClick={onClose}>✕</button></header>{items.map(([target, icon]) => <button key={target} className={page === target ? 'active' : ''} onClick={() => goTo(target)}><span><AppNavIcon name={icon} /></span>{target}</button>)}<button className="logout-mobile" onClick={onLogout}><span>↪</span>Wyloguj</button></section>
+      <section ref={panel} id="family-more-menu" role="dialog" aria-modal="true" aria-labelledby="family-more-title" className="mobile-more family-menu" onClick={(e) => e.stopPropagation()}>
+        <div className="more-menu-handle" aria-hidden="true" />
+        <header><div className="more-brand-heading"><img src="/nasza-rodzina-logo.svg" alt="" /><div><strong id="family-more-title">Dom i bliscy</strong><p>Wszystko dla Twojej rodziny</p></div></div><button type="button" aria-label="Zamknij menu" onClick={onClose}><svg width="20" height="20" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
+        <div className="more-menu-grid">{items.map(([target, description]) => <button type="button" aria-label={target} aria-current={page === target ? 'page' : undefined} data-menu-page={target} key={target} className={`more-menu-tile ${page === target ? 'active' : ''}`} onClick={() => goTo(target)}><span className="nav-icon"><AppIcon page={target} size={24} /></span><span className="more-tile-copy"><strong>{target}</strong><small>{description}</small></span></button>)}</div>
+        <button type="button" className="logout-mobile" onClick={onLogout}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M9 4H4v16h5M14 8l4 4-4 4M8 12h12"/></svg>Wyloguj</button>
+      </section>
     </div>
   );
 }
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Nie znaleziono elementu #root.');
-createRoot(root).render(<React.StrictMode><App /></React.StrictMode>);
+registerPwa();
+createRoot(root).render(<React.StrictMode><ErrorBoundary><App /></ErrorBoundary></React.StrictMode>);

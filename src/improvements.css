@@ -1,0 +1,19 @@
+.family-notice { position:fixed; z-index:1000; left:50%; bottom:calc(90px + env(safe-area-inset-bottom)); transform:translateX(-50%); width:min(560px,calc(100% - 28px)); display:flex; align-items:center; gap:16px; border:1px solid #c2d3e4; border-radius:16px; padding:14px 18px; background:#fff; color:#153a63; box-shadow:0 12px 40px #14335533; font-size:15px; }
+.family-notice.error { border-color:#edb1b1; background:#fff4f4; color:#9d2222; }
+.family-notice button { border:0; background:transparent; color:inherit; min-height:44px; min-width:44px; }
+.connection-banner { position:sticky; top:0; padding:10px; background:#fff2c3; color:#6b4a00; text-align:center; z-index:900; }
+.access-card { width:min(580px,100%); }
+.access-card button { margin-top:16px; }
+.login-options { display:flex; justify-content:space-between; gap:12px; margin-top:12px; }
+.login-options button { background:transparent; border:0; color:#245b8b; padding:8px 0; font-size:14px; }
+.health-manager { margin-top:24px; background:var(--card); border:1px solid var(--line); border-radius:18px; padding:18px; }
+.health-manager header { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.health-record-actions { display:flex; gap:6px; flex-wrap:wrap; }
+.health-record-actions button { min-height:40px; padding:8px 12px; border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--text); }
+.health-type-filter { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }
+.health-type-filter button { padding:10px 14px; background:var(--card); border:1px solid var(--line); border-radius:12px; color:var(--text); }
+.health-type-filter button.active { background:#1461aa; color:#fff; }
+.health-manager .module-row { flex-wrap:wrap; }
+.data-tools { display:flex; flex-wrap:wrap; gap:12px; }
+.data-tools button { min-height:44px; }
+button:disabled { cursor:wait; opacity:.65; }

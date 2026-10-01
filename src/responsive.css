@@ -1,0 +1,2494 @@
+/*
+ * Shared responsive layer. Keep the existing visual language, while allowing
+ * content to grow instead of squeezing whole modules into one screen.
+ */
+:root {
+  --app-sidebar-width: 216px;
+  --app-page-gap: 16px;
+  --app-mobile-nav-height: 68px;
+}
+
+html,
+body,
+#root {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}
+
+html {
+  scroll-padding-top: 80px;
+  scrollbar-gutter: stable;
+}
+
+body {
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+button,
+input,
+select,
+textarea,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  touch-action: manipulation;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid #1685ff;
+  outline-offset: 3px;
+}
+
+input,
+select,
+textarea {
+  max-width: 100%;
+  font-size: 16px;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+.app-shell {
+  height: auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: visible;
+}
+
+.sidebar {
+  width: var(--app-sidebar-width);
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  padding: 18px 12px max(14px, env(safe-area-inset-bottom));
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.sidebar-brand,
+.sidebar-nav,
+.sidebar-bottom-art {
+  flex-shrink: 0;
+}
+
+.sidebar-brand {
+  min-height: 80px;
+  gap: 12px;
+}
+
+.brand-mark {
+  width: 42px;
+  height: 42px;
+}
+
+.brand-copy strong {
+  font-size: 20px;
+  line-height: 1.08;
+}
+
+.brand-copy small,
+.sidebar-bottom-art small {
+  font-size: 11px;
+}
+
+.sidebar-bottom-art strong {
+  font-size: 12px;
+}
+
+.sidebar-nav {
+  gap: 5px;
+}
+
+.nav-button {
+  min-height: 46px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.nav-button .nav-label {
+  width: auto;
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.main-area {
+  width: calc(100% - var(--app-sidebar-width));
+  margin-left: var(--app-sidebar-width);
+  height: auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: visible;
+}
+
+.top-header {
+  height: auto;
+  min-height: 64px;
+  padding: 8px clamp(16px, 2vw, 28px);
+  gap: 12px;
+  background: var(--nr-panel);
+}
+
+.top-header > div:first-child,
+.header-user,
+.header-user-text {
+  min-width: 0;
+}
+
+.top-header > div:first-child strong {
+  font-size: 17px;
+}
+
+.top-header > div:first-child small,
+.header-user-text small {
+  font-size: 11px;
+}
+
+.header-user-text strong {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.header-user > button {
+  min-height: 44px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.page-content,
+.main-area > .page-content:not(.start-dashboard-page),
+.main-area > .start-dashboard-page {
+  height: auto;
+  min-height: 0;
+  max-width: 1660px;
+  padding: 24px clamp(16px, 2vw, 32px) 40px;
+  overflow: visible;
+}
+
+.page-header,
+.compact-header {
+  min-height: 64px;
+  margin-bottom: 18px;
+  gap: 16px;
+}
+
+.page-header h1 {
+  font-size: clamp(25px, 2.4vw, 34px);
+  line-height: 1.15;
+}
+
+.page-header small {
+  font-size: 12px;
+}
+
+.page-header p {
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: normal;
+  overflow: visible;
+}
+
+.module-title-icon {
+  width: 44px;
+  height: 44px;
+  flex-basis: 44px;
+}
+
+.primary-button,
+.secondary-button,
+.danger-button {
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 11px;
+  font-size: 14px;
+  white-space: normal;
+}
+
+.app-card,
+.focus-card,
+.health-card,
+.school-day-card,
+.school-mini-card,
+.family-status-card,
+.family-hub-card,
+.settings-section,
+.points-panel,
+.quick-task-section,
+.quick-note-card,
+.quick-products-card {
+  min-width: 0;
+  max-height: none;
+  padding: 16px;
+  border-radius: 17px;
+  overflow: visible;
+}
+
+.today-person-card {
+  max-height: none;
+  min-height: 132px;
+  padding: 13px;
+  border-radius: 15px;
+  overflow: visible;
+}
+
+.health-card,
+.school-day-card,
+.school-mini-card,
+.family-status-card,
+.family-hub-card {
+  min-height: 150px;
+}
+
+.focus-card {
+  min-height: 180px;
+}
+
+.focus-list,
+.task-list,
+.shopping-list,
+.quick-products-grid {
+  max-height: none;
+  padding-right: 0;
+  overflow: visible;
+}
+
+.focus-main strong,
+.row-main strong,
+.health-list-row strong,
+.timeline-health-row strong,
+.school-mini-row strong,
+.family-hub-row strong,
+.family-status-card > div:nth-child(2) strong,
+.settings-toggle-row strong,
+.integration-row strong {
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.focus-main strong,
+.focus-main small,
+.row-main strong,
+.row-main small {
+  white-space: normal;
+  overflow: visible;
+}
+
+.focus-main small,
+.focus-meta,
+.row-main small,
+.health-list-row small,
+.timeline-health-row small,
+.school-mini-row small,
+.family-hub-row small,
+.family-status-card > div:nth-child(2) small,
+.family-status-card > div:nth-child(2) p,
+.settings-section > header small,
+.settings-profile small,
+.integration-row div small,
+.settings-footnote,
+.permission-summary p,
+.settings-info-list span,
+.whats-new-v130 ul,
+.about-version small,
+.points-panel > header small,
+.quick-task-section > header small,
+.quick-note-card header small,
+.quick-products-card header small,
+.shopping-list-title small,
+.health-card > header > small {
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.focus-card > header strong,
+.health-card header strong,
+.school-day-card header strong,
+.school-mini-card header strong,
+.family-hub-card header strong,
+.settings-section > header strong,
+.quick-task-section > header strong,
+.quick-note-card header strong,
+.quick-products-card header strong {
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.focus-card > header,
+.health-card > header,
+.school-mini-card > header,
+.school-day-card > header,
+.family-hub-card > header,
+.quick-products-card > header {
+  min-height: 44px;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.focus-card > header button,
+.health-card > header button,
+.school-mini-card > header button,
+.school-day-card > header button,
+.family-hub-card > header button,
+.student-school-header button,
+.family-status-card > button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--nr-soft);
+  color: #2874bf;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.family-empty,
+.health-empty,
+.school-empty,
+.focus-empty,
+.empty-state {
+  font-size: 14px;
+}
+
+.focus-row {
+  min-height: 56px;
+  gap: 10px;
+  padding: 9px;
+}
+
+.focus-title-icon {
+  width: 30px;
+  height: 30px;
+  font-size: 16px;
+}
+
+.focus-check {
+  width: 24px;
+  height: 24px;
+}
+
+.date-badge {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+}
+
+.date-badge b {
+  font-size: 18px;
+}
+
+.date-badge small {
+  font-size: 10px;
+}
+
+.health-list-row,
+.timeline-health-row,
+.school-mini-row,
+.family-hub-row,
+.lesson-row,
+.grade-row,
+.contact-row,
+.document-row {
+  min-height: 54px;
+  gap: 10px;
+  padding: 10px 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.health-icon-tile,
+.subject-icon {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  font-size: 19px;
+}
+
+.health-date-tile {
+  min-width: 48px;
+  padding: 7px;
+  font-size: 11px;
+}
+
+.health-person-switch,
+.school-student-tabs,
+.family-hub-strip,
+.person-filters,
+.shopping-category-chips,
+.specialty-chips {
+  max-width: 100%;
+  gap: 7px;
+  padding: 3px 1px 9px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+.health-person-switch button,
+.school-student-tabs button,
+.family-hub-strip button,
+.person-filters button,
+.shopping-category-chips button,
+.specialty-chips button,
+.task-filters button {
+  min-height: 44px;
+  padding: 9px 12px;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.health-profile-avatar,
+.student-avatar,
+.family-hub-avatar,
+.family-profile-avatar {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  font-size: 22px;
+}
+
+.family-profile-avatar.large {
+  width: 72px;
+  height: 72px;
+  flex-basis: 72px;
+  font-size: 32px;
+}
+
+.health-profile-bar,
+.student-school-header,
+.family-profile-hero {
+  padding: 16px;
+  margin-bottom: 14px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.student-school-header > div:nth-child(2) {
+  min-width: 0;
+  flex: 1;
+}
+
+.student-school-header h2 {
+  font-size: 22px;
+}
+
+.student-school-header p,
+.family-profile-copy span,
+.family-hub-strip button small {
+  font-size: 12px;
+}
+
+.family-profile-actions button {
+  min-height: 44px;
+  font-size: 13px;
+}
+
+.health-dashboard-grid,
+.family-overview-grid,
+.settings-dashboard {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--app-page-gap);
+}
+
+.school-overview {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--app-page-gap);
+}
+
+.student-school-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.student-school-grid .school-day-card {
+  grid-column: 1 / -1;
+}
+
+.lesson-row {
+  grid-template-columns: 48px 38px minmax(0, 1fr) auto;
+}
+
+.lesson-row small {
+  display: block;
+  color: var(--nr-muted);
+  font-size: 12px;
+}
+
+.lesson-row button {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.school-role-info {
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-radius: 11px;
+  background: var(--nr-soft);
+  font-size: 13px;
+}
+
+.school-role-info span {
+  white-space: normal;
+  overflow: visible;
+}
+
+.vulcan-note {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  margin-top: 16px;
+  text-align: left;
+  flex-wrap: wrap;
+}
+
+.vulcan-note > div {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.vulcan-note h3 {
+  font-size: 16px;
+}
+
+.vulcan-note p {
+  font-size: 13px;
+}
+
+.family-hub-columns,
+.family-hub-columns.three {
+  gap: var(--app-page-gap);
+  margin-top: 16px;
+}
+
+.settings-section > header {
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.settings-section > header > span {
+  width: 38px;
+  height: 38px;
+  flex-basis: 38px;
+  font-size: 20px;
+}
+
+.settings-toggle-row,
+.integration-row {
+  min-height: 54px;
+  padding: 10px 0;
+  gap: 10px;
+}
+
+.settings-toggle-row > span,
+.integration-row > span {
+  width: 32px;
+  height: 32px;
+  font-size: 16px;
+}
+
+.toggle-on,
+.toggle-off,
+.setting-badge,
+.version-pill,
+.parent-role,
+.child-role {
+  min-width: 42px;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.settings-info-list {
+  gap: 8px;
+}
+
+.settings-info-list span {
+  padding: 10px;
+}
+
+.theme-choice.big button {
+  min-height: 58px !important;
+  padding: 10px !important;
+}
+
+.theme-choice.big b {
+  font-size: 14px !important;
+}
+
+.theme-choice.big small {
+  font-size: 11px !important;
+}
+
+.about-version img {
+  width: 44px;
+  height: 44px;
+}
+
+/* Home: readable people and cards at every width. */
+.start-top-row {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.7fr);
+  gap: var(--app-page-gap);
+  margin-bottom: 16px;
+}
+
+.family-quick-strip {
+  min-height: 116px;
+  padding: 10px;
+  gap: 6px;
+  border-radius: 17px;
+}
+
+.quick-avatar {
+  width: 54px;
+  height: 54px;
+  font-size: 26px;
+}
+
+.quick-person {
+  gap: 4px;
+}
+
+.quick-person strong {
+  font-size: 12px;
+}
+
+.quick-person small {
+  font-size: 10px;
+}
+
+.online-dot {
+  top: 47px;
+  left: calc(50% + 16px);
+  width: 11px;
+  height: 11px;
+}
+
+.start-weather {
+  min-width: 0;
+  min-height: 116px;
+  padding: 14px;
+  gap: 12px;
+  border-radius: 17px;
+}
+
+.weather-icon {
+  font-size: 36px;
+}
+
+.start-weather strong {
+  font-size: 13px;
+}
+
+.start-weather b {
+  font-size: 30px;
+}
+
+.start-weather small,
+.weather-date strong,
+.weather-date small,
+.weather-details {
+  font-size: 11px;
+}
+
+.weather-side {
+  min-width: 0;
+  gap: 10px;
+  grid-template-columns: 1fr;
+}
+
+.weather-date {
+  min-width: 0;
+}
+
+.weather-details {
+  text-align: left;
+}
+
+.start-welcome-banner {
+  min-height: 144px;
+  padding: 20px 24px 20px 49%;
+  margin-bottom: 16px;
+  border-radius: 17px;
+}
+
+.start-welcome-copy {
+  width: 100%;
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #102f5b;
+}
+
+html[data-theme="dark"] .start-welcome-copy {
+  background: rgba(13, 34, 66, 0.94);
+  color: #f6f8ff;
+}
+
+.start-welcome-copy h1 {
+  font-size: clamp(25px, 2.4vw, 36px);
+  line-height: 1.12;
+}
+
+.start-welcome-copy p {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.family-free-banner {
+  min-height: 88px;
+  padding: 16px;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.free-family-icon {
+  width: 44px;
+  height: 44px;
+  flex-basis: 44px;
+  font-size: 24px;
+}
+
+.family-free-banner small {
+  font-size: 10px;
+}
+
+.family-free-banner strong {
+  font-size: 19px;
+}
+
+.family-free-banner p,
+.family-free-banner > button {
+  font-size: 13px;
+}
+
+.family-free-banner > button {
+  min-height: 44px;
+  padding: 10px 14px;
+}
+
+.today-people-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.mini-avatar {
+  width: 34px;
+  height: 34px;
+  flex-basis: 34px;
+  font-size: 18px;
+}
+
+.today-person-card header strong {
+  font-size: 13px;
+}
+
+.today-person-card header small,
+.mini-timeline time {
+  font-size: 11px;
+}
+
+.mini-timeline {
+  gap: 6px;
+}
+
+.mini-timeline > div {
+  padding: 7px;
+}
+
+.mini-timeline span,
+.mini-timeline p {
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.home-focus-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--app-page-gap);
+  margin-bottom: 18px;
+}
+
+.home-modules-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.home-module-tile {
+  min-height: 108px;
+  padding: 14px;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.tile-icon {
+  width: 44px;
+  height: 44px;
+}
+
+.tile-copy strong {
+  font-size: 17px;
+}
+
+.tile-copy small {
+  font-size: 12px;
+}
+
+/* Calendar scrolls horizontally inside the board, never the whole page. */
+.calendar-toolbar {
+  padding: 12px;
+  gap: 10px;
+}
+
+.calendar-navigation {
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.calendar-navigation strong {
+  font-size: 15px;
+}
+
+.calendar-navigation button,
+.calendar-plus,
+.hour-add,
+.month-day-top button {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.view-switch button {
+  min-height: 42px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.calendar-week-layout {
+  grid-template-columns: minmax(0, 1fr) 250px;
+  gap: var(--app-page-gap);
+}
+
+.calendar-week-card,
+.calendar-month-card {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.calendar-week-grid {
+  width: 100%;
+  min-width: 770px;
+  grid-template-columns: repeat(7, minmax(110px, 1fr));
+}
+
+.calendar-week-day {
+  min-height: 360px;
+  padding: 10px 7px;
+}
+
+.calendar-day-heading {
+  min-height: 64px;
+}
+
+.calendar-day-heading span {
+  font-size: 12px;
+}
+
+.calendar-day-heading strong {
+  width: 34px;
+  height: 34px;
+  font-size: 16px;
+}
+
+.calendar-event {
+  min-height: 48px;
+  padding: 8px;
+}
+
+.calendar-event strong {
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.calendar-event span {
+  font-size: 11px;
+}
+
+.calendar-day-events > .muted {
+  font-size: 11px;
+}
+
+.calendar-side p {
+  font-size: 13px;
+}
+
+.calendar-side h3 {
+  font-size: 16px;
+}
+
+.month-grid {
+  min-width: 770px;
+}
+
+.month-day {
+  min-height: 128px;
+  padding: 8px;
+}
+
+.all-day-row > span,
+.hour-row > span {
+  font-size: 12px;
+}
+
+.hours-list {
+  max-height: min(65dvh, 640px);
+  overscroll-behavior-y: contain;
+}
+
+.calendar-lower-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.calendar-lower-card,
+.connected-calendars-footer {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--nr-line);
+  border-radius: 17px;
+  background: var(--nr-panel-2);
+}
+
+.calendar-lower-card header,
+.connected-calendars-footer header {
+  margin-bottom: 12px;
+}
+
+.calendar-lower-card > button:not(.secondary-button) {
+  width: 100%;
+  min-height: 54px;
+  padding: 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-bottom: 1px solid var(--nr-line);
+  background: transparent;
+  color: var(--nr-text);
+  text-align: left;
+}
+
+.calendar-lower-card > button > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.calendar-lower-card > button strong,
+.calendar-lower-card > button small,
+.connected-calendars-footer small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.calendar-lower-card small,
+.connected-calendars-footer small {
+  color: var(--nr-muted);
+  font-size: 12px;
+}
+
+.calendar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.calendar-actions button {
+  min-height: 44px;
+  padding: 10px;
+  border: 1px solid var(--nr-line);
+  border-radius: 10px;
+  background: var(--nr-soft);
+  color: var(--nr-text);
+  font-size: 13px;
+}
+
+.connected-calendars-footer {
+  margin-top: 16px;
+}
+
+.connected-calendars-footer > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  font-size: 13px;
+  color: var(--nr-muted);
+}
+
+/* Tasks and shopping: buttons keep their size; rows wrap when needed. */
+.task-summary-v130 {
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.task-summary-v130 button {
+  min-height: 80px;
+  padding: 13px;
+}
+
+.task-summary-v130 strong {
+  font-size: 25px;
+}
+
+.task-summary-v130 span {
+  font-size: 12px;
+}
+
+.quick-task-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.quick-task-grid button {
+  min-height: 64px;
+  padding: 10px;
+  gap: 10px;
+}
+
+.quick-task-grid button span {
+  font-size: 24px;
+}
+
+.quick-task-grid button strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.tasks-main-grid {
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.tasks-main-grid > section {
+  min-width: 0;
+}
+
+.task-row-v130 {
+  grid-template-columns: 44px minmax(0, 1fr) auto auto auto auto;
+  gap: 8px;
+  min-height: 70px;
+}
+
+.check-button,
+.icon-button,
+.icon-danger {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.task-points,
+.priority-badge {
+  font-size: 11px;
+  padding: 6px 8px;
+}
+
+.approval-actions {
+  flex-wrap: wrap;
+}
+
+.approval-actions button {
+  min-height: 44px;
+  padding: 8px;
+  font-size: 12px;
+}
+
+.points-panel > article {
+  padding: 12px 0;
+}
+
+.points-avatar {
+  width: 36px;
+  height: 36px;
+}
+
+.reward-box {
+  padding: 12px;
+  font-size: 13px;
+}
+
+.reward-progress em {
+  font-size: 11px;
+}
+
+.shopping-bar {
+  grid-template-columns: minmax(180px, 1fr) 78px 92px minmax(130px, 180px) auto;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.shopping-bar input,
+.shopping-bar select {
+  min-height: 46px;
+  font-size: 16px;
+}
+
+.quick-note-card,
+.quick-products-card {
+  margin-bottom: 16px;
+}
+
+.quick-note-card > div {
+  margin-top: 12px;
+}
+
+.quick-note-card textarea {
+  width: 100%;
+  min-height: 80px;
+  max-height: none;
+  padding: 12px;
+  border: 1px solid var(--nr-line);
+  border-radius: 11px;
+  background: var(--nr-soft);
+  color: var(--nr-text);
+  resize: vertical;
+}
+
+.quick-products-card > header > button {
+  min-height: 44px;
+  font-size: 13px;
+}
+
+.quick-products-grid {
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 10px;
+  max-height: min(60dvh, 540px);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+  padding: 2px 4px 4px 2px;
+}
+
+.quick-product-tile {
+  min-height: 118px;
+  padding: 10px 6px;
+  grid-template-rows: 52px auto;
+  gap: 8px;
+}
+
+.quick-product-visual {
+  width: 52px;
+  height: 52px;
+  font-size: 30px;
+}
+
+.quick-product-visual img {
+  width: 46px !important;
+  height: 46px !important;
+  max-width: 46px !important;
+  max-height: 46px !important;
+}
+
+.quick-product-tile > strong {
+  max-width: 100%;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.quick-product-tile > em {
+  font-size: 10px;
+}
+
+.quick-product-tile > i {
+  font-size: 18px;
+}
+
+.shopping-row {
+  min-height: 64px;
+  grid-template-columns: 44px minmax(0, 1fr) auto auto 44px;
+  gap: 10px;
+}
+
+.shopping-row > strong {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.shopping-row > span,
+.shopping-row > small {
+  font-size: 12px;
+}
+
+/* Chat keeps message scrolling local, with a reachable composer. */
+.page-content.chat-page {
+  display: block;
+}
+
+.chat-layout-v130 {
+  height: max(480px, calc(100dvh - 200px));
+  min-height: 0;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 16px;
+}
+
+.chat-conversations {
+  min-width: 0;
+  min-height: 0;
+  max-height: none;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.chat-mode-tabs button {
+  min-height: 44px;
+  font-size: 13px;
+}
+
+.conversation-row {
+  min-height: 66px;
+  padding: 10px 8px;
+}
+
+.conversation-row strong {
+  font-size: 14px;
+}
+
+.conversation-row small,
+.conversation-row time {
+  font-size: 11px;
+}
+
+.chat-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chat-room-header,
+.reply-banner,
+.chat-compose {
+  flex: 0 0 auto;
+}
+
+.chat-room-header {
+  min-height: 72px;
+  padding: 12px;
+}
+
+.chat-room-header > div {
+  min-width: 0;
+}
+
+.chat-room-header strong {
+  font-size: 16px;
+}
+
+.chat-room-header small {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.chat-messages {
+  flex: 1 1 auto;
+  min-height: 120px;
+  padding: 16px;
+  overscroll-behavior-y: contain;
+}
+
+.chat-message-line {
+  min-width: 0;
+}
+
+.chat-bubble {
+  min-width: 0;
+  padding: 12px 42px 12px 12px;
+}
+
+.chat-bubble strong {
+  font-size: 12px;
+}
+
+.chat-bubble p {
+  font-size: 15px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.chat-bubble small {
+  font-size: 11px;
+}
+
+.message-more {
+  width: 44px;
+  height: 44px;
+  font-size: 20px;
+}
+
+.reply-banner {
+  padding: 10px;
+  font-size: 12px;
+}
+
+.reply-banner > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.reply-banner > button {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.chat-compose {
+  padding: 12px;
+  gap: 8px;
+}
+
+.chat-compose input {
+  height: 46px;
+  font-size: 16px;
+}
+
+.chat-compose > button:not(.primary-button) {
+  width: 44px;
+  min-height: 44px;
+}
+
+/* Dialogs fit the dynamic viewport, including low screens and keyboards. */
+.modal-backdrop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.modal-card,
+.modal-card.wide {
+  flex: 0 1 auto;
+  background: var(--nr-panel-2);
+  color: var(--nr-text);
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
+}
+
+.modal-header {
+  padding: 16px 20px;
+}
+
+.modal-header > div {
+  min-width: 0;
+}
+
+.modal-header h2 {
+  font-size: 22px;
+  color: var(--nr-text);
+  overflow-wrap: anywhere;
+}
+
+.modal-header > button {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+}
+
+.modal-body {
+  min-height: 0;
+  padding: 20px;
+  overscroll-behavior-y: contain;
+  scroll-padding: 20px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.form-grid {
+  gap: 16px;
+}
+
+.field > span {
+  font-size: 13px;
+}
+
+.field input,
+.field select {
+  height: 46px;
+  font-size: 16px;
+}
+
+.field textarea {
+  font-size: 16px;
+}
+
+.checkbox-field {
+  min-height: 44px;
+  font-size: 14px;
+}
+
+.checkbox-field input {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+}
+
+.form-actions,
+.modal-actions {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.detail-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.quick-product-menu-backdrop {
+  overflow-y: auto;
+}
+
+.quick-product-menu,
+.message-menu {
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
+}
+
+.quick-product-menu button,
+.message-menu button {
+  min-height: 44px;
+  font-size: 14px;
+}
+
+/* Editable health records and feedback added in the current release. */
+.health-v130 .health-manager {
+  min-width: 0;
+  padding: 18px;
+  background: var(--nr-panel-2);
+  border-color: var(--nr-line);
+  color: var(--nr-text);
+}
+
+.health-v130 .health-manager > header {
+  font-size: 16px;
+}
+
+.health-v130 .health-manager .module-row {
+  margin-top: 10px;
+  gap: 12px;
+  background: var(--nr-panel-2);
+  border-color: var(--nr-line);
+}
+
+.health-manager .row-main {
+  flex: 1 1 240px;
+}
+
+.health-manager .row-main strong,
+.health-manager .row-main p {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--nr-text);
+}
+
+.health-manager .row-main p {
+  margin: 5px 0 0;
+  font-size: 14px;
+}
+
+.health-manager .health-record-actions button,
+.health-manager .health-type-filter button {
+  min-height: 44px;
+  font-size: 13px;
+  background: var(--nr-soft);
+  border-color: var(--nr-line);
+  color: var(--nr-text);
+}
+
+.health-manager .health-type-filter button.active {
+  background: #1461aa;
+  color: white;
+}
+
+.health-person-switch button {
+  display: grid;
+  justify-items: center;
+  min-width: 104px;
+  gap: 4px;
+}
+
+.health-person-switch button small {
+  font-size: 11px;
+}
+
+.health-avatar {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--nr-soft);
+  font-size: 22px;
+}
+
+.health-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+.health-status {
+  max-width: 92px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--nr-soft);
+  color: var(--nr-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.health-list-row .medicine-confirm,
+.health-list-row .confirmed-button,
+.document-row > button,
+.contact-row > a {
+  min-height: 44px;
+  padding: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--nr-line);
+  border-radius: 10px;
+  background: var(--nr-soft);
+  color: var(--nr-text);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.health-list-row .confirmed-button {
+  background: #e5f7eb;
+  color: #257746;
+}
+
+.contact-row > a {
+  max-width: 140px;
+  overflow-wrap: anywhere;
+}
+
+#root .family-notice {
+  min-width: 0;
+  max-height: 40dvh;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+
+#root .family-notice > span {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+#root .family-notice > button {
+  flex: 0 0 44px;
+}
+
+/* Login content may scroll when the software keyboard reduces the viewport. */
+.login-v11 {
+  overflow: visible;
+}
+
+.login-v11-form input {
+  height: 50px;
+  font-size: 16px;
+}
+
+.login-v11-form > button {
+  min-height: 50px;
+}
+
+.login-v11-features small {
+  white-space: normal;
+  font-size: 10px;
+  text-align: center;
+}
+
+@media (max-width: 1350px) {
+  .calendar-week-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .calendar-side {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .today-people-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .start-top-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .start-weather {
+    min-height: 100px;
+  }
+
+  .weather-side {
+    grid-template-columns: auto auto;
+  }
+
+  .health-dashboard-grid,
+  .family-overview-grid,
+  .settings-dashboard,
+  .home-focus-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .school-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home-modules-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tasks-main-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .points-panel {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .points-panel > header,
+  .points-panel > .reward-box {
+    grid-column: 1 / -1;
+  }
+
+  .shopping-bar {
+    grid-template-columns: minmax(0, 1fr) 78px 92px;
+  }
+
+  .shopping-bar select:nth-of-type(2) {
+    grid-column: 1 / 3;
+  }
+
+  .shopping-bar .primary-button {
+    grid-column: 3;
+  }
+}
+
+@media (min-width: 701px) and (max-width: 1024px) {
+  :root {
+    --app-sidebar-width: 184px;
+    --app-page-gap: 14px;
+  }
+
+  .sidebar {
+    padding-left: 9px;
+    padding-right: 9px;
+  }
+
+  .nav-button {
+    padding-left: 9px;
+    padding-right: 9px;
+    font-size: 13px;
+  }
+
+  .brand-copy strong {
+    font-size: 18px;
+  }
+
+  .brand-mark {
+    width: 36px;
+    height: 36px;
+  }
+
+  .page-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .page-header > .primary-button,
+  .page-header > .secondary-button {
+    margin-left: 54px;
+  }
+
+  .today-people-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .calendar-lower-grid,
+  .family-hub-columns.three {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .quick-task-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .task-summary-v130 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .task-row-v130 {
+    grid-template-columns: 44px minmax(0, 1fr) auto auto;
+  }
+
+  .task-row-v130 .priority-badge,
+  .task-row-v130 .task-points,
+  .task-row-v130 .approval-actions {
+    grid-column: 2;
+  }
+
+  .chat-layout-v130 {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+
+  .chat-compose {
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+  }
+
+  .chat-compose .primary-button {
+    grid-column: 1 / -1;
+  }
+
+  .settings-dashboard,
+  .health-dashboard-grid,
+  .family-hub-columns,
+  .home-focus-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1024px) {
+  .start-welcome-copy {
+    padding: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.85);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.92);
+    color: #102f5b;
+    box-shadow: 0 4px 18px rgba(16, 47, 91, 0.08);
+  }
+
+  .start-welcome-copy p {
+    font-size: 14px;
+  }
+
+  html[data-theme="dark"] .start-welcome-copy {
+    background: rgba(13, 34, 66, 0.94);
+    border-color: rgba(157, 176, 208, 0.25);
+    color: #f6f8ff;
+  }
+}
+
+/* A landscape phone uses the same navigation as a portrait phone. */
+@media (max-width: 700px), (max-width: 1024px) and (max-height: 500px) {
+  :root {
+    --app-sidebar-width: 0px;
+    --app-page-gap: 14px;
+  }
+
+  html {
+    scrollbar-gutter: auto;
+    scroll-padding-top: 70px;
+    scroll-padding-bottom: calc(var(--app-mobile-nav-height) + env(safe-area-inset-bottom) + 16px);
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .main-area {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .top-header {
+    min-height: 58px;
+    padding: max(7px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 7px max(14px, env(safe-area-inset-left));
+  }
+
+  .top-header > div:first-child small,
+  .header-user-text {
+    display: none;
+  }
+
+  .top-header > div:first-child strong {
+    font-size: 16px;
+  }
+
+  .page-content,
+  .main-area > .page-content:not(.start-dashboard-page),
+  .main-area > .start-dashboard-page {
+    height: auto !important;
+    padding: 18px max(14px, env(safe-area-inset-right)) calc(var(--app-mobile-nav-height) + env(safe-area-inset-bottom) + 24px) max(14px, env(safe-area-inset-left));
+    overflow: visible !important;
+  }
+
+  .page-header,
+  .compact-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .page-header h1 {
+    font-size: 27px;
+  }
+
+  .page-header p {
+    font-size: 13px;
+  }
+
+  .page-header > .primary-button,
+  .page-header > .secondary-button {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .module-heading {
+    gap: 10px;
+  }
+
+  .module-title-icon {
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
+  }
+
+  .mobile-navigation {
+    display: grid;
+    height: calc(var(--app-mobile-nav-height) + env(safe-area-inset-bottom));
+    padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    background: var(--nr-panel);
+    border-color: var(--nr-line);
+  }
+
+  .mobile-navigation button {
+    min-height: 56px;
+    gap: 4px;
+    color: var(--nr-muted);
+  }
+
+  .mobile-navigation button span {
+    font-size: 22px;
+  }
+
+  .mobile-navigation button small {
+    font-size: 11px;
+  }
+
+  .mobile-more-backdrop {
+    display: flex;
+    overflow-y: auto;
+    padding-top: max(12px, env(safe-area-inset-top));
+  }
+
+  .mobile-more {
+    max-height: calc(100dvh - max(12px, env(safe-area-inset-top)));
+    padding: 16px max(16px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    background: var(--nr-panel-2);
+    color: var(--nr-text);
+  }
+
+  .mobile-more header button,
+  .mobile-more > button {
+    min-height: 48px;
+    font-size: 15px;
+    background: var(--nr-soft);
+    color: var(--nr-text);
+  }
+
+  .mobile-more header button {
+    min-width: 44px;
+  }
+
+  .start-top-row,
+  .home-focus-grid,
+  .health-dashboard-grid,
+  .school-overview,
+  .family-overview-grid,
+  .family-hub-columns,
+  .family-hub-columns.three,
+  .settings-dashboard,
+  .calendar-side,
+  .calendar-lower-grid,
+  .tasks-main-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .family-quick-strip {
+    min-height: 110px;
+    padding: 9px 6px;
+    gap: 2px;
+  }
+
+  .quick-avatar {
+    width: 44px;
+    height: 44px;
+    font-size: 22px;
+  }
+
+  .quick-person strong {
+    font-size: 11px;
+  }
+
+  .quick-person small {
+    font-size: 11px;
+  }
+
+  .online-dot {
+    top: 36px;
+    left: calc(50% + 11px);
+  }
+
+  .start-weather {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    padding: 14px;
+    gap: 10px;
+  }
+
+  .weather-side {
+    grid-template-columns: minmax(0, 1fr);
+    padding-left: 10px;
+    gap: 5px;
+  }
+
+  .weather-date small,
+  .weather-details {
+    white-space: normal;
+  }
+
+  .start-welcome-banner {
+    min-height: 170px;
+    padding: 22px 16px 22px 40%;
+    background-position: 35% center;
+  }
+
+  .start-welcome-copy h1 {
+    font-size: 25px;
+  }
+
+  .start-welcome-copy p {
+    font-size: 14px;
+  }
+
+  .family-free-banner {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .family-free-banner > button {
+    width: 100%;
+  }
+
+  .today-people-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .today-person-card {
+    padding: 11px;
+  }
+
+  .today-person-card > header {
+    gap: 7px;
+  }
+
+  .home-modules-grid,
+  .quick-task-grid,
+  .task-summary-v130 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .home-module-tile {
+    min-height: 120px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .tile-copy strong {
+    font-size: 16px;
+  }
+
+  .tile-copy small {
+    font-size: 11px;
+  }
+
+  .calendar-navigation {
+    width: 100%;
+    flex-basis: 100%;
+  }
+
+  .view-switch {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-left: 0;
+  }
+
+  .view-switch button {
+    flex: 1;
+    padding: 8px 7px;
+    font-size: 12px;
+  }
+
+  .calendar-toolbar > .secondary-button {
+    font-size: 12px;
+    padding: 9px;
+  }
+
+  .all-day-row,
+  .hour-row {
+    grid-template-columns: 60px minmax(0, 1fr);
+  }
+
+  .calendar-day-title {
+    flex-wrap: wrap;
+  }
+
+  .calendar-day-title .secondary-button {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .quick-task-grid button {
+    flex-direction: column;
+    align-items: flex-start;
+    min-height: 88px;
+    gap: 6px;
+  }
+
+  .task-row-v130 {
+    grid-template-columns: 44px minmax(0, 1fr) 44px 44px;
+    padding: 12px 10px;
+    gap: 7px;
+  }
+
+  .task-row-v130 .row-main {
+    grid-column: 2 / -1;
+    grid-row: 1;
+  }
+
+  .task-row-v130 .check-button {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .task-row-v130 .task-points,
+  .task-row-v130 .priority-badge,
+  .task-row-v130 .approval-actions {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .task-row-v130 .icon-button,
+  .task-row-v130 .icon-danger {
+    justify-self: end;
+  }
+
+  .points-panel {
+    display: block;
+  }
+
+  .shopping-bar {
+    grid-template-columns: minmax(0, 1fr) 90px;
+  }
+
+  .shopping-bar .shopping-product {
+    grid-column: 1 / -1;
+  }
+
+  .shopping-bar select:nth-of-type(2),
+  .shopping-bar .primary-button {
+    grid-column: 1 / -1;
+  }
+
+  .quick-note-card > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .quick-products-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .quick-products-card > header {
+    align-items: flex-start;
+  }
+
+  .shopping-row {
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+    padding: 10px;
+    gap: 8px;
+  }
+
+  .shopping-row > strong {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .shopping-row > span {
+    grid-column: 2;
+    font-size: 12px;
+  }
+
+  .shopping-row > .icon-button,
+  .shopping-row > .icon-danger {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .shopping-row > small {
+    display: none;
+  }
+
+  .chat-layout-v130 {
+    height: auto;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .chat-conversations {
+    max-height: 230px;
+    padding: 10px;
+  }
+
+  .private-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .private-list .conversation-row {
+    grid-template-columns: 32px minmax(0, 1fr);
+    padding: 8px 4px;
+    gap: 6px;
+  }
+
+  .private-list .conversation-row time {
+    grid-column: 2;
+  }
+
+  .chat-shell {
+    height: max(380px, calc(100dvh - 285px - env(safe-area-inset-bottom)));
+  }
+
+  .chat-messages {
+    padding: 12px;
+  }
+
+  .chat-bubble {
+    max-width: 86%;
+    padding-right: 38px;
+  }
+
+  .chat-compose {
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+    padding: 10px;
+    gap: 7px;
+  }
+
+  .chat-compose .primary-button {
+    grid-column: 1 / -1;
+  }
+
+  .student-school-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .student-school-header h2 {
+    font-size: 20px;
+  }
+
+  .health-v130 .health-manager {
+    padding: 14px;
+  }
+
+  .health-manager .health-record-actions {
+    width: 100%;
+  }
+
+  .health-manager .health-record-actions button {
+    flex: 1;
+  }
+
+  .health-list-row {
+    flex-wrap: wrap;
+  }
+
+  .health-list-row > div {
+    flex: 1 1 120px;
+  }
+
+  .health-list-row .health-status,
+  .health-list-row .medicine-confirm,
+  .health-list-row .confirmed-button {
+    margin-left: auto;
+  }
+
+  .contact-row,
+  .document-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .contact-row > a,
+  .document-row > button {
+    grid-column: 2;
+    max-width: 100%;
+    justify-self: start;
+  }
+
+  #root .family-notice {
+    bottom: calc(var(--app-mobile-nav-height) + env(safe-area-inset-bottom) + 12px);
+    padding: 12px;
+    gap: 10px;
+    font-size: 14px;
+  }
+
+  .family-profile-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modal-backdrop {
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    align-items: center;
+  }
+
+  .modal-card,
+  .modal-card.wide {
+    max-height: calc(100dvh - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom)));
+    border-radius: 18px;
+  }
+
+  .modal-header {
+    padding: 13px 14px;
+    gap: 10px;
+  }
+
+  .modal-header h2 {
+    font-size: 21px;
+  }
+
+  .modal-body {
+    padding: 16px 14px;
+  }
+
+  .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .field-wide {
+    grid-column: 1 / -1;
+  }
+
+  .form-actions > button,
+  .modal-actions > button {
+    flex: 1 1 120px;
+  }
+
+  .detail-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .login-v11-panel {
+    min-width: 0;
+  }
+
+  html:has(.chat-compose input:focus) .mobile-navigation {
+    display: none;
+  }
+}
+
+@media (max-width: 359px) {
+  .today-people-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .start-weather {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .weather-side {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-left: 0;
+    border-top: 1px solid rgba(69, 105, 170, 0.22);
+    padding: 8px 0 0;
+  }
+
+  .start-welcome-banner {
+    padding-left: 34%;
+  }
+
+  .start-welcome-copy h1 {
+    font-size: 23px;
+  }
+
+  .quick-product-tile > strong {
+    font-size: 11px;
+  }
+
+  .mobile-navigation button small {
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 1024px) and (max-height: 500px) and (orientation: landscape) {
+  :root {
+    --app-mobile-nav-height: 54px;
+  }
+
+  .mobile-navigation {
+    position: fixed;
+    z-index: 80;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .mobile-navigation button {
+    min-height: 48px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    border: 0;
+    padding: 6px;
+    background: transparent;
+  }
+
+  .mobile-navigation button.active {
+    color: #1685ff;
+  }
+
+  .mobile-navigation button span {
+    font-size: 19px;
+  }
+
+  .mobile-more-backdrop {
+    position: fixed;
+    z-index: 120;
+    inset: 0;
+    align-items: flex-end;
+    background: rgba(11, 34, 55, 0.35);
+  }
+
+  .mobile-more {
+    width: 100%;
+    display: grid;
+    gap: 7px;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .mobile-more header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .mobile-more > button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--nr-soft);
+    color: var(--nr-text);
+    text-align: left;
+  }
+
+  .today-people-grid,
+  .home-focus-grid,
+  .health-dashboard-grid,
+  .family-overview-grid,
+  .settings-dashboard,
+  .calendar-lower-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .page-header {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .page-header > .primary-button,
+  .page-header > .secondary-button {
+    width: auto;
+    flex: 0 0 auto;
+  }
+
+  .chat-layout-v130 {
+    grid-template-columns: 210px minmax(0, 1fr);
+  }
+
+  .chat-conversations {
+    max-height: 420px;
+  }
+
+  .private-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chat-shell {
+    height: 420px;
+  }
+
+  .login-v11 {
+    padding: 84px max(20px, env(safe-area-inset-right)) 24px max(20px, env(safe-area-inset-left));
+  }
+
+  .login-v11-panel {
+    width: min(440px, 58vw);
+    padding: 22px;
+  }
+}
+
+@media (orientation: portrait) {
+  .login-v11 {
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

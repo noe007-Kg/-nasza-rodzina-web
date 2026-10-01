@@ -1,0 +1,695 @@
+/*
+ * Family palette from the supplied reference: lavender and rose surroundings,
+ * white surfaces, navy text, and fuchsia actions. This layer changes colours
+ * only; responsive geometry, photographs and member avatars stay in place.
+ */
+:root,
+html[data-theme="light"] {
+  --brand-page: #fff8fc;
+  --brand-page-background: linear-gradient(135deg, #f4efff 0%, #fff8fc 48%, #fff0f6 100%);
+  --brand-ink: #242650;
+  --brand-muted: #6e6583;
+  --brand-card: #ffffff;
+  --brand-line: #e9dff0;
+  --brand-soft: #f7f2fc;
+  --brand-input: #fffcfe;
+  --brand-primary: #c72796;
+  --brand-primary-end: #cf2d78;
+  --brand-primary-gradient: linear-gradient(110deg, #c72796, #cf2d78);
+  --brand-primary-hover: linear-gradient(110deg, #b51d86, #bd246b);
+  --brand-primary-soft: #fff0f8;
+  --brand-primary-ink: #a32175;
+  --brand-violet: #7954b4;
+  --brand-violet-soft: #f1eafa;
+  --brand-turquoise: #177d87;
+  --brand-turquoise-soft: #e9f7f8;
+  --brand-blue: #386fb0;
+  --brand-blue-soft: #edf4fd;
+  --brand-green: #2b7853;
+  --brand-green-soft: #edf8f1;
+  --brand-amber: #976113;
+  --brand-amber-soft: #fff7e8;
+  --brand-danger: #b12c4d;
+  --brand-danger-soft: #fff0f3;
+  --brand-shadow: 0 7px 24px rgba(87, 55, 126, .055);
+  --brand-action-shadow: 0 5px 15px rgba(199, 39, 150, .16);
+  --brand-focus-ring: rgba(121, 84, 180, .18);
+
+  /* Both generations of components use the same palette. */
+  --nr-page: var(--brand-page);
+  --nr-panel: var(--brand-card);
+  --nr-panel-2: var(--brand-card);
+  --nr-text: var(--brand-ink);
+  --nr-muted: var(--brand-muted);
+  --nr-line: var(--brand-line);
+  --nr-soft: var(--brand-soft);
+  --nr-shadow: var(--brand-shadow);
+  --blue: var(--brand-primary);
+  --navy: var(--brand-ink);
+  --navy-2: var(--brand-ink);
+  --text: var(--brand-ink);
+  --muted: var(--brand-muted);
+  --line: var(--brand-line);
+  --bg: var(--brand-page);
+  --card: var(--brand-card);
+  --shadow: var(--brand-shadow);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --brand-page: #171426;
+  --brand-page-background: linear-gradient(135deg, #211a36, #171426 55%, #281929);
+  --brand-ink: #f4effb;
+  --brand-muted: #beb1cf;
+  --brand-card: #241f36;
+  --brand-line: #44384f;
+  --brand-soft: #31273f;
+  --brand-input: #2b243b;
+  --brand-primary-soft: #43263d;
+  --brand-primary-ink: #f4b1dc;
+  --brand-violet: #c4a3ee;
+  --brand-violet-soft: #37294e;
+  --brand-turquoise: #8bd4da;
+  --brand-turquoise-soft: #203b41;
+  --brand-blue: #a4c6f2;
+  --brand-blue-soft: #273750;
+  --brand-green: #a7dab9;
+  --brand-green-soft: #243d31;
+  --brand-amber: #f1cb8a;
+  --brand-amber-soft: #463724;
+  --brand-danger: #ffc0d0;
+  --brand-danger-soft: #472435;
+  --brand-shadow: 0 7px 24px rgba(0, 0, 0, .16);
+  --brand-action-shadow: 0 5px 15px rgba(0, 0, 0, .2);
+  --brand-focus-ring: rgba(196, 163, 238, .22);
+
+  --nr-page: var(--brand-page);
+  --nr-panel: var(--brand-card);
+  --nr-panel-2: var(--brand-card);
+  --nr-text: var(--brand-ink);
+  --nr-muted: var(--brand-muted);
+  --nr-line: var(--brand-line);
+  --nr-soft: var(--brand-soft);
+  --nr-shadow: var(--brand-shadow);
+  --blue: var(--brand-primary);
+  --navy: var(--brand-ink);
+  --navy-2: var(--brand-ink);
+  --text: var(--brand-ink);
+  --muted: var(--brand-muted);
+  --line: var(--brand-line);
+  --bg: var(--brand-page);
+  --card: var(--brand-card);
+  --shadow: var(--brand-shadow);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+}
+
+html:root body {
+  background: var(--brand-page-background);
+  color: var(--brand-ink);
+}
+
+html:root :is(.app-shell, .main-area, .page-content) {
+  background: transparent;
+  color: var(--brand-ink);
+}
+
+html:root .top-header {
+  background: var(--brand-card);
+  border-color: var(--brand-line);
+  box-shadow: 0 2px 12px rgba(87, 55, 126, .035);
+}
+
+html:root :is(
+  .loading-card, .welcome-card, .app-card, .family-quick-strip,
+  .today-person-card, .focus-card, .task-summary-v130 button,
+  .quick-task-section, .points-panel, .quick-note-card,
+  .quick-products-card, .shopping-group, .module-row,
+  .chat-conversations, .chat-shell, .health-card,
+  .health-profile-bar, .health-manager, .student-school-header,
+  .school-day-card, .school-mini-card, .school-panel,
+  .family-status-card, .family-hub-card, .family-profile-hero,
+  .settings-section, .calendar-toolbar, .calendar-week-card,
+  .calendar-month-card, .calendar-day-view, .calendar-side section,
+  .calendar-lower-card, .connected-calendars-footer,
+  .modal-card, .school-dialog, .school-dialog > header
+) {
+  background: var(--brand-card);
+  border-color: var(--brand-line);
+  color: var(--brand-ink);
+  box-shadow: var(--brand-shadow);
+}
+
+html:root :is(
+  .page-header h1, .app-card h3, .welcome-card h1,
+  .top-header strong, .header-user-text strong,
+  .modal-header h2, .detail-row strong, .row-main strong,
+  .shopping-group strong, .health-card strong,
+  .family-profile-card h3, .family-free-banner strong,
+  .family-profile-copy h2, .student-school-header h2,
+  .school-heading h1, .school-panel h2, .school-plan-heading h3,
+  .school-dialog h2, .school-vulcan-card h2, .school-empty-state strong
+) {
+  color: var(--brand-ink);
+}
+
+html:root :is(
+  .page-header p, .page-header small, .app-card p,
+  .top-header small, .header-user-text small, .modal-header small,
+  .detail-row > span, .row-main small, .focus-main small,
+  .focus-meta, .mini-timeline time, .mini-timeline p,
+  .school-eyebrow, .school-heading p, .school-panel-heading p,
+  .school-access-note, .school-entry-copy > span,
+  .school-detail dt, .school-form-hint, .school-import-intro,
+  .settings-footnote, .permission-summary p, .whats-new-v130 ul,
+  .about-version small, .integration-row small,
+  .family-empty, .health-empty, .school-empty, .focus-empty,
+  .empty-state, .muted
+) {
+  color: var(--brand-muted);
+}
+
+html:root :is(.primary-button, .login-v11-form > button) {
+  background: var(--brand-primary-gradient);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: var(--brand-action-shadow);
+}
+
+html:root :is(.primary-button, .login-v11-form > button):hover:not(:disabled) {
+  background: var(--brand-primary-hover);
+}
+
+html:root .secondary-button {
+  background: var(--brand-violet-soft);
+  color: var(--brand-ink);
+  box-shadow: none;
+}
+
+html:root .secondary-button:hover:not(:disabled) {
+  background: var(--brand-primary-soft);
+  color: var(--brand-primary-ink);
+}
+
+html:root :is(.danger-button, .icon-danger) {
+  background: var(--brand-danger-soft);
+  color: var(--brand-danger);
+}
+
+html:root :is(
+  .header-user > button, .icon-button, .calendar-navigation button,
+  .calendar-day-title .secondary-button, .view-switch,
+  .chat-mode-tabs, .chat-compose > button:not(.primary-button),
+  .reply-banner, .school-close, .school-arrow-button,
+  .family-profile-actions button, .settings-info-list span,
+  .parent-role, .child-role, .school-calendar-option,
+  .school-entry-type, .health-status, .theme-choice button
+) {
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  border-color: var(--brand-line);
+}
+
+html:root :is(
+  .field input, .field select, .field textarea,
+  .shopping-bar input, .shopping-bar select,
+  .chat-compose input, .quick-note-card textarea,
+  .login-v11-form input, .school-date-select input
+) {
+  background: var(--brand-input);
+  border-color: var(--brand-line);
+  color: var(--brand-ink);
+}
+
+html:root :is(.field > span, .checkbox-field, .login-v11-form label) {
+  color: var(--brand-ink);
+}
+
+html:root :is(input, textarea)::placeholder {
+  color: var(--brand-muted);
+  opacity: 1;
+}
+
+html:root :is(
+  .field input, .field select, .field textarea,
+  .shopping-bar input, .shopping-bar select,
+  .chat-compose input, .quick-note-card textarea,
+  .login-v11-form input, .school-date-select input
+):focus {
+  border-color: var(--brand-violet);
+  box-shadow: 0 0 0 3px var(--brand-focus-ring);
+}
+
+html:root input[type="checkbox"] {
+  accent-color: var(--brand-primary);
+}
+
+html:root :is(.primary-button, .secondary-button, .danger-button):focus-visible,
+html:root :is(.school-entry, .school-module button, .school-dialog button):focus-visible {
+  outline-color: var(--brand-violet);
+}
+
+/* Soft selection colours remain legible beside the main pink action. */
+html:root :is(
+  .person-filters button, .health-person-switch button,
+  .school-student-tabs button, .family-hub-strip button,
+  .shopping-category-chips button, .specialty-chips button,
+  .task-filters button, .school-students button, .school-filters button
+) {
+  background: var(--brand-card);
+  border-color: var(--brand-line);
+  color: var(--brand-muted);
+}
+
+html:root :is(
+  .person-filters button.active, .health-person-switch button.active,
+  .school-student-tabs button.active, .family-hub-strip button.active,
+  .shopping-category-chips button.active, .specialty-chips button.active,
+  .school-students button.active, .school-filters button.active,
+  .view-switch button.active, .theme-choice button.active,
+  .chat-mode-tabs button.active
+) {
+  background: var(--brand-primary-soft);
+  border-color: var(--brand-primary);
+  color: var(--brand-primary-ink);
+}
+
+html:root .task-filters button.active,
+html:root .health-manager .health-type-filter button.active,
+html:root .school-week-days button.active {
+  background: var(--brand-primary-gradient);
+  border-color: var(--brand-primary);
+  color: #fff;
+  box-shadow: var(--brand-action-shadow);
+}
+
+html:root .school-week-days button.active > strong {
+  color: #fff;
+}
+
+html:root :is(
+  .module-title-icon, .focus-title-icon.purple, .focus-title-icon.pink,
+  .health-icon-tile, .subject-icon, .school-entry-icon,
+  .settings-section > header > span, .settings-toggle-row > span,
+  .integration-row > span
+) {
+  background: var(--brand-violet-soft);
+  color: var(--brand-violet);
+  border-color: var(--brand-line);
+}
+
+html:root .focus-title-icon.orange {
+  background: var(--brand-amber-soft);
+  color: var(--brand-amber);
+}
+
+html:root :is(
+  .focus-card > header button, .health-card > header button,
+  .school-mini-card > header button, .school-day-card > header button,
+  .family-hub-card > header button, .student-school-header button,
+  .family-status-card > button, .calendar-actions button,
+  .calendar-lower-card .secondary-button,
+  .school-template-links a, .login-options button
+) {
+  background: var(--brand-soft);
+  color: var(--brand-violet);
+  border-color: var(--brand-line);
+}
+
+/* Home keeps all images and avatars supplied by the family. */
+html:root .start-weather {
+  background: var(--brand-card);
+  color: var(--brand-ink);
+  border-color: var(--brand-line);
+  box-shadow: var(--brand-shadow);
+}
+
+html:root .start-weather :is(.weather-main small, .weather-date small, .weather-details) {
+  color: var(--brand-muted);
+}
+
+html:root .family-free-banner {
+  background: linear-gradient(115deg, var(--brand-violet-soft), var(--brand-primary-soft));
+  border-color: var(--brand-line);
+  box-shadow: var(--brand-shadow);
+}
+
+html:root .family-free-banner small {
+  color: var(--brand-violet);
+}
+
+html:root .family-free-banner > button {
+  background: var(--brand-card);
+  color: var(--brand-primary-ink);
+  border-color: var(--brand-line);
+}
+
+html:root .family-free-banner p {
+  color: var(--brand-muted);
+}
+
+html:root .start-welcome-copy h1 span {
+  color: var(--brand-primary-ink);
+}
+
+html:root .start-welcome-copy {
+  background: var(--brand-card);
+  border-color: var(--brand-line);
+  color: var(--brand-ink);
+}
+
+html:root :is(.focus-row, .mini-timeline > div, .quick-task-grid button) {
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  border-color: var(--brand-line);
+}
+
+html:root .focus-row:hover {
+  background: var(--brand-primary-soft);
+  border-color: var(--brand-primary);
+}
+
+html:root .date-badge {
+  background: var(--brand-primary-soft);
+  color: var(--brand-primary-ink);
+}
+
+html:root .home-module-tile {
+  background: var(--brand-card);
+  border-color: var(--brand-line);
+  color: var(--brand-ink);
+  box-shadow: var(--brand-shadow);
+}
+
+html:root .tile-copy small {
+  color: var(--brand-muted);
+}
+
+html:root .tile-grip {
+  color: var(--brand-muted);
+}
+
+html:root .tile-icon {
+  background: var(--brand-violet-soft);
+  color: var(--brand-violet);
+}
+
+html:root :is(.tile-blue, .tile-cyan) .tile-icon {
+  background: var(--brand-turquoise-soft);
+  color: var(--brand-turquoise);
+}
+
+html:root .tile-green .tile-icon {
+  background: var(--brand-green-soft);
+  color: var(--brand-green);
+}
+
+html:root :is(.tile-orange, .tile-yellow) .tile-icon {
+  background: var(--brand-amber-soft);
+  color: var(--brand-amber);
+}
+
+html:root .tile-pink .tile-icon {
+  background: var(--brand-primary-soft);
+  color: var(--brand-primary-ink);
+}
+
+/* Shopping, lists and points. */
+html:root :is(.shopping-group > header, .quick-product-tile, .quick-product-menu button, .message-menu button) {
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  border-color: var(--brand-line);
+}
+
+html:root .quick-product-tile > strong {
+  color: var(--brand-ink);
+}
+
+html:root .quick-product-tile:hover {
+  background: var(--brand-primary-soft);
+  border-color: var(--brand-primary);
+}
+
+html:root .quick-products-card > header > button {
+  background: var(--brand-violet-soft);
+  color: var(--brand-violet);
+  border-color: var(--brand-line);
+}
+
+html:root :is(.shopping-row, .task-row-v130, .health-list-row, .family-hub-row, .school-mini-row) {
+  border-color: var(--brand-line);
+}
+
+html:root .check-button {
+  background: var(--brand-card);
+  border-color: var(--brand-line);
+  color: var(--brand-primary-ink);
+}
+
+html:root :is(.task-points, .reward-box) {
+  background: var(--brand-amber-soft);
+  color: var(--brand-amber);
+}
+
+html:root .reward-progress {
+  background: var(--brand-soft);
+}
+
+html:root .reward-progress span {
+  background: var(--brand-primary-gradient);
+}
+
+html:root .priority-badge.high {
+  background: var(--brand-danger-soft);
+  color: var(--brand-danger);
+}
+
+html:root .priority-badge.normal {
+  background: var(--brand-violet-soft);
+  color: var(--brand-violet);
+}
+
+html:root .priority-badge.low {
+  background: var(--brand-turquoise-soft);
+  color: var(--brand-turquoise);
+}
+
+/* Chat: navy received messages and white text on the family gradient. */
+html:root .chat-messages {
+  background: linear-gradient(180deg, var(--brand-soft), var(--brand-card));
+}
+
+html:root :is(.chat-compose, .chat-room-header) {
+  background: var(--brand-card);
+  border-color: var(--brand-line);
+}
+
+html:root .chat-bubble {
+  background: var(--brand-card);
+  color: var(--brand-ink);
+  border-color: var(--brand-line);
+}
+
+html:root .chat-bubble.mine {
+  background: var(--brand-primary-gradient);
+  color: #fff;
+}
+
+html:root .chat-bubble:not(.mine) :is(strong, small) {
+  color: var(--brand-muted);
+}
+
+html:root .chat-bubble.mine :is(strong, p, small) {
+  color: #fff;
+}
+
+html:root .chat-bubble small {
+  opacity: 1;
+}
+
+html:root .conversation-row.active,
+html:root .conversation-row:hover {
+  background: var(--brand-violet-soft);
+  color: var(--brand-ink);
+}
+
+html:root :is(.quick-product-menu, .message-menu) {
+  background: var(--brand-card);
+  color: var(--brand-ink);
+}
+
+html:root :is(.quick-product-menu button.danger, .message-menu button.danger) {
+  color: var(--brand-danger);
+}
+
+/* Calendar keeps a distinct, pastel colour for each family member. */
+html:root :is(.month-head, .month-day.dim) {
+  background: var(--brand-soft);
+}
+
+html:root :is(.month-day.today, .calendar-week-day.today) {
+  background: var(--brand-primary-soft);
+}
+
+html:root :is(.calendar-day-heading, .month-day-top button, .month-head div) {
+  color: var(--brand-muted);
+}
+
+html:root :is(.calendar-day-heading strong, .calendar-navigation strong, .calendar-side h3) {
+  color: var(--brand-ink);
+}
+
+html:root .calendar-week-day.today .calendar-day-heading strong,
+html:root .month-day.today .month-day-top button:first-child {
+  background: var(--brand-primary-gradient);
+  color: #fff;
+}
+
+html:root :is(.calendar-plus, .hour-add) {
+  background: var(--brand-card);
+  border-color: var(--brand-line);
+  color: var(--brand-violet);
+}
+
+html:root .calendar-event {
+  background: var(--event-surface, var(--brand-soft));
+  color: var(--brand-ink);
+}
+
+html:root .calendar-event span {
+  opacity: 1;
+}
+
+.event-family { --event-surface: var(--brand-violet-soft); }
+.event-sebastian { --event-surface: var(--brand-blue-soft); }
+.event-dominika { --event-surface: var(--brand-primary-soft); }
+.event-pawel { --event-surface: var(--brand-green-soft); }
+.event-nikodem { --event-surface: var(--brand-amber-soft); }
+.event-layla { --event-surface: var(--brand-turquoise-soft); }
+
+html:root :is(.big-date, .school-type-lesson) {
+  background: var(--brand-violet-soft);
+  color: var(--brand-violet);
+}
+
+/* School, health and settings share the same white card surfaces. */
+html:root :is(.school-entry, .school-week-days button, .school-vulcan-card, .school-calendar-option) {
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
+  color: var(--brand-ink);
+}
+
+html:root .school-entry:hover {
+  background: var(--brand-primary-soft);
+  border-color: var(--brand-primary);
+}
+
+html:root .school-week-days button.active {
+  background: var(--brand-primary-gradient);
+  border-color: var(--brand-primary);
+  color: #fff;
+}
+
+html:root .school-type-activity,
+html:root .school-type-grade {
+  background: var(--brand-amber-soft);
+}
+
+html:root .school-type-message {
+  background: var(--brand-violet-soft);
+}
+
+html:root .school-type-homework {
+  background: var(--brand-green-soft);
+}
+
+html:root :is(.school-import-preview th, .health-date-tile) {
+  background: var(--brand-soft);
+  color: var(--brand-muted);
+}
+
+html:root :is(.document-row > button, .contact-row > a, .health-list-row .medicine-confirm) {
+  background: var(--brand-violet-soft);
+  color: var(--brand-violet);
+  border-color: var(--brand-line);
+}
+
+html:root :is(.health-list-row .confirmed-button, .toggle-on, .setting-badge.green, .school-notice) {
+  background: var(--brand-green-soft);
+  color: var(--brand-green);
+  border-color: var(--brand-green);
+}
+
+html:root .toggle-off {
+  background: var(--brand-soft);
+  color: var(--brand-muted);
+}
+
+html:root :is(.settings-toggle-row, .integration-row, .document-row, .contact-row, .lesson-row, .grade-row, .detail-row) {
+  border-color: var(--brand-line);
+}
+
+/* Login retains the supplied family photo and logo. */
+html:root .login-v11-panel {
+  background: var(--brand-card);
+  border-color: var(--brand-line);
+  box-shadow: 0 20px 60px rgba(54, 26, 89, .19);
+}
+
+html:root .login-v11-title h1 {
+  color: var(--brand-ink);
+}
+
+html:root :is(.login-v11-title p, .login-v11-divider, .login-v11-features small) {
+  color: var(--brand-muted);
+}
+
+html:root .login-v11-divider::before,
+html:root .login-v11-divider::after {
+  background: var(--brand-line);
+}
+
+html:root .loading-screen {
+  background: var(--brand-page-background);
+}
+
+html:root .loading-card h2 {
+  color: var(--brand-ink);
+}
+
+html:root .loading-card p {
+  color: var(--brand-muted);
+}
+
+html:root :is(.info-banner, .school-role-info, .vulcan-note) {
+  background: var(--brand-violet-soft);
+  color: var(--brand-violet);
+  border-color: var(--brand-line);
+}
+
+html:root .family-notice {
+  background: var(--brand-card);
+  color: var(--brand-ink);
+  border-color: var(--brand-line);
+}
+
+html:root :is(.family-notice.error, .login-error, .school-error) {
+  background: var(--brand-danger-soft);
+  color: var(--brand-danger);
+  border-color: var(--brand-danger);
+}
+
+html:root .connection-banner {
+  background: var(--brand-amber-soft);
+  color: var(--brand-amber);
+}
+
+@media (max-width: 1024px) {
+  html:root .start-welcome-copy {
+    background: var(--brand-card);
+    border-color: var(--brand-line);
+    color: var(--brand-ink);
+  }
+}
