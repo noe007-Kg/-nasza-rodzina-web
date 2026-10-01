@@ -1,0 +1,7 @@
+[
+  { "name": "Sebastian", "personKey": "Sebastian", "role": "parent", "email": "sebastian@example.com", "active": true, "canLogin": true },
+  { "name": "Dominika", "personKey": "Dominika", "role": "parent", "email": "dominika@example.com", "active": true, "canLogin": true },
+  { "name": "Paweł", "personKey": "Paweł", "role": "child", "email": "pawel@example.com", "active": true, "canLogin": true },
+  { "name": "Nikodem", "personKey": "Nikodem", "role": "child", "email": "nikodem@example.com", "active": true, "canLogin": true },
+  { "name": "Layla", "personKey": "Layla", "role": "child", "active": true, "canLogin": false, "uid": "profile-layla" }
+]
