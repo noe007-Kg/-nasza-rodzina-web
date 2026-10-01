@@ -1,0 +1,8 @@
+FIREBASE STORAGE
+
+Aktualna konfiguracja Storage i reguł dostępu: docs/FIREBASE.md.
+Instrukcja wdrożenia całej aplikacji: docs/WDROZENIE.md.
+
+Storage jest potrzebne do wysyłania zdjęć i dokumentów.
+Nie ustawiaj publicznych reguł allow read, write: if true.
+Sama podmiana strony nie publikuje reguł Firebase.

@@ -1,0 +1,36 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function profile() { return firestore.get(/databases/(default)/documents/members/$(request.auth.uid)).data; }
+    function member() {
+      return signedIn() && firestore.exists(/databases/(default)/documents/members/$(request.auth.uid))
+        && profile().active == true && profile().canLogin == true
+        && profile().role in ['parent', 'child'];
+    }
+    function parent() { return member() && profile().role == 'parent'; }
+    function ownPerson() { return profile().personKey; }
+    function image() { return request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp', 'image/gif']; }
+    function medicalFile() { return image() || request.resource.contentType == 'application/pdf'; }
+    function healthAccess(visibility, person) {
+      return member() && person in ['family', 'Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla']
+        && (visibility == 'parents' && parent()
+          || visibility == 'shared' && (parent() || person == ownPerson() || person == 'family'));
+    }
+    match /quick-products/{uid}/{filename} {
+      allow read: if member();
+      allow create, update: if member() && uid == request.auth.uid
+        && request.resource.size <= 5 * 1024 * 1024 && image();
+      allow delete: if member() && (uid == request.auth.uid || parent());
+    }
+    match /health/{visibility}/{person}/{uid}/{filename} {
+      allow read: if healthAccess(visibility, person);
+      allow create, update: if healthAccess(visibility, person) && uid == request.auth.uid
+        && (parent() || person == ownPerson())
+        && request.resource.size <= 10 * 1024 * 1024 && medicalFile();
+      allow delete: if parent();
+    }
+    // Old health/person/file paths are denied. Migrate them before deploying.
+    match /{path=**} { allow read, write: if false; }
+  }
+}

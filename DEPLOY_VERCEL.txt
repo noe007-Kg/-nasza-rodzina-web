@@ -1,33 +1,7 @@
-NASZA RODZINA v1.3.1 — ETAP: KALENDARZ
-BEZPIECZNE WDROŻENIE NA VERCEL
+WDROŻENIE VERCEL
 
-Najbezpieczniej nie podmieniaj od razu działającej wersji na main.
+Aktualna instrukcja jest w docs/WDROZENIE.md, rozdział 3.
+Przed publikacją przygotuj konta i reguły Firebase według docs/FIREBASE.md.
 
-WARIANT ZALECANY — PREVIEW DEPLOYMENT
-1. Zrób kopię obecnego repozytorium / zapamiętaj ostatni działający commit.
-2. W GitHub utwórz nową gałąź: v1.3.1-kalendarz.
-3. Wgraj do tej gałęzi CAŁĄ zawartość folderu Nasza_Rodzina_v1.3.1_Kalendarz.
-4. Zachowaj strukturę:
-   index.html
-   package.json
-   tsconfig.json
-   tsconfig.app.json
-   src/
-   public/
-5. Zrób commit w gałęzi v1.3.1-kalendarz.
-6. Vercel powinien utworzyć osobny Preview Deployment — obecna strona produkcyjna pozostanie bez zmian.
-7. Sprawdź: logowanie, Kalendarz desktop/tablet, Kalendarz telefon, dodawanie/edycję/usuwanie wydarzeń, pozostałe zakładki.
-8. Dopiero po akceptacji połącz gałąź v1.3.1-kalendarz z main.
-
-Jeżeli Vercel poprosi o ustawienia:
-Framework Preset: Vite
-Build Command: npm run build
-Output Directory: dist
-Install Command: npm install
-
-Firebase pozostaje tym samym projektem co wcześniej.
-
-WAŻNE
-- Wersja 1.3.1 nie usuwa kolekcji ani danych Firestore.
-- Google Calendar / Apple iCloud / Outlook są w tym etapie przygotowane w interfejsie, ale prawdziwa dwukierunkowa synchronizacja wymaga osobnej konfiguracji OAuth/API.
-- Pasek synchronizacji w Kalendarzu pokazuje rzeczywisty stan połączenia przeglądarki oraz bieżącą synchronizację danych rodzinnego kalendarza z Firestore.
+Vite, Node.js 22.x, npm ci, npm run build, folder wynikowy dist.
+Do GitHub wgrywamy zawartość folderu projektu, nie cały ZIP.

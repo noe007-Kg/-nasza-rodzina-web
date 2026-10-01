@@ -1,23 +1,33 @@
-Nasza Rodzina 1.3.2
-- nowa zakładka Zadania w jasnym layoucie 1.3 Versa
-- kolorowe szybkie zadania z ikonkami
-- widoczne kafelki punktowe (+5 / +10 / +15)
-- panel nagród, statystyk i szybkiego dodawania
-- zachowany etapowy deployment bez naruszania v1.3.1
-
 NASZA RODZINA — CHANGELOG
 
-v1.3.1 — 30.09.2026 — VERSA / KALENDARZ
-- zatwierdzony jasny szablon Kalendarza,
-- wspólny styl ze stroną Start,
-- responsywny desktop/tablet/telefon,
-- tygodniowa siatka godzinowa 06:00–22:00,
-- mobilna agenda dnia,
-- mini-kalendarz i filtry członków rodziny,
-- pasek stanu synchronizacji Firestore / online,
-- widoczna sekcja zewnętrznych źródeł kalendarza,
-- bez fotografii w tle sidebara,
-- zachowane dotychczasowe dane i funkcje Firestore.
+v1.4.2 — 01.10.2026
+- Oryginalne logo w menu, nagłówku, logowaniu i ikonach PWA/przeglądarki.
+- Różowo-lawendowe tło, białe karty, granatowy tekst i różowe akcenty wg wzoru.
+- Spójne kolory formularzy, przycisków oraz wszystkich modułów, także dark mode.
+- 4/4 sprawdzenia logowania i responsywności Chromium/WebKit; build przechodzi.
+- Szczegóły: ZMIANY_1.4.2.md i STAN_PROJEKTU.md.
 
-v1.3.0 — 29.09.2026
-- pełna baza funkcjonalna aplikacji rodzinnej.
+v1.4.1 — 30.09.2026
+- Jaśniejsze menu boczne z grupami i kolorowymi ikonami SVG.
+- Zaokrąglony pasek telefonu z aktywną zakładką i kafelkami Więcej.
+- Dopasowanie do trybu ciemnego oraz obsługa klawiatury w menu.
+- Szczegóły: ZMIANY_1.4.1.md.
+
+v1.4.0 — 30.09.2026
+- Układ na telefonie, tablecie i komputerze w obu orientacjach.
+- Role i reguły Firebase, prywatne pliki oraz czat uczestników.
+- Poprawione serie kalendarza i zadania z historią oraz zatwierdzaniem.
+- Szkoła z pełnym organizerem i importem CSV/JSON.
+- PWA, dostępne formularze, komunikaty o błędach, instrukcja migracji.
+- Automatyczna synchronizacja eduVULCAN nie jest zaimplementowana.
+- Szczegóły: ZMIANY_1.4.0.md i RAPORT_TESTOW.md.
+
+v1.3.3 — 29.09.2026
+- Usunięto Tryb DEMO z logiki aplikacji.
+- Usunięto przełącznik DEMO z Ustawień.
+- Usunięto demonstracyjne karty i przykładowe dane.
+- Zachowano prawdziwe dane Firebase/Firestore i wszystkie funkcje v1.3.2.
+- Paczka przygotowana do wdrożenia produkcyjnego na Vercel.
+
+v1.3.2 — 29.09.2026
+- Visual Restore: granatowy sidebar i kompaktowy układ desktop/iPad.
