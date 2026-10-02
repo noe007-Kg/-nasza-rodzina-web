@@ -1,4 +1,5 @@
-import { EduServerError, requireParent } from './edu-auth.mjs';
+import { EduServerError } from './edu-auth.mjs';
+import { requireEduConnection } from './edu-access.mjs';
 
 const LIMIT = 16 * 1024;
 
@@ -29,7 +30,7 @@ export function expectFields(body, keys) {
 }
 
 /** Vercel Node handler. Error responses deliberately exclude upstream text and stacks. */
-export function createEduHandler(method, action, { authenticate = requireParent } = {}) {
+export function createEduHandler(method, action, { authenticate = requireEduConnection } = {}) {
   return async function handler(request, response) {
     response.setHeader('Cache-Control', 'no-store, private, max-age=0');
     response.setHeader('Content-Type', 'application/json; charset=utf-8');

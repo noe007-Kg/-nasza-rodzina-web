@@ -340,7 +340,8 @@ export function createEduProvider({ fetchImpl = (...args) => globalThis.fetch(..
       profiles: profiles.map(({ journalUrl: _secret, identityMethod: _method, ...profile }) => profile) };
   }
 
-  async function readProviderData(session, profileId) {
+  async function readProviderData(session, profileId, { includeMessages = true } = {}) {
+    if (typeof includeMessages !== 'boolean') throw failure('EDU_INVALID_REQUEST', 400);
     if (!isObject(session) || session.v !== 1 || !isObject(session.cookieJar) || !Array.isArray(session.profiles) || session.profiles.length > 30) throw failure('EDU_SESSION_INVALID', 401);
     const profile = session.profiles.find((entry) => entry.id === profileId);
     if (!profile) throw failure('EDU_INVALID_STUDENT', 400);
@@ -421,7 +422,10 @@ export function createEduProvider({ fetchImpl = (...args) => globalThis.fetch(..
     }
 
     let messagesApp; let messagesSucceeded = false;
-    if (!pupil.globalKeySkrzynka) report('Wiadomości: wybrany profil nie udostępnił identyfikatora swojej skrzynki.');
+    // A pupil's school identity does not prove ownership of a parent mailbox.
+    // Personal student scopes omit mail until provider role verification exists.
+    if (!includeMessages) report('Wiadomości z osobistego konta ucznia nie są jeszcze obsługiwane.');
+    else if (!pupil.globalKeySkrzynka) report('Wiadomości: wybrany profil nie udostępnił identyfikatora swojej skrzynki.');
     else if (clock() > io.deadline - 12000) report('Wiadomości: zabrakło czasu w tej synchronizacji; wcześniejsze dane pozostają zachowane.');
     else await scope(async () => {
       const messageLanding = await io.navigate(`https://wiadomosci.eduvulcan.pl/${journal.tenant}/App`, { headers: { Referer: journal.referer } });

@@ -138,6 +138,8 @@ test('browser users cannot forge eduVULCAN provenance or change imported school 
   await assertSucceeds(setDoc(doc(parentDb, 'schoolItems', 'manual'), manual));
   await assertFails(setDoc(doc(parentDb, 'schoolItems', 'forged'), { ...manual, source: 'eduvulcan', sourceRecordId: 'provider-1' }));
   await assertFails(updateDoc(doc(parentDb, 'schoolItems', 'manual'), { provider: 'eduvulcan' }));
+  await assertFails(updateDoc(doc(parentDb, 'schoolItems', 'manual'), { sourceConnectionId: 'family' }));
+  await assertFails(updateDoc(doc(parentDb, 'schoolItems', 'manual'), { sourceConnectionScope: 'family' }));
   await environment.withSecurityRulesDisabled(async (context) => setDoc(doc(context.firestore(), 'schoolItems', 'synced'), { ...manual, source: 'eduvulcan', provider: 'eduvulcan', sourceRecordId: 'provider-2' }));
   await assertSucceeds(getDoc(doc(parentDb, 'schoolItems', 'synced')));
   await assertSucceeds(getDoc(doc(childDb, 'schoolItems', 'synced')));
@@ -153,6 +155,30 @@ test('synchronized parent messages are readable only by parents and cannot be fo
   await assertFails(getDocs(collection(childDb, 'schoolParentMessages')));
   await assertFails(getDoc(doc(childDb, 'schoolParentMessages', 'synced')));
   await assertFails(setDoc(doc(parentDb, 'schoolParentMessages', 'forged'), message));
+});
+
+test('personal student messages are limited to their owner, with server-only identity bindings', async () => {
+  const message = { person: 'Paweł', type: 'message', title: 'Własna wiadomość ucznia', source: 'eduvulcan', sourceOwnerUid: 'child', sourceConnectionId: 'student_test' };
+  await environment.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'schoolStudentMessages', 'own'), message);
+    await setDoc(doc(db, 'schoolStudentMessages', 'same-person-other-uid'), { ...message, sourceOwnerUid: 'another-uid' });
+    await setDoc(doc(db, '_eduStudentBindings', 'Paweł'), { identity: { studentName: 'Uczeń testowy', schoolName: 'Szkoła testowa' } });
+    await setDoc(doc(db, '_eduConnections', 'family'), { envelope: { ciphertext: 'encrypted' } });
+  });
+  await assertSucceeds(getDoc(doc(childDb, 'schoolStudentMessages', 'own')));
+  await assertSucceeds(getDocs(query(collection(childDb, 'schoolStudentMessages'), where('sourceOwnerUid', '==', 'child'), where('person', '==', 'Paweł'))));
+  await assertFails(getDocs(collection(parentDb, 'schoolStudentMessages')));
+  await assertFails(getDoc(doc(parentDb, 'schoolStudentMessages', 'own')));
+  await assertFails(getDocs(collection(childDb, 'schoolStudentMessages')));
+  await assertFails(getDoc(doc(siblingDb, 'schoolStudentMessages', 'own')));
+  await assertFails(getDoc(doc(childDb, 'schoolStudentMessages', 'same-person-other-uid')));
+  for (const db of [parentDb, childDb, siblingDb]) {
+    await assertFails(setDoc(doc(db, 'schoolStudentMessages', 'forged'), message));
+    await assertFails(getDoc(doc(db, '_eduStudentBindings', 'Paweł')));
+    await assertFails(setDoc(doc(db, '_eduStudentBindings', 'Paweł'), { identity: { studentName: 'Inny uczeń', schoolName: 'Inna szkoła' } }));
+    await assertFails(getDoc(doc(db, '_eduConnections', 'family')));
+  }
 });
 
 test('storage protects private health documents, own shared documents, file types and old paths', async () => {

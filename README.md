@@ -2,7 +2,7 @@
 
 Prywatna aplikacja rodzinna działająca w przeglądarce. Jeden adres dla telefonu, tabletu i komputera, w pionie i w poziomie. Zawiera kalendarz, zadania, zakupy, wiadomości, sprawy szkolne i zdrowotne.
 
-To paczka projektu **1.5.0** do uruchomienia na Twoim hostingu. Rozpakowanie plików nie publikuje aplikacji. Konta i dane korzystają z Firebase: Authentication, Firestore i Storage. Nowe połączenie eduVULCAN wymaga dodatkowo funkcji serwerowych Vercel i prywatnej konfiguracji.
+To paczka projektu **1.5.1** do uruchomienia na Twoim hostingu. Rozpakowanie plików nie publikuje aplikacji. Konta i dane korzystają z Firebase: Authentication, Firestore i Storage. Wspólne połączenie eduVULCAN wymaga dodatkowo funkcji serwerowych Vercel i prywatnej konfiguracji. Aktualizacja z 1.5.0 nie wymaga nowych zmiennych środowiskowych; zachowaj istniejące klucze. Instrukcja: [AKTUALIZACJA_1.5.1.md](AKTUALIZACJA_1.5.1.md).
 
 ## Najprostsza droga dla Twojego projektu
 
@@ -33,7 +33,7 @@ Wymagany jest HTTPS. Skrót otwiera tę samą aplikację i dane. PWA przechowuje
 
 ## Szkoła i eduVULCAN
 
-Plan lekcji, oceny i informacje szkolne możesz prowadzić ręcznie albo importować z CSV/JSON. Wersja 1.5.0 dodaje backend i panel połączenia do konta rodzica w eduVULCAN, jawny wybór ucznia **SP4** oraz pobieranie tylko do odczytu. Odświeżanie uruchamia rodzic; nie ma harmonogramu pobierania w tle. Hasło nie jest zapisywane, a dostęp przez szyfrowaną sesję wygasa najpóźniej po 24 godzinach. Wygasły rekord jest usuwany przy sprawdzeniu stanu lub próbie wczytania sesji; nie ustawiono automatycznej polityki usuwania Firestore TTL.
+Plan lekcji, oceny i informacje szkolne możesz prowadzić ręcznie albo importować z CSV/JSON. Wersja 1.5.1 udostępnia wszystkim aktywnym rodzicom jedno wspólne połączenie do konta rodzica w eduVULCAN, jawny wybór ucznia **SP4** oraz pobieranie tylko do odczytu. Sebastian i Dominika mogą korzystać z połączenia aktywnego konta eduVULCAN Dominiki, z danymi Nikodema. Synchronizację uruchamia rodzic; nie ma harmonogramu pobierania w tle. Hasło nie jest zapisywane, a dostęp przez szyfrowaną sesję wygasa najpóźniej po 24 godzinach. Wygasły rekord jest usuwany przy sprawdzeniu stanu lub próbie wczytania sesji; nie ustawiono automatycznej polityki usuwania Firestore TTL.
 
 **Połączenie nie zostało sprawdzone na rzeczywistym koncie rodziny.** Konfiguracja Vercel i poprawny build nie dowodzą udanego logowania ani pełnego zakresu danych. Nie umieszczaj hasła w kodzie. Szczegóły wdrożenia, wyboru SP4 i formatu importu: [docs/VULCAN.md](docs/VULCAN.md).
 

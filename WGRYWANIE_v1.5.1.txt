@@ -1,0 +1,16 @@
+NASZA RODZINA 1.5.1 — CO WGRYWAĆ
+
+Instrukcja poprawki: AKTUALIZACJA_1.5.1.md. Pełne wdrożenie: START_TUTAJ.md.
+
+GitHub/Vercel: zawartość folderu projektu z api/, server/, package.json,
+package-lock.json i vercel.json. Bez node_modules, dist, .env.local,
+prywatnych kluczy Firebase Admin, loginów, haseł ani tokenów.
+Przygotowanie poprawki nie wykonuje git push ani publikacji na serwer.
+
+Opublikuj firestore.rules z tej paczki. storage.rules nie zmieniają się od 1.5.0.
+Nowe zmienne środowiskowe Vercel: ŻADNE. Zachowaj istniejące klucze i konfigurację.
+Po wdrożeniu połącz raz aktywne konto eduVULCAN Dominiki i wybierz Nikodema/SP4.
+Sebastian i Dominika z rolą parent korzystają z tej samej sesji oraz danych.
+
+Zwykły hosting i paczka STRONA uruchamiają organizer bez backendu eduVULCAN.
+Do integracji potrzebna jest pełna paczka PROJEKT, funkcje Vercel i sekrety serwerowe.

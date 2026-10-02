@@ -34,7 +34,7 @@ import SchoolModule from './SchoolModule';
 import { registerPwa } from './pwa';
 import { startOfDay, endOfDay, startOfWeek, addDays, addMonths, addYears, sameDay, formatDateInput, formatTimeInput, parseLocalDate, isRepeatType, repeatLabel, occurrenceAt, generateOccurrences } from './calendar-utils';
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 const APP_UPDATED = '01.10.2026';
 
 /* =========================================================

@@ -38,7 +38,7 @@ service cloud.firestore {
         && data.type in ['lesson', 'homework', 'test', 'grade', 'message', 'activity'];
     }
     function manualSchool(data) {
-      return !data.keys().hasAny(['source', 'provider', 'providerScopeId', 'sourceRecordId', 'sourceExternalId', 'sourceProfileId', 'sourceOwnerUid', 'sourceSyncId', 'syncedAt']);
+      return !data.keys().hasAny(['source', 'provider', 'providerScopeId', 'sourceRecordId', 'sourceExternalId', 'sourceProfileId', 'sourceOwnerUid', 'sourceConnectionId', 'sourceConnectionScope', 'sourceSyncId', 'syncedAt']);
     }
     function privateParticipant(data) {
       return request.auth.uid in data.participants;
@@ -144,7 +144,18 @@ service cloud.firestore {
       allow read: if parent();
       allow write: if false;
     }
+    match /schoolStudentMessages/{id} {
+      allow read: if member() && profile().role == 'child' && resource.data.sourceOwnerUid == request.auth.uid
+        && resource.data.person == ownPerson();
+      allow write: if false;
+    }
     match /_eduConnections/{uid} {
+      allow read, write: if false;
+    }
+    match /_eduStudentBindings/{personKey} {
+      allow read, write: if false;
+    }
+    match /_eduConnectLocks/{id} {
       allow read, write: if false;
     }
     match /{document=**} { allow read, write: if false; }

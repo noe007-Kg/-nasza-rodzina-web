@@ -341,3 +341,16 @@ test('ShowCaptcha requirement without the published widget asks for interactive 
   await assert.rejects(provider.connectProvider({ login: LOGIN, password: PASSWORD }), (error) => error.code === 'EDU_INTERACTIVE_LOGIN_REQUIRED');
   assert.equal(requests.some((request) => request.body.includes(PASSWORD)), false);
 });
+
+test('student school synchronization never visits a parent mailbox even when parent credentials provide the school identity', async () => {
+  const { provider, requests } = recordedPortal();
+  const connection = await provider.connectProvider({ login: LOGIN, password: PASSWORD });
+  const profile = connection.profiles.find((entry) => entry.schoolName === 'SP 4 Kołobrzeg');
+  const result = await provider.readProviderData(connection.session, profile.id, { includeMessages: false });
+  assert.ok(result.items.some((item) => item.type === 'grade'));
+  assert.equal(result.items.some((item) => item.type === 'message'), false);
+  assert.equal(result.counts.messages, 0);
+  assert.ok(result.warnings.some((warning) => warning.includes('osobistego konta ucznia')));
+  assert.equal(requests.some((request) => request.host === 'wiadomosci.eduvulcan.pl'
+    || /Skrzynki|OdebraneSkrzynka|WiadomoscSzczegoly/.test(request.path)), false);
+});

@@ -3,7 +3,6 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 
 const APP_NAME = 'nasza-rodzina-eduvulcan';
-const PEOPLE = new Set(['Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla']);
 
 /** Safe, user-facing errors. Never attach tokens, credentials or upstream bodies. */
 export class EduServerError extends Error {
@@ -55,7 +54,7 @@ export function getServerFirebase() {
   return { app, auth: getAuth(app), db: getFirestore(app) };
 }
 
-function header(request, name) {
+export function eduRequestHeader(request, name) {
   if (typeof request.headers?.get === 'function') return request.headers.get(name) || '';
   const value = request.headers?.[name.toLowerCase()];
   return typeof value === 'string' ? value : '';
@@ -71,7 +70,7 @@ function boundLocalAuthEmulator(services) {
 }
 
 export function assertSameOrigin(request) {
-  const origin = header(request, 'origin');
+  const origin = eduRequestHeader(request, 'origin');
   if (!origin) return; // Non-browser clients still need a valid parent ID token.
   let actual;
   try { actual = new URL(origin).origin; }
@@ -84,14 +83,14 @@ export function assertSameOrigin(request) {
     if (actual !== expected) throw new EduServerError('EDU_FORBIDDEN_ORIGIN', 403, 'Niedozwolona domena żądania.');
     return;
   }
-  const host = header(request, 'host');
+  const host = eduRequestHeader(request, 'host');
   if (host && new URL(actual).host !== host) throw new EduServerError('EDU_FORBIDDEN_ORIGIN', 403, 'Niedozwolona domena żądania.');
 }
 
 /** Authentication is checked on every request, including token revocation. */
-export async function requireParent(request, services = getServerFirebase()) {
+export async function requireMember(request, services = getServerFirebase()) {
   assertSameOrigin(request);
-  const authorization = header(request, 'authorization');
+  const authorization = eduRequestHeader(request, 'authorization');
   const signed = /^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/i.test(authorization);
   // Auth emulator JWTs have an empty signature. The exception is restricted to
   // the explicitly bound local demo project; the Admin SDK must still verify it.
@@ -105,9 +104,25 @@ export async function requireParent(request, services = getServerFirebase()) {
   catch { throw new EduServerError('EDU_UNAUTHENTICATED', 401, 'Sesja Naszej Rodziny wygasła. Zaloguj się ponownie.'); }
   const snapshot = await services.db.collection('members').doc(user.uid).get();
   const profile = snapshot.exists ? snapshot.data() : null;
-  if (!profile || profile.role !== 'parent' || profile.active !== true || profile.canLogin !== true
-    || !PEOPLE.has(profile.personKey) || profile.name !== profile.personKey) {
-    throw new EduServerError('EDU_PARENT_REQUIRED', 403, 'Połączeniem z dziennikiem może zarządzać aktywny rodzic.');
+  // Keep the authorization contract identical to Firestore rules and App's gate.
+  // Display names and optional personKey fields do not establish a parent's role.
+  if (!profile || !['parent', 'child'].includes(profile.role) || profile.active !== true || profile.canLogin !== true) {
+    throw new EduServerError('EDU_MEMBER_REQUIRED', 403, 'Konto Naszej Rodziny wymaga aktywnego profilu z dostępem do aplikacji.');
   }
   return { uid: user.uid, user, profile, ...services };
+}
+
+export async function requireParent(request, services = getServerFirebase()) {
+  let context;
+  try { context = await requireMember(request, services); }
+  catch (error) {
+    if (error instanceof EduServerError && error.code === 'EDU_MEMBER_REQUIRED') {
+      throw new EduServerError('EDU_PARENT_REQUIRED', 403, 'Wspólnym połączeniem rodziny zarządza aktywne konto z rolą parent w Naszej Rodzinie.');
+    }
+    throw error;
+  }
+  if (context.profile.role !== 'parent') {
+    throw new EduServerError('EDU_PARENT_REQUIRED', 403, 'Wspólnym połączeniem rodziny zarządza konto z rolą parent w Naszej Rodzinie.');
+  }
+  return context;
 }

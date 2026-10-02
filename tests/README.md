@@ -17,7 +17,7 @@ Jeżeli emulatory są już uruchomione, sam zestaw przeglądarkowy można urucho
 
 ## Testy serwera eduVULCAN
 
-`npm run test:server` uruchamia `tests/edu-*.test.mjs`: parsery i normalizację danych, adapter HTTP portalu, uwierzytelnianie rodzica, szyfrowanie sesji, ograniczenia synchronizacji i odpowiedzi funkcji API. Ten zestaw nie wymaga emulatorów ani klucza Firebase Admin.
+`npm run test:server` uruchamia `tests/edu-*.test.mjs`: parsery i normalizację danych, adapter HTTP portalu, uwierzytelnianie rodzica, szyfrowanie sesji, ograniczenia synchronizacji i odpowiedzi funkcji API. Wersja 1.5.1 dodaje testy wspólnego zakresu rodziny i odrębnego zakresu ucznia w `edu-access.test.mjs` i `edu-scope-storage.test.mjs`. Sprawdzają dostęp rodzica niezależnie od pełnej wyświetlanej nazwy, jedną sesję i wspólne blokady, ograniczenie ucznia do zatwierdzonego szkolnego profilu oraz odmowę importu wiadomości w zakresie ucznia. Ten zestaw nie wymaga emulatorów ani klucza Firebase Admin.
 
 **Testy adaptera używają wymyślonych formularzy HTML, cookies i odpowiedzi JSON oraz zastąpionego `fetch`.** Nie łączą się z serwerami eduVULCAN, nie logują prawdziwego rodzica i nie pobierają rzeczywistych ocen, planu lub wiadomości. Publiczne źródła protokołu opisuje `docs/VULCAN.md`; testy ich zgodności na fixture nie są weryfikacją konta SP4.
 
@@ -39,7 +39,7 @@ Emulatory muszą nasłuchiwać na `127.0.0.1`: Auth `9099`, Firestore `8080`; po
 
 Scenariusze organizera zastępują pogodę Open-Meteo. Logowanie, Firestore, Storage i uprawnienia korzystają z prawdziwych SDK i reguł emulatorów. Fixture odmawia działania bez ustawionych lokalnych hostów Auth/Firestore; przeglądarka odmawia połączeń do produkcyjnych usług Firebase.
 
-`edu-browser.spec.ts` zastępuje odpowiedzi `/api/eduvulcan/...` danymi syntetycznymi. Sprawdza formularz rodzica, jawny wybór SP4, przypisanie dziecka, odświeżenie, odłączenie, brak dostępu dziecka do panelu i wiadomości rodzica oraz błędy konfiguracji, logowania, wygaśnięcia, limitu i częściowego odczytu. Żądania zawierają token Firebase z emulatora, ale odpowiedzi integracji są mockiem. Ten zestaw sprawdza zachowanie interfejsu, a nie działanie rzeczywistego logowania eduVULCAN lub wdrożenia Vercel. Możesz uruchomić tylko te scenariusze przy działających emulatorach: `npx playwright test tests/edu-browser.spec.ts`.
+`edu-browser.spec.ts` zastępuje odpowiedzi `/api/eduvulcan/...` danymi syntetycznymi. Sprawdza formularz rodzica i przyciski Połącz, Sprawdź stan połączenia, Synchronizuj teraz i Rozłącz; jawny wybór SP4; przypisanie dziecka; wspólny status po zalogowaniu drugim kontem rodzica; brak dostępu dziecka do panelu i wiadomości rodzica; błędy konfiguracji, logowania, wygaśnięcia, limitu i częściowego odczytu. Żądania zawierają token Firebase z emulatora, ale odpowiedzi integracji są mockiem. Ten zestaw sprawdza zachowanie interfejsu, a nie działanie rzeczywistego logowania eduVULCAN lub wdrożenia Vercel. Możesz uruchomić tylko te scenariusze przy działających emulatorach: `npx playwright test tests/edu-browser.spec.ts`.
 
 Konta testowe: `sebastian@example.test`, `dominika@example.test`, `nikodem@example.test`, `pawel@example.test`. Wspólne hasło fixture: `FamilyTest!2026`. Konto `inactive@example.test` ma wyłączony dostęp rodzinny. Te konta są tworzone tylko w emulatorze i nie powinny być tworzone na produkcji.
 

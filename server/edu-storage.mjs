@@ -11,8 +11,65 @@ const LEASE_MS = 2 * 60 * 1000;
 const MAX_ITEMS = 400;
 const MAX_SYNC_WRITES = 450;
 
+function identityKey(value) {
+  return typeof value === 'string' ? value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('pl') : '';
+}
+
+function sameStudentIdentity(student, identity) {
+  return Boolean(identityKey(identity?.studentName) && identityKey(identity?.schoolName)
+    && identityKey(student?.studentName) === identityKey(identity.studentName)
+    && identityKey(student?.schoolName) === identityKey(identity.schoolName)
+    && (!identity.schoolSymbol || identityKey(student.schoolSymbol) === identityKey(identity.schoolSymbol)));
+}
+
+function scopeContext(connectionId, services) {
+  const supplied = services.connection;
+  if (!supplied) return { id: connectionId, scope: 'family', accountRole: 'parent', actorUid: services.uid || connectionId, allowedPersonKeys: [...SCHOOL_PEOPLE], legacy: true };
+  if (supplied.id !== connectionId || !['family', 'student'].includes(supplied.scope)
+    || supplied.accountRole !== (supplied.scope === 'family' ? 'parent' : 'student')
+    || typeof supplied.actorUid !== 'string' || !supplied.actorUid || supplied.actorUid.length > 128
+    || !Array.isArray(supplied.allowedPersonKeys) || !supplied.allowedPersonKeys.length
+    || supplied.allowedPersonKeys.some((person) => !SCHOOL_PEOPLE.has(person))) {
+    throw new EduServerError('EDU_CONNECTION_FORBIDDEN', 403, 'Nie masz dostępu do tego połączenia z dziennikiem.');
+  }
+  if (supplied.scope === 'family' && connectionId !== 'family') {
+    throw new EduServerError('EDU_CONNECTION_FORBIDDEN', 403, 'Nieprawidłowe połączenie rodzinne.');
+  }
+  if (supplied.scope === 'student' && (supplied.allowedPersonKeys.length !== 1
+    || connectionId !== `student_${createHash('sha256').update(supplied.actorUid).digest('hex')}`
+    || !identityKey(supplied.allowedStudentIdentity?.studentName) || !identityKey(supplied.allowedStudentIdentity?.schoolName))) {
+    throw new EduServerError('EDU_STUDENT_ACCESS_REQUIRED', 403, 'Rodzic musi najpierw przypisać dziennik do tego ucznia.');
+  }
+  return supplied;
+}
+
+function scopedStudents(students, scope) {
+  const sanitized = sanitizeStudents(students);
+  if (scope.scope !== 'student') return sanitized;
+  const allowed = sanitized.filter((student) => sameStudentIdentity(student, scope.allowedStudentIdentity));
+  if (!allowed.length) throw new EduServerError('EDU_INVALID_STUDENT', 403, 'Połączone konto nie udostępnia przypisanego dziennika ucznia.');
+  return allowed;
+}
+
+function assertStoredScope(data, scope) {
+  if (!scope.legacy && (data.scope !== scope.scope || data.accountRole !== scope.accountRole
+    || (scope.scope === 'student' && data.connectedByUid !== scope.actorUid))) {
+    throw new EduServerError('EDU_CONNECTION_FORBIDDEN', 403, 'Połączenie należy do innego konta lub zakresu danych.');
+  }
+}
+
+async function assertStudentBinding(transaction, services, scope) {
+  if (scope.scope !== 'student') return;
+  const binding = await transaction.get(services.db.collection('_eduStudentBindings').doc(scope.allowedPersonKeys[0]));
+  if (!binding.exists || !sameStudentIdentity(binding.data().identity, scope.allowedStudentIdentity)
+    || !sameStudentIdentity(scope.allowedStudentIdentity, binding.data().identity)) {
+    throw new EduServerError('EDU_STUDENT_ACCESS_REQUIRED', 403, 'Przypisanie ucznia zostało zmienione. Sprawdź ponownie połączenie.');
+  }
+}
+
 function connectionRef(uid, services) {
-  if (typeof uid !== 'string' || !uid || uid.length > 128 || uid.includes('/')) throw new EduServerError('EDU_UNAUTHENTICATED', 401, 'Nieprawidłowe konto rodzica.');
+  if (typeof uid !== 'string' || !uid || uid.length > 128 || uid.includes('/')) throw new EduServerError('EDU_UNAUTHENTICATED', 401, 'Nieprawidłowe połączenie z dziennikiem.');
+  scopeContext(uid, services);
   return services.db.collection(CONNECTIONS).doc(uid);
 }
 
@@ -54,23 +111,25 @@ export function sanitizeStudents(students) {
   });
 }
 
-function normalizeSelection(selection, students) {
+function normalizeSelection(selection, students, scope = { allowedPersonKeys: [...SCHOOL_PEOPLE] }) {
   if (!selection) return null;
   const profileId = selection.profileId || selection.id;
   const personKey = selection.personKey || selection.person;
-  if (!SCHOOL_PEOPLE.has(personKey) || !students.some((student) => student.id === profileId)) {
+  if (!SCHOOL_PEOPLE.has(personKey) || !scope.allowedPersonKeys.includes(personKey) || !students.some((student) => student.id === profileId)) {
     throw new EduServerError('EDU_INVALID_STUDENT', 400, 'Wybierz ucznia z połączonego konta i dziecko z Naszej Rodziny.');
   }
   return { profileId, personKey };
 }
 
-function publicStatus(data) {
+function publicStatus(data, scope) {
   const expiresAt = timestampMillis(data.expiresAt);
   const lastSync = timestampMillis(data.lastSuccessfulSyncAt);
   return {
     connected: true, state: data.selectedStudent ? 'connected' : 'needs_profile',
-    students: sanitizeStudents(data.students || []), profiles: sanitizeStudents(data.students || []),
-    selectedStudent: data.selectedStudent || null,
+    students: scope ? scopedStudents(data.students || [], scope) : sanitizeStudents(data.students || []),
+    profiles: scope ? scopedStudents(data.students || [], scope) : sanitizeStudents(data.students || []),
+    selectedStudent: scope ? normalizeSelection(data.selectedStudent, scopedStudents(data.students || [], scope), scope) : data.selectedStudent || null,
+    ...(data.scope ? { scope: data.scope, accountRole: data.accountRole, connectedByUid: data.connectedByUid } : {}),
     expiresAt: new Date(expiresAt).toISOString(),
     lastSyncAt: Number.isFinite(lastSync) ? new Date(lastSync).toISOString() : null,
     lastSuccessAt: Number.isFinite(lastSync) ? new Date(lastSync).toISOString() : null,
@@ -83,14 +142,18 @@ function publicStatus(data) {
 
 export async function saveConnection(uid, { session, students, profiles, selectedStudent, expiresAt, connectLeaseId }, services = getServerFirebase()) {
   const ref = connectionRef(uid, services);
-  const sanitized = sanitizeStudents(students || profiles || []);
+  const scope = scopeContext(uid, services);
+  const sanitized = scopedStudents(students || profiles || [], scope);
   const ttlHours = Number(process.env.EDUVULCAN_SESSION_TTL_HOURS || 24);
   if (!Number.isFinite(ttlHours) || ttlHours <= 0 || ttlHours > 24) throw new EduServerError('EDU_NOT_CONFIGURED', 503, 'Czas przechowywania sesji musi wynosić maksymalnie 24 godziny.');
   const expiry = Math.min(expiresAt ? timestampMillis(expiresAt) : Infinity, Date.now() + ttlHours * 3600000);
   if (!Number.isFinite(expiry) || expiry <= Date.now()) throw new EduServerError('EDU_SESSION_EXPIRED', 401, 'Sesja dziennika wygasła. Połącz konto ponownie.');
-  const envelope = encryptSession(session, { uid });
+  const storedSession = scope.scope === 'student' && Array.isArray(session?.profiles)
+    ? { ...session, profiles: session.profiles.filter((profile) => sanitized.some((student) => student.id === profile.id)) } : session;
+  const envelope = encryptSession(storedSession, { uid });
   const result = await services.db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
+    await assertStudentBinding(transaction, services, scope);
     if (connectLeaseId) {
       const connectLock = await transaction.get(services.db.collection('_eduConnectLocks').doc(uid));
       if (!connectLock.exists || connectLock.data().id !== connectLeaseId || timestampMillis(connectLock.data().expiresAt) <= Date.now()) {
@@ -98,23 +161,27 @@ export async function saveConnection(uid, { session, students, profiles, selecte
       }
     }
     const previous = snapshot.exists ? snapshot.data() : {};
+    if (snapshot.exists) assertStoredScope(previous, scope);
     const requestedSelection = selectedStudent === undefined ? previous.selectedStudent : selectedStudent;
     let selection = null;
     if (requestedSelection) {
-      if (selectedStudent !== undefined) selection = normalizeSelection(requestedSelection, sanitized);
-      else if (sanitized.some((student) => student.id === requestedSelection.profileId)) selection = normalizeSelection(requestedSelection, sanitized);
+      if (selectedStudent !== undefined) selection = normalizeSelection(requestedSelection, sanitized, scope);
+      else if (sanitized.some((student) => student.id === requestedSelection.profileId)) selection = normalizeSelection(requestedSelection, sanitized, scope);
     }
     const data = {
       envelope, students: sanitized, selectedStudent: selection,
       expiresAt: Timestamp.fromMillis(expiry), sessionVersion: randomUUID(),
       updatedAt: FieldValue.serverTimestamp(),
+      ...(!scope.legacy ? { scope: scope.scope, accountRole: scope.accountRole, connectedByUid: scope.actorUid } : {}),
       ...(previous.createdAt ? { createdAt: previous.createdAt } : { createdAt: FieldValue.serverTimestamp() }),
-      ...(previous.lastSuccessfulSyncAt ? { lastSuccessfulSyncAt: previous.lastSuccessfulSyncAt } : {}),
+      ...(previous.lastSuccessfulSyncAt && selection
+        && previous.selectedStudent?.profileId === selection.profileId && previous.selectedStudent?.personKey === selection.personKey
+        ? { lastSuccessfulSyncAt: previous.lastSuccessfulSyncAt } : {}),
     };
     transaction.set(ref, data);
     return data;
   });
-  return publicStatus(result);
+  return publicStatus(result, scope);
 }
 
 export async function loadConnection(uid, services = getServerFirebase()) {
@@ -122,11 +189,13 @@ export async function loadConnection(uid, services = getServerFirebase()) {
   const snapshot = await ref.get();
   if (!snapshot.exists) throw new EduServerError('EDU_NOT_CONNECTED', 409, 'Najpierw połącz konto eduVULCAN.');
   const data = snapshot.data();
+  const scope = scopeContext(uid, services);
+  assertStoredScope(data, scope);
   if (!Number.isFinite(timestampMillis(data.expiresAt)) || timestampMillis(data.expiresAt) <= Date.now()) {
     await removeExpiredConnection(ref, data, services);
     throw new EduServerError('EDU_SESSION_EXPIRED', 401, 'Sesja dziennika wygasła. Połącz konto ponownie.');
   }
-  return { ...publicStatus(data), session: decryptSession(data.envelope, { uid }), sessionVersion: data.sessionVersion };
+  return { ...publicStatus(data, scope), session: decryptSession(data.envelope, { uid }), sessionVersion: data.sessionVersion };
 }
 
 export async function getConnectionStatus(uid, services = getServerFirebase()) {
@@ -134,34 +203,50 @@ export async function getConnectionStatus(uid, services = getServerFirebase()) {
   const snapshot = await ref.get();
   if (!snapshot.exists) return { connected: false, state: 'disconnected', profiles: [], students: [], selectedStudent: null };
   const data = snapshot.data();
+  const scope = scopeContext(uid, services);
+  assertStoredScope(data, scope);
   if (!Number.isFinite(timestampMillis(data.expiresAt)) || timestampMillis(data.expiresAt) <= Date.now()) {
     await removeExpiredConnection(ref, data, services);
     return { connected: false, state: 'expired', expired: true, profiles: [], students: [], selectedStudent: null };
   }
-  return publicStatus(data);
+  return publicStatus(data, scope);
 }
 
 export async function selectConnectionStudent(uid, selection, services = getServerFirebase()) {
   const ref = connectionRef(uid, services);
+  const scope = scopeContext(uid, services);
   await services.db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     if (!snapshot.exists || timestampMillis(snapshot.data().expiresAt) <= Date.now()) throw new EduServerError('EDU_NOT_CONNECTED', 409, 'Najpierw połącz konto eduVULCAN.');
     const data = snapshot.data();
+    assertStoredScope(data, scope);
+    await assertStudentBinding(transaction, services, scope);
     if (timestampMillis(data.lease?.expiresAt) > Date.now()) throw new EduServerError('EDU_SYNC_BUSY', 409, 'Poczekaj na zakończenie synchronizacji.');
-    const selectedStudent = normalizeSelection(selection, sanitizeStudents(data.students));
+    const students = scopedStudents(data.students, scope);
+    const selectedStudent = normalizeSelection(selection, students, scope);
     const changed = data.selectedStudent?.profileId !== selectedStudent.profileId || data.selectedStudent?.personKey !== selectedStudent.personKey;
     transaction.update(ref, {
       selectedStudent, updatedAt: FieldValue.serverTimestamp(),
       ...(changed ? { lastSuccessfulSyncAt: FieldValue.delete(), lastSyncAttemptAt: FieldValue.delete(), lastErrorCode: FieldValue.delete(), counts: FieldValue.delete(), warnings: FieldValue.delete() } : {}),
     });
+    if (!scope.legacy && scope.scope === 'family') {
+      const student = students.find((profile) => profile.id === selectedStudent.profileId);
+      transaction.set(services.db.collection('_eduStudentBindings').doc(selectedStudent.personKey), {
+        identity: { studentName: student.studentName, schoolName: student.schoolName, ...(student.schoolSymbol ? { schoolSymbol: student.schoolSymbol } : {}) },
+        establishedByUid: scope.actorUid, establishedAt: FieldValue.serverTimestamp(),
+      });
+    }
   });
   return getConnectionStatus(uid, services);
 }
 
 export async function disconnectConnection(uid, services = getServerFirebase()) {
   const ref = connectionRef(uid, services);
+  const scope = scopeContext(uid, services);
   const connectRef = services.db.collection('_eduConnectLocks').doc(uid);
   await services.db.runTransaction(async (transaction) => {
+    const connection = await transaction.get(ref);
+    if (connection.exists) assertStoredScope(connection.data(), scope);
     const lock = await transaction.get(connectRef);
     transaction.delete(ref);
     // Preserve login counters while invalidating a login still awaiting the provider.
@@ -171,28 +256,73 @@ export async function disconnectConnection(uid, services = getServerFirebase()) 
   return { connected: false, state: 'disconnected', profiles: [], students: [], selectedStudent: null };
 }
 
+/** Retire 1.5.0 sessions that were keyed by the individual parent's Firebase UID.
+ * The active family connection and personal student connections are untouched.
+ * Invalidate old login leases as well, so an older request cannot resurrect them.
+ */
+export async function retireLegacyParentConnections(services) {
+  const scope = scopeContext(services?.connection?.id, services);
+  if (scope.scope !== 'family' || scope.legacy || services.profile?.role !== 'parent') {
+    throw new EduServerError('EDU_PARENT_REQUIRED', 403, 'Porządkowanie połączeń rodzinnych wymaga roli parent.');
+  }
+  const parents = await services.db.collection('members').where('role', '==', 'parent').limit(64).get();
+  if (parents.size >= 64) throw new EduServerError('EDU_IMPORT_LIMIT', 409, 'Zbyt wiele kont do bezpiecznego porządkowania połączeń.');
+  const parentIds = parents.docs.map((document) => document.id)
+    .filter((id) => typeof id === 'string' && id && id.length <= 128 && !id.includes('/') && id !== 'family');
+  if (!parentIds.length) return { retired: 0 };
+  const members = parentIds.map((id) => services.db.collection('members').doc(id));
+  const connections = parentIds.map((id) => services.db.collection(CONNECTIONS).doc(id));
+  const locks = parentIds.map((id) => services.db.collection('_eduConnectLocks').doc(id));
+  return services.db.runTransaction(async (transaction) => {
+    const snapshots = await transaction.getAll(...members, ...connections, ...locks);
+    let retired = 0;
+    parentIds.forEach((_id, index) => {
+      const member = snapshots[index];
+      if (!member.exists || member.data().role !== 'parent') return;
+      const connection = snapshots[parentIds.length + index];
+      if (connection.exists && connection.data().scope !== 'student') {
+        transaction.delete(connections[index]);
+        retired += 1;
+      }
+      const lock = snapshots[parentIds.length * 2 + index];
+      if (lock.exists) transaction.update(locks[index], { id: randomUUID(), expiresAt: Timestamp.fromMillis(0) });
+    });
+    return { retired };
+  });
+}
+
 export async function updateConnectionSession(uid, session, { sessionVersion, leaseId } = {}, services = getServerFirebase()) {
   if (!sessionVersion || !leaseId) throw new EduServerError('EDU_CONNECTION_CHANGED', 409, 'Odświeżenie sesji wymaga bieżącej synchronizacji.');
   const ref = connectionRef(uid, services);
-  const envelope = encryptSession(session, { uid });
+  const scope = scopeContext(uid, services);
+  const storedSession = scope.scope === 'student' && Array.isArray(session?.profiles)
+    ? { ...session, profiles: session.profiles.filter((profile) => sameStudentIdentity(profile, scope.allowedStudentIdentity)) } : session;
+  const envelope = encryptSession(storedSession, { uid });
   await services.db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     const data = snapshot.exists ? snapshot.data() : null;
     if (!data || timestampMillis(data.expiresAt) <= Date.now() || (sessionVersion && data.sessionVersion !== sessionVersion)
       || (leaseId && (data.lease?.id !== leaseId || timestampMillis(data.lease?.expiresAt) <= Date.now()))) throw new EduServerError('EDU_CONNECTION_CHANGED', 409, 'Połączenie zostało zmienione. Uruchom synchronizację ponownie.');
+    assertStoredScope(data, scope);
+    await assertStudentBinding(transaction, services, scope);
+    normalizeSelection(data.selectedStudent, scopedStudents(data.students, scope), scope);
     transaction.update(ref, { envelope, updatedAt: FieldValue.serverTimestamp() });
   });
 }
 
 export async function acquireSyncLease(uid, services = getServerFirebase()) {
   const ref = connectionRef(uid, services);
+  const scope = scopeContext(uid, services);
   const leaseId = randomUUID();
   const expiresAt = Date.now() + LEASE_MS;
   await services.db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     const data = snapshot.exists ? snapshot.data() : null;
     if (!data || timestampMillis(data.expiresAt) <= Date.now()) throw new EduServerError('EDU_NOT_CONNECTED', 409, 'Najpierw połącz konto eduVULCAN.');
+    assertStoredScope(data, scope);
+    await assertStudentBinding(transaction, services, scope);
     if (!data.selectedStudent) throw new EduServerError('EDU_SELECT_STUDENT', 409, 'Najpierw wybierz ucznia.');
+    normalizeSelection(data.selectedStudent, scopedStudents(data.students, scope), scope);
     if (timestampMillis(data.lease?.expiresAt) > Date.now()) throw new EduServerError('EDU_SYNC_BUSY', 409, 'Synchronizacja jest już uruchomiona.');
     const lastSuccessfulSync = timestampMillis(data.lastSuccessfulSyncAt);
     const lastAttempt = timestampMillis(data.lastSyncAttemptAt);
@@ -207,9 +337,11 @@ export async function acquireSyncLease(uid, services = getServerFirebase()) {
 
 export async function releaseSyncLease(uid, leaseId, { success = false, errorCode, warnings, counts } = {}, services = getServerFirebase()) {
   const ref = connectionRef(uid, services);
+  const scope = scopeContext(uid, services);
   await services.db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     if (!snapshot.exists || snapshot.data().lease?.id !== leaseId) return;
+    assertStoredScope(snapshot.data(), scope);
     const safeWarnings = Array.isArray(warnings) ? warnings.slice(0, 10).map((warning) => text(warning, 500)) : [];
     const safeCounts = {};
     for (const key of ['lessons', 'grades', 'homework', 'tests', 'messages', 'activities', 'added', 'updated', 'total']) {
@@ -225,16 +357,24 @@ export async function releaseSyncLease(uid, leaseId, { success = false, errorCod
 }
 
 /** Pure normalization, used by the adapter boundary and its security tests. */
-export function prepareImportedSchoolItems(uid, { personKey, person, profileId, studentId, items, syncId = randomUUID() }) {
+export function prepareImportedSchoolItems(uid, { personKey, person, profileId, studentId, items, syncId = randomUUID() }, services = {}) {
+  const scope = scopeContext(uid, services);
   const mappedPerson = personKey || person;
   const mappedProfile = profileId || studentId;
-  if (!SCHOOL_PEOPLE.has(mappedPerson) || typeof mappedProfile !== 'string' || !mappedProfile || mappedProfile.length > 500
+  if (!SCHOOL_PEOPLE.has(mappedPerson) || !scope.allowedPersonKeys.includes(mappedPerson) || typeof mappedProfile !== 'string' || !mappedProfile || mappedProfile.length > 500
     || !Array.isArray(items) || items.length > MAX_ITEMS) throw new EduServerError('EDU_INVALID_DATA', 502, 'Dziennik zwrócił nieprawidłowy zakres danych.');
   const seen = new Set();
   return items.map((item) => {
     const externalId = text(item.externalId ?? item.sourceRecordId, 500);
     if (!externalId || !ITEM_TYPES.has(item.type)) throw new EduServerError('EDU_INVALID_DATA', 502, 'Dziennik zwrócił nieprawidłowy wpis szkolny.');
-    const id = `edu_${createHash('sha256').update(JSON.stringify([mappedPerson, mappedProfile, item.type, externalId])).digest('hex')}`;
+    // A student could enter a parent's provider credentials. Until provider-side
+    // student mailbox identity can be verified, never import that inbox as theirs.
+    if (scope.scope === 'student' && item.type === 'message') {
+      throw new EduServerError('EDU_STUDENT_MESSAGES_UNAVAILABLE', 403, 'Wiadomości wymagają potwierdzonego osobistego konta ucznia w dzienniku.');
+    }
+    const identity = [mappedPerson, mappedProfile, item.type, externalId];
+    if (scope.scope === 'student') identity.unshift(uid);
+    const id = `edu_${createHash('sha256').update(JSON.stringify(identity)).digest('hex')}`;
     if (seen.has(id)) throw new EduServerError('EDU_INVALID_DATA', 502, 'Dziennik zwrócił powtórzone identyfikatory wpisów.');
     seen.add(id);
     const title = text(item.title, 500);
@@ -247,7 +387,8 @@ export function prepareImportedSchoolItems(uid, { personKey, person, profileId, 
       time: text(item.time, 5), endTime: text(item.endTime, 5), weekday,
       note: text(item.note ?? item.body, 20000),
       source: 'eduvulcan', provider: 'eduvulcan', sourceRecordId: externalId,
-      sourceProfileId: mappedProfile, sourceOwnerUid: uid, sourceSyncId: syncId,
+      sourceProfileId: mappedProfile, sourceOwnerUid: scope.actorUid, sourceSyncId: syncId,
+      ...(!scope.legacy ? { sourceConnectionId: uid, sourceConnectionScope: scope.scope } : {}),
     };
     const scopeId = item.providerScopeId ?? item.scopeId;
     if (scopeId != null) {
@@ -262,7 +403,7 @@ export function prepareImportedSchoolItems(uid, { personKey, person, profileId, 
       data.sender = text(item.sender, 300);
       data.read = item.read === true;
     }
-    return { id, collection: item.type === 'message' ? 'schoolParentMessages' : 'schoolItems', data };
+    return { id, collection: item.type === 'message' ? scope.scope === 'student' ? 'schoolStudentMessages' : 'schoolParentMessages' : 'schoolItems', data };
   });
 }
 
@@ -286,22 +427,29 @@ export function normalizeReconcileScopes(scopes = []) {
   });
 }
 
-function matchesReconcileScope(data, input, scopes) {
+function matchesConnectionScope(data, scope) {
+  if (scope.legacy) return true;
+  return data.sourceConnectionId === scope.id || (scope.scope === 'family' && data.sourceConnectionId === undefined);
+}
+
+function matchesReconcileScope(data, input, scopes, connectionScope) {
   return data.source === 'eduvulcan' && data.sourceProfileId === (input.profileId || input.studentId)
     && data.person === (input.personKey || input.person)
+    && matchesConnectionScope(data, connectionScope)
     && scopes.some((scope) => data.type === scope.type && data.providerScopeId === scope.scopeId
       && (scope.type !== 'lesson' || (validDate(data.date) && data.date >= scope.dateFrom && data.date <= scope.dateTo)));
 }
 
 export async function upsertSchoolItems(uid, input, services = getServerFirebase()) {
-  const entries = prepareImportedSchoolItems(uid, input);
+  const scope = scopeContext(uid, services);
+  const entries = prepareImportedSchoolItems(uid, input, services);
   const scopes = normalizeReconcileScopes(input.reconcileScopes);
   const incomingIds = new Set(entries.map((entry) => entry.id));
   let deleteCandidates = [];
   if (scopes.length) {
     const existingScope = await services.db.collection('schoolItems').where('sourceProfileId', '==', input.profileId || input.studentId).limit(1500).get();
     if (existingScope.size >= 1500) throw new EduServerError('EDU_IMPORT_LIMIT', 409, 'Zbyt wiele wpisów do bezpiecznej synchronizacji. Nic nie zostało usunięte.');
-    deleteCandidates = existingScope.docs.filter((document) => !incomingIds.has(document.id) && matchesReconcileScope(document.data(), input, scopes)).map((document) => document.ref);
+    deleteCandidates = existingScope.docs.filter((document) => !incomingIds.has(document.id) && matchesReconcileScope(document.data(), input, scopes, scope)).map((document) => document.ref);
   }
   if (entries.length + deleteCandidates.length > MAX_SYNC_WRITES) throw new EduServerError('EDU_IMPORT_LIMIT', 409, 'Zbyt wiele zmian do bezpiecznej synchronizacji. Nic nie zostało usunięte.');
   const refs = entries.map((entry) => services.db.collection(entry.collection).doc(entry.id));
@@ -317,6 +465,9 @@ export async function upsertSchoolItems(uid, input, services = getServerFirebase
       || !input.sessionVersion || connection.data().sessionVersion !== input.sessionVersion) {
       throw new EduServerError('EDU_CONNECTION_CHANGED', 409, 'Połączenie lub wybrany uczeń został zmieniony. Dane nie zostały zapisane.');
     }
+    assertStoredScope(connection.data(), scope);
+    await assertStudentBinding(transaction, services, scope);
+    normalizeSelection(selected, scopedStudents(connection.data().students, scope), scope);
     const allRefs = [...refs, ...deleteCandidates];
     const existing = allRefs.length ? await transaction.getAll(...allRefs) : [];
     added = 0;
@@ -326,12 +477,12 @@ export async function upsertSchoolItems(uid, input, services = getServerFirebase
       const prior = existing[index];
       const previous = prior.exists ? prior.data() : null;
       if (previous && (previous.source !== 'eduvulcan' || previous.sourceRecordId !== entry.data.sourceRecordId
-        || previous.sourceProfileId !== entry.data.sourceProfileId || previous.person !== entry.data.person)) {
+        || previous.sourceProfileId !== entry.data.sourceProfileId || previous.person !== entry.data.person || !matchesConnectionScope(previous, scope))) {
         throw new EduServerError('EDU_IMPORT_CONFLICT', 409, 'Istniejący wpis lokalny blokuje import. Nie został nadpisany.');
       }
       if (previous) updated += 1; else added += 1;
       transaction.set(refs[index], {
-        ...entry.data, createdBy: previous?.createdBy || uid,
+        ...entry.data, createdBy: previous?.createdBy || scope.actorUid,
         createdAt: previous?.createdAt || FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(), syncedAt: FieldValue.serverTimestamp(),
       });
@@ -339,11 +490,11 @@ export async function upsertSchoolItems(uid, input, services = getServerFirebase
     deleteCandidates.forEach((ref, index) => {
       const snapshot = existing[refs.length + index];
       // Re-read provenance and range inside the guarded transaction.
-      if (snapshot.exists && matchesReconcileScope(snapshot.data(), input, scopes)) {
+      if (snapshot.exists && matchesReconcileScope(snapshot.data(), input, scopes, scope)) {
         transaction.delete(ref);
         deleted += 1;
       }
     });
   });
-  return { added, updated, deleted, total: entries.length, messages: entries.filter((entry) => entry.collection === 'schoolParentMessages').length };
+  return { added, updated, deleted, total: entries.length, messages: entries.filter((entry) => ['schoolParentMessages', 'schoolStudentMessages'].includes(entry.collection)).length };
 }

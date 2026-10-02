@@ -102,9 +102,9 @@ async function loginSchool(page: Page, account: Account = accounts.parent) {
 
 async function submitCredentials(page: Page) {
   const panel = page.locator('.edu-vulcan-connection');
-  await panel.getByLabel('Login eduVULCAN', { exact: true }).fill(eduLogin);
+  await panel.getByLabel('Login lub e-mail eduVULCAN', { exact: true }).fill(eduLogin);
   await panel.getByLabel('Hasło eduVULCAN', { exact: true }).fill(eduPassword);
-  await panel.getByRole('button', { name: 'Pobierz dostępne dzienniki', exact: true }).click();
+  await panel.getByRole('button', { name: 'Połącz', exact: true }).click();
 }
 
 async function seedParentMessage() {
@@ -124,7 +124,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('eduVULCAN: rodzic jawnie wybiera SP4 i dziecko, następnie odświeża i odłącza dziennik', async ({ page }) => {
+test('eduVULCAN: rodzic jawnie wybiera SP4 i dziecko, następnie synchronizuje i rozłącza dziennik', async ({ page }) => {
   const calls = await mockApi(page, disconnected, {
     connect: () => ({ body: { ok: true, status: needsProfile } }),
     select: () => ({ body: { ok: true, status: connected } }),
@@ -144,7 +144,7 @@ test('eduVULCAN: rodzic jawnie wybiera SP4 i dziecko, następnie odświeża i od
   const select = panel.getByRole('button', { name: 'Połącz wybrany dziennik', exact: true });
   await expect(student).toHaveValue('');
   await expect(select).toBeDisabled();
-  await expect(panel.getByRole('button', { name: 'Odśwież dane', exact: true })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Synchronizuj teraz', exact: true })).toHaveCount(0);
   expect(calls.filter((call) => call.operation === 'select' || call.operation === 'sync')).toHaveLength(0);
   await panel.getByRole('radio', { name: /Nikodem.*Szkoła Podstawowa nr 4/ }).check();
   await expect(select).toBeDisabled();
@@ -165,17 +165,17 @@ test('eduVULCAN: rodzic jawnie wybiera SP4 i dziecko, następnie odświeża i od
   await expect(panel.locator('.edu-vulcan-counts > div').filter({ hasText: 'Oceny' })).toContainText('3');
   await expect(panel.locator('.edu-vulcan-counts > div').filter({ hasText: 'Lekcje' })).toContainText('2');
   await expect(panel.locator('.edu-vulcan-counts > div').filter({ hasText: 'Wiadomości rodzica' })).toContainText('1');
-  await panel.getByRole('button', { name: 'Odśwież dane', exact: true }).click();
+  await panel.getByRole('button', { name: 'Synchronizuj teraz', exact: true }).click();
   await expect.poll(() => calls.filter((call) => call.operation === 'sync').length).toBe(2);
-  await expect(panel.getByRole('button', { name: 'Odśwież dane', exact: true })).toBeEnabled();
+  await expect(panel.getByRole('button', { name: 'Synchronizuj teraz', exact: true })).toBeEnabled();
   await expect(panel.locator('.edu-vulcan-notice')).toContainText('Odświeżanie danych zostało zakończone');
   await expect(panel.getByRole('alert')).toHaveCount(0);
-  await panel.getByRole('button', { name: 'Odłącz dziennik', exact: true }).click();
-  const confirmation = panel.getByRole('button', { name: 'Odłącz i usuń dostęp', exact: true });
+  await panel.getByRole('button', { name: 'Rozłącz', exact: true }).click();
+  const confirmation = panel.getByRole('button', { name: 'Rozłącz i usuń dostęp', exact: true });
   await expect(confirmation).toBeVisible();
   expect(calls.filter((call) => call.operation === 'disconnect')).toHaveLength(0);
   await confirmation.click();
-  await expect(panel.getByLabel('Login eduVULCAN', { exact: true })).toBeVisible();
+  await expect(panel.getByLabel('Login lub e-mail eduVULCAN', { exact: true })).toBeVisible();
   await expect(panel.locator('.edu-vulcan-state')).toHaveText('Niepołączono');
   await expect(panel.getByLabel('Hasło eduVULCAN', { exact: true })).toHaveValue('');
   expect(calls.map((call) => call.operation)).toEqual(['status', 'connect', 'select', 'sync', 'sync', 'disconnect']);
@@ -209,6 +209,66 @@ test('eduVULCAN: błędne logowanie i blokada prób mają czytelny błąd, a has
   expect(await containsStoredCredential(page)).toBe(false);
 });
 
+test('eduVULCAN: jedno połączenie Dominiki jest dostępne Sebastianowi z pełnym imieniem i bez personKey', async ({ page }) => {
+  const db = fixtureDatabase();
+  // The application role grants access; optional display names cannot revoke it.
+  await db.doc(`members/${accounts.mother.uid}`).set({ name: 'Dominika Rodzic', role: 'parent', active: true, canLogin: true, adult: true });
+  await db.doc(`members/${accounts.parent.uid}`).set({ name: 'Sebastian Rodzic', role: 'parent', active: true, canLogin: true, adult: true });
+  await db.doc('schoolItems/eduvulcan-family-shared-grade').set({
+    person: 'Nikodem', type: 'grade', title: 'Ocena wspólnego dziennika E2E', subject: 'Edukacja',
+    date: todayKey(), time: '', endTime: '', weekday: 0, note: '',
+    source: 'eduvulcan', sourceProfileId: 'nikodem-sp4',
+    createdBy: accounts.mother.uid, createdAt: Timestamp.now(), syncedAt: Timestamp.now(),
+  });
+  await seedParentMessage();
+  const sharedStatus = { ...connected, lastSyncAt: '2026-10-01T10:00:00.000Z', lastSuccessAt: '2026-10-01T10:00:00.000Z' };
+  // One route state survives changing application identity. The eduVULCAN
+  // fixture password belongs to the shared provider account, not both parents.
+  const calls = await mockApi(page, disconnected, {
+    connect: () => ({ body: { ok: true, status: needsProfile } }),
+    select: () => ({ body: { ok: true, status: connected } }),
+    sync: () => ({ body: { ok: true, status: sharedStatus, sync: { counts: { grades: 1, messages: 1 } } } }),
+    disconnect: () => ({ body: { ok: true, status: disconnected } }),
+  });
+  await loginSchool(page, accounts.mother);
+  let panel = page.locator('.edu-vulcan-connection');
+  await expect(panel.getByRole('heading', { name: 'Połącz konto', exact: true })).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Sprawdź stan połączenia', exact: true })).toBeVisible();
+  await submitCredentials(page);
+  await panel.getByRole('radio', { name: /Nikodem.*Szkoła Podstawowa nr 4/ }).check();
+  await panel.getByLabel('Dziecko w Naszej Rodzinie', { exact: true }).selectOption('Nikodem');
+  await panel.getByRole('button', { name: 'Połącz wybrany dziennik', exact: true }).click();
+  await expect.poll(() => calls.filter((call) => call.operation === 'sync').length).toBe(1);
+  await expect(panel.locator('.edu-vulcan-state')).toHaveText('Połączono');
+  await expect(page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.school-record-list')).toContainText('Ocena wspólnego dziennika E2E');
+  await expect(page.locator('.school-record-list')).toContainText(parentMessageTitle);
+  await page.locator('.top-header').getByRole('button', { name: 'Wyloguj', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Zaloguj się', exact: true })).toBeVisible();
+
+  await loginSchool(page, accounts.parent);
+  panel = page.locator('.edu-vulcan-connection');
+  await expect(panel.locator('.edu-vulcan-state')).toHaveText('Połączono');
+  await expect(panel.locator('.edu-vulcan-summary')).toContainText('Nikodem');
+  await expect(panel.locator('.edu-vulcan-summary')).toContainText('Szkoła Podstawowa nr 4');
+  await expect(panel.locator('.edu-vulcan-summary')).toContainText('1 października 2026');
+  await expect(panel.getByLabel('Hasło eduVULCAN', { exact: true })).toHaveCount(0);
+  await expect(page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.school-record-list')).toContainText('Ocena wspólnego dziennika E2E');
+  await expect(page.locator('.school-record-list')).toContainText(parentMessageTitle);
+  await panel.getByRole('button', { name: 'Sprawdź stan połączenia', exact: true }).click();
+  await expect.poll(() => calls.filter((call) => call.operation === 'status').length).toBe(3);
+  await panel.getByRole('button', { name: 'Synchronizuj teraz', exact: true }).click();
+  await expect.poll(() => calls.filter((call) => call.operation === 'sync').length).toBe(2);
+  await panel.getByRole('button', { name: 'Rozłącz', exact: true }).click();
+  await panel.getByRole('button', { name: 'Rozłącz i usuń dostęp', exact: true }).click();
+  await expect(panel.locator('.edu-vulcan-state')).toHaveText('Niepołączono');
+  expect(calls.filter((call) => call.operation === 'connect')).toHaveLength(1);
+  expect(calls.map((call) => call.operation)).toEqual(['status', 'connect', 'select', 'sync', 'status', 'status', 'sync', 'disconnect']);
+  expectAuthorizedCalls(calls);
+  expect(await containsStoredCredential(page)).toBe(false);
+});
+
 test('eduVULCAN: wygaśnięcie sesji podczas odświeżania przywraca logowanie', async ({ page }) => {
   const calls = await mockApi(page, connected, {
     sync: () => ({ httpStatus: 401, body: { ok: false, error: { code: 'EDU_SESSION_EXPIRED', message: 'Sesja eduVULCAN wygasła. Połącz dziennik ponownie.' } } }),
@@ -216,12 +276,12 @@ test('eduVULCAN: wygaśnięcie sesji podczas odświeżania przywraca logowanie',
   await loginSchool(page);
   const panel = page.locator('.edu-vulcan-connection');
   await expect(panel.locator('.edu-vulcan-state')).toHaveText('Połączono');
-  await panel.getByRole('button', { name: 'Odśwież dane', exact: true }).click();
+  await panel.getByRole('button', { name: 'Synchronizuj teraz', exact: true }).click();
   await expect(panel.getByRole('alert')).toContainText(/wygas|ponown/i);
   await expect(panel.locator('.edu-vulcan-state')).toHaveText('Sesja wygasła');
-  await expect(panel.getByLabel('Login eduVULCAN', { exact: true })).toBeVisible();
+  await expect(panel.getByLabel('Login lub e-mail eduVULCAN', { exact: true })).toBeVisible();
   await expect(panel.getByLabel('Hasło eduVULCAN', { exact: true })).toHaveValue('');
-  await expect(panel.getByRole('button', { name: 'Odśwież dane', exact: true })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Synchronizuj teraz', exact: true })).toHaveCount(0);
   expect(calls.map((call) => call.operation)).toEqual(['status', 'sync']);
   expectAuthorizedCalls(calls);
 });
@@ -233,8 +293,8 @@ test('eduVULCAN: brak konfiguracji backendu nie udostępnia formularza hasła', 
   await expect(panel).toBeVisible();
   await expect(panel).toContainText(/backend|serwer/i);
   await expect(panel.getByLabel('Hasło eduVULCAN', { exact: true })).toHaveCount(0);
-  await expect(panel.getByRole('button', { name: 'Pobierz dostępne dzienniki', exact: true })).toHaveCount(0);
-  await expect(panel.getByRole('button', { name: 'Odśwież dane', exact: true })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Połącz', exact: true })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Synchronizuj teraz', exact: true })).toHaveCount(0);
   expect(calls.map((call) => call.operation)).toEqual(['status']);
   expectAuthorizedCalls(calls);
 });
@@ -260,9 +320,9 @@ test('eduVULCAN: dziecko widzi szkołę bez panelu rodzica i bez żądań do int
   await expect(page.locator('.school-record-list')).not.toContainText(parentMessageTitle);
   await expect(page.locator('.school-record-list')).not.toContainText(parentMessageNote);
   await expect(page.locator('.edu-vulcan-connection')).toHaveCount(0);
-  await expect(page.getByLabel('Login eduVULCAN', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Login lub e-mail eduVULCAN', { exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Hasło eduVULCAN', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Odśwież dane', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Synchronizuj teraz', exact: true })).toHaveCount(0);
   await page.locator('.sidebar-nav').getByRole('button', { name: 'Start', exact: true }).click();
   await page.locator('.sidebar-nav').getByRole('button', { name: 'Szkoła', exact: true }).click();
   await expect(page.locator('.school-loading')).toHaveCount(0);

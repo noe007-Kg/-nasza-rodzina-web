@@ -1,5 +1,28 @@
 # Nasza Rodzina — wykonane sprawdzenia
 
+## Wspólne połączenie eduVULCAN 1.5.1 — 2 października 2026 r.
+
+Poprawiono autoryzację rodzica, wspólny zakres rodziny, formularz połączenia i ograniczenia przyszłego zakresu ucznia. Nie wykonano `git push`, wdrożenia ani logowania do rzeczywistego konta eduVULCAN. Wszystkie dane logowania i szkolne użyte w testach są syntetyczne.
+
+| Sprawdzenie | Wynik |
+| --- | --- |
+| `npm run build`: TypeScript i produkcyjny build Vite | przechodzi |
+| Kalendarz i import szkolny | 17/17 |
+| Serwer eduVULCAN: autoryzacja, zakresy, HTTP, adapter, szyfrowanie i transakcje | 74/74 |
+| Przeglądarki: pełny zestaw Chromium i WebKit | 42/42 |
+| Reguły Firestore/Storage na lokalnych emulatorach | 15/15 |
+| Uwierzytelnienie i rzeczywiste transakcje Auth/Firestore na emulatorach | 3/3 |
+
+Łącznie **151 przypadków testowych przeszło**. Pełny zestaw przeglądarkowy po poprawieniu starych selektorów pola logowania zakończył się powodzeniem; następnie w tym samym uruchomieniu przeszły reguły i integracja Firebase. Build ma dotychczasowe ostrzeżenie Vite o wielkości pakietu JavaScript, bez błędu kompilacji.
+
+Nowe testy potwierdzają, że aktywny rodzic z pełną wyświetlaną nazwą i bez `personKey` może korzystać z integracji. Dominika łączy konto raz, a Sebastian po własnym logowaniu widzi to samo połączenie, Nikodema, czas synchronizacji i pobrane dane bez ponownego hasła. Synchronizacja, limit czasu i rozłączenie są wspólne. Rzeczywiste tokeny emulatora i transakcje sprawdzają szyfrowanie sesji związane z połączeniem `family`, izolację wiadomości rodzica oraz zachowanie pobranej historii po rozłączeniu.
+
+Zakres ucznia jest ograniczony do zweryfikowanego UID i szkolnej tożsamości zatwierdzonej przez rodzica. Zmiana powiązania blokuje zapis w transakcji. Adapter nie wykonuje żadnych żądań skrzynki w zakresie ucznia, a storage odrzuca również mieszaną paczkę ocen i wiadomości. Reguły przygotowanej przyszłej skrzynki ucznia odmawiają dostępu rodzicom i rodzeństwu. Formularz własnego połączenia ucznia nie jest włączony w obecnym interfejsie.
+
+Sprawdzono wszystkie moduły na telefonie, tablecie i komputerze w obu orientacjach. Pozostałe moduły i style nie zmieniły się; w głównym pliku aplikacji zmieniono wyłącznie numer wersji. Zrzuty Startu w `preview/` zachowano z poprzedniej paczki jako podgląd tego samego wyglądu.
+
+**Testy nie potwierdzają logowania do rzeczywistego konta rodziny ani konfiguracji produkcyjnego Vercel/Firebase.** WebKit sprawdza silnik Safari, bez urządzenia fizycznego. Po wdrożeniu pełnego projektu, opublikowaniu reguł Firestore i zachowaniu dotychczasowych kluczy połącz dziennik raz ponownie. Instrukcja: [AKTUALIZACJA_1.5.1.md](AKTUALIZACJA_1.5.1.md), [docs/VULCAN.md](docs/VULCAN.md), [tests/README.md](tests/README.md).
+
 ## Integracja eduVULCAN 1.5.0 — 2 października 2026 r.
 
 Kod i instrukcje przygotowano dla istniejącego GitHub/Vercel/Firebase. Nie opublikowano zmian na produkcyjnym serwerze i nie używano rzeczywistego loginu, hasła ani danych szkolnych rodziny.

@@ -1,6 +1,6 @@
 # Wdrożenie aplikacji Nasza Rodzina
 
-Projekt **1.5.0** składa się ze strony zbudowanej przez Vite, usług Firebase oraz funkcji serwerowych Vercel do połączenia eduVULCAN. Firebase Authentication obsługuje konta, Firestore dane, a Storage pliki. Organizer można uruchomić na zwykłym hostingu statycznym; integracja eduVULCAN wymaga pełnego projektu z `api/` i `server/`, wdrożonego do Vercel z konfiguracją serwerową.
+Projekt **1.5.1** składa się ze strony zbudowanej przez Vite, usług Firebase oraz funkcji serwerowych Vercel do połączenia eduVULCAN. Firebase Authentication obsługuje konta, Firestore dane, a Storage pliki. Aktywni rodzice korzystają ze wspólnej sesji dziennika. Organizer można uruchomić na zwykłym hostingu statycznym; integracja eduVULCAN wymaga pełnego projektu z `api/` i `server/`, wdrożonego do Vercel z konfiguracją serwerową.
 
 ## 1. Firebase i konta rodziny
 
@@ -22,7 +22,7 @@ W `.env.example` znajdziesz nazwy obsługiwanych ustawień. Aby zmienić projekt
 
 Nie ustawiaj `VITE_USE_EMULATORS=true` na publicznym hostingu. Ta opcja służy do pracy lokalnej. Nie wprowadzaj sekretów do zmiennych zaczynających się od `VITE_`, ponieważ mogą trafić do kodu pobieranego przez przeglądarkę.
 
-Dla eduVULCAN ustaw oddzielnie zmienne **serwerowe** w Vercel: `FIREBASE_PROJECT_ID`, jeden wariant klucza `FIREBASE_SERVICE_ACCOUNT_JSON` albo `FIREBASE_SERVICE_ACCOUNT_BASE64`, `EDUVULCAN_ENCRYPTION_KEY_BASE64` oraz domenę `EDUVULCAN_SITE_ORIGIN`. `.env.example` zawiera wyłącznie puste pola na sekrety. Szczegółowe kroki pobrania klucza Firebase Admin, wygenerowania klucza szyfrowania i wyboru SP4: [VULCAN.md](VULCAN.md). Do repozytorium nie dodawaj uzupełnionego pliku z sekretami.
+Dla eduVULCAN ustaw oddzielnie zmienne **serwerowe** w Vercel: `FIREBASE_PROJECT_ID`, dokładnie jeden wariant klucza `FIREBASE_SERVICE_ACCOUNT_JSON` albo `FIREBASE_SERVICE_ACCOUNT_BASE64` oraz `EDUVULCAN_ENCRYPTION_KEY_BASE64`. Opcjonalne są `EDUVULCAN_ENCRYPTION_KEY_ID`, `EDUVULCAN_SESSION_TTL_HOURS` i domena `EDUVULCAN_SITE_ORIGIN`. Aktualizacja z 1.5.0 nie dodaje nowych zmiennych — zachowaj istniejące klucze. `.env.example` zawiera wyłącznie puste pola na sekrety. Szczegółowe kroki pobrania klucza Firebase Admin, wygenerowania klucza szyfrowania i wyboru SP4: [VULCAN.md](VULCAN.md). Do repozytorium nie dodawaj uzupełnionego pliku z sekretami.
 
 Publikuj tę wersję w głównym katalogu domeny, np. `https://rodzina.example.pl/` lub na osobnej subdomenie. Adres `https://example.pl/rodzina/` wymaga dodatkowych zmian ścieżek zasobów i PWA w kodzie.
 
@@ -33,7 +33,7 @@ Repozytorium: [noe007-Kg/-nasza-rodzina-web](https://github.com/noe007-Kg/-nasza
 Deployments: [projekt nasza-rodzina-web w Vercel](https://vercel.com/noe007-kg/nasza-rodzina-web/deployments).
 
 1. Zachowaj kopię repozytorium. Dane Firebase zabezpiecz osobno: pliki projektu nie zawierają bazy rodzinnej.
-2. Do głównego folderu repozytorium wgraj zawartość paczki **PROJEKT 1.5.0**, łącznie z `api/` i `server/`. `package.json` musi znajdować się bezpośrednio w katalogu ustawionym w Vercel jako **Root Directory**. Paczka **STRONA** i samo `dist` nie zawierają uruchamialnego backendu integracji.
+2. Do głównego folderu repozytorium wgraj zawartość paczki **PROJEKT 1.5.1**, łącznie z `api/` i `server/`. `package.json` musi znajdować się bezpośrednio w katalogu ustawionym w Vercel jako **Root Directory**. Paczka **STRONA** i samo `dist` nie zawierają uruchamialnego backendu integracji.
 3. Zacommituj także `package-lock.json`. Pomiń `node_modules`, `dist`, `.env.local` i klucze administratora.
 4. Ustaw w Vercel:
 

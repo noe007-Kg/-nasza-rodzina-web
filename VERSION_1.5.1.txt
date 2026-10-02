@@ -1,0 +1,15 @@
+Nasza Rodzina 1.5.1
+Data: 02.10.2026
+
+Jedno wspólne połączenie eduVULCAN dla aktywnych rodziców.
+Konto dziennika Dominiki, jawnie wybrany profil Nikodema/SP4.
+Formularz połączenia, sprawdzenie stanu, synchronizacja i rozłączenie.
+Wygląd pozostałych modułów pozostaje zachowany.
+Start: START_TUTAJ.md.
+Aktualizacja: AKTUALIZACJA_1.5.1.md.
+Zmiany: ZMIANY_1.5.1.md.
+Sprawdzenia: RAPORT_TESTOW.md.
+
+Nowe zmienne środowiskowe Vercel: żadne. Zachowaj istniejące klucze.
+Po aktualizacji z 1.5.0 połącz dziennik raz ponownie.
+Nie wykonano git push ani publikacji. Nie potwierdzono logowania na rzeczywistym koncie.

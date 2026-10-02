@@ -1,0 +1,43 @@
+Nasza Rodzina: zmiany 1.5.0 → 1.5.1
+
+ZMIENIONE I DODANE PLIKI
+.env.example
+AKTUALIZACJA_1.5.1.md
+CHANGELOG.txt
+RAPORT_TESTOW.md
+README.md
+STAN_PROJEKTU.md
+START_TUTAJ.md
+VERSION_1.5.1.txt
+WGRYWANIE_v1.5.1.txt
+ZMIANY_1.5.1.md
+ZMIENIONE_PLIKI_1.5.1.txt
+docs/VULCAN.md
+docs/WDROZENIE.md
+firestore.rules
+package-lock.json
+package.json
+server/edu-access.mjs
+server/edu-auth.mjs
+server/edu-http.mjs
+server/edu-provider.mjs
+server/edu-service.mjs
+server/edu-storage.mjs
+src/EduVulcanConnection.tsx
+src/main.tsx
+tests/README.md
+tests/edu-access.test.mjs
+tests/edu-browser.spec.ts
+tests/edu-provider.test.mjs
+tests/edu-scope-storage.test.mjs
+tests/edu-storage.integration.mjs
+tests/security.rules.test.mjs
+
+USUNIĘTE PLIKI (zastąpione znacznikami 1.5.1)
+VERSION_1.5.0.txt
+WGRYWANIE_v1.5.0.txt
+
+api/eduvulcan/*.mjs, server/edu-secrets.mjs, storage.rules i style pozostają bez zmian.
+Nowe Environment Variables Vercel: żadne. Zachowaj istniejące klucze.
+Instrukcja: AKTUALIZACJA_1.5.1.md. Testy: RAPORT_TESTOW.md.
+Nie wykonano git push ani publikacji.

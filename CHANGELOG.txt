@@ -1,5 +1,13 @@
 NASZA RODZINA — CHANGELOG
 
+v1.5.1 — 02.10.2026
+- Jedno wspólne połączenie eduVULCAN dla aktywnych rodziców rodziny; dane wybranego Nikodema/SP4 dostępne Sebastianowi i Dominice.
+- Autoryzacja według zweryfikowanego konta Firebase, role: parent, active: true i canLogin: true; pełna nazwa rodzica nie blokuje już integracji.
+- Formularz Połącz konto oraz przyciski Połącz, Sprawdź stan połączenia, Synchronizuj teraz i Rozłącz; wspólny status, uczeń i ostatnia synchronizacja.
+- Przygotowany osobny zakres przyszłego połączenia ucznia, z powiązaniem tylko jego szkolnej tożsamości i oddzieleniem wiadomości.
+- Hasło używane wyłącznie przy logowaniu; sesja zaszyfrowana na serwerze. Brak nowych zmiennych środowiskowych Vercel.
+- Zachowanie wyglądu pozostałych modułów. Aktualizacja nie publikuje zmian automatycznie i wymaga jednego ponownego połączenia dziennika.
+
 v1.5.0 — 02.10.2026
 - Serwerowe połączenie eduVULCAN: wybór profilu szkoły i dziecka, pobieranie ocen, planu, zadań, sprawdzianów oraz odebranych wiadomości.
 - Zaszyfrowana sesja, autoryzacja rodzica, prywatna skrzynka, ponowne logowanie i odłączenie.
