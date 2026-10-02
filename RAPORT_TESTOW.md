@@ -1,5 +1,34 @@
 # Nasza Rodzina — wykonane sprawdzenia
 
+## Etap 1: design system i Szkoła 1.5.1 — 2 października 2026 r.
+
+Przebudowano tylko warstwę wizualną Szkoły i utworzono wspólne komponenty. Nie wykonano git push ani wdrożenia. Nie korzystano z danych ani danych logowania produkcyjnej rodziny; podglądy pochodzą z syntetycznych danych lokalnych emulatorów.
+
+| Sprawdzenie | Wynik końcowy |
+| --- | --- |
+| `npm ci` | przechodzi, 856 pakietów |
+| `npm run build` | TypeScript i build Vite przechodzą |
+| `npm run test:unit` — kalendarz i import | 17/17 |
+| `npm run test:server` — eduVULCAN, szyfrowanie, zakresy i autoryzacja | 74/74 |
+| `npm run test:rules` — reguły Firestore/Storage | 15/15 |
+| Istniejące scenariusze przeglądarkowe Chromium/WebKit | 42/42 po poprawce testowego oczekiwania na wylogowanie |
+| Nowe scenariusze układu Szkoły Chromium/WebKit | 14/14 |
+| Integracja prawdziwych lokalnych transakcji i tokenów Firebase | 3/3 |
+
+Łącznie **165 różnych przypadków przechodzi**. Wynik przeglądarkowy obejmuje pełne pierwsze uruchomienie `npm run test:e2e` oraz ponowne uruchomienia poprawionych scenariuszy: całego zestawu 14 nowych testów Szkoły i testu Zdrowia w obu silnikach. Jednostkowe i serwerowe przypadki dodatkowo uruchomiono z `--test-isolation=none`, aby zachować szczegółowy raport 17 i 74 przypadków w obecnym środowisku Node.
+
+Nowe testy potwierdzają: liczniki 8 ocen/3 zadań/2 sprawdzianów z rzeczywistych SDK Firestore emulatora mimo innych liczników w odpowiedzi API; izolację rodzeństwa; brak panelu połączenia, jego żądań i prywatnej skrzynki u dziecka; dostęp rodzica do wiadomości; tylko odczyt wpisów eduVULCAN; powrót fokusu po zamknięciu dialogu. Zachowane dotychczasowe testy sprawdzają import, edycję, kalendarz i cały przepływ połączenia eduVULCAN, w tym wspólne połączenie Dominiki i Sebastiana.
+
+Sprawdzono telefon pionowo 390×844, telefon poziomo 844×390, tablet pionowo 900×1440 i komputer poziomo 1440×900. Układy mają odpowiednio 2/3/2/4 kolumny w obu silnikach. Kafel Dzisiaj zajmuje dwa pola. Nie ma przewijania poziomego strony; filtry i dni tygodnia przewijają się wewnątrz swoich paneli. Przy jednakowych szerokościach kontenera test porównuje wymiary i położenie wszystkich kart z tolerancją 1 px. Obejrzano zapisane podglądy telefonu, tabletu i komputera oraz poprawiono zawijanie nagłówka panelu eduVULCAN na telefonie.
+
+Naturalna różnica 15 px szerokości na dużych ekranach wynika z dotychczasowego `scrollbar-gutter: stable` i klasycznego paska Chromium, podczas gdy WebKit ma pasek nakładany na treść. Test osobno weryfikuje tę zależność oraz zgodność układu bez zmiany globalnego CSS. Nie stwierdzono problemu z siatką ani przepełnieniem strony. WebKit sprawdza silnik Safari; nie wykonano testu na fizycznym iPhonie lub iPadzie.
+
+Build zgłasza dotychczasowe ostrzeżenie Vite o pakiecie JavaScript większym niż 500 kB; kompilacja kończy się poprawnie. Testy emulatorów wymagają w tej sesji lokalnych zależności przeglądarek i pominięcia przekierowania localhost przez proxy narzędzi Firebase. Ta korekta dotyczy lokalnego `node_modules`, nie źródeł ani zależności projektu i nie jest wymagana w Vercel.
+
+Audyt względem niezmiennego archiwum 1.5.1 potwierdził identyczność 21 plików backendu/API, reguł, konfiguracji Firebase, głównej aplikacji, pakietów i `.env.example`. Nie zmieniono logiki CRUD/importu/kalendarza, Authentication, Firestore, Storage, uprawnień ani synchronizacji eduVULCAN. Nowe odczyty i obliczenia dotyczą wyłącznie prezentacji istniejących zdjęć i szkolnych danych. **Nowe Environment Variables: żadne.**
+
+Lista zmienionych plików i podglądy: [ETAP_1_SZKOLA.md](ETAP_1_SZKOLA.md).
+
 ## Wspólne połączenie eduVULCAN 1.5.1 — 2 października 2026 r.
 
 Poprawiono autoryzację rodzica, wspólny zakres rodziny, formularz połączenia i ograniczenia przyszłego zakresu ucznia. Nie wykonano `git push`, wdrożenia ani logowania do rzeczywistego konta eduVULCAN. Wszystkie dane logowania i szkolne użyte w testach są syntetyczne.

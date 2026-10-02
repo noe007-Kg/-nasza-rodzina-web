@@ -1,26 +1,30 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { User } from 'firebase/auth';
 import { collection, deleteField, doc, getDoc, onSnapshot, query, Timestamp, where, writeBatch } from 'firebase/firestore';
 import { db } from './firebase';
 import { EduVulcanConnection } from './EduVulcanConnection';
+import type { EduVulcanStatus } from './EduVulcanConnection';
+import { useSchoolProfilePhotos } from './useSchoolProfilePhotos';
+import { Card, Icon, PrimaryButton, ProfileSelector, SecondaryButton, SectionHeader, StatCard, StatusPill } from './ui';
+import type { IconName } from './ui';
 import { isSchoolType, MAX_SCHOOL_FILE_BYTES, MAX_SCHOOL_ROWS, parseSchoolFile, SCHOOL_PEOPLE, SCHOOL_TYPES, schoolImportId, validateSchoolEntry } from './school-import';
 import type { SchoolEntry, SchoolType } from './school-import';
 import './school.css';
 
-type SchoolMember = { name?: string; role?: string; personKey?: string };
+type SchoolMember = { name?: string; role?: string; personKey?: string; photoURL?: string };
 type SchoolRecord = SchoolEntry & {
   id: string; calendarEventId?: string; calendarCreatedBy?: string; createdBy?: string; createdAt?: Date;
   source?: string; syncedAt?: Date; parentOnly?: boolean;
 };
 type SchoolForm = SchoolEntry & { scheduleMode: 'weekly' | 'date'; addToCalendar: boolean; calendarDate: string };
-const META: Record<SchoolType, { title: string; singular: string; icon: string }> = {
-  lesson: { title: 'Plan lekcji', singular: 'Lekcja', icon: '📚' },
-  homework: { title: 'Zadania domowe', singular: 'Zadanie domowe', icon: '📝' },
-  test: { title: 'Sprawdziany', singular: 'Sprawdzian', icon: '📅' },
-  grade: { title: 'Oceny', singular: 'Ocena', icon: '⭐' },
-  message: { title: 'Wiadomości', singular: 'Wiadomość', icon: '💬' },
-  activity: { title: 'Zajęcia dodatkowe', singular: 'Zajęcia dodatkowe', icon: '🎯' },
+const META: Record<SchoolType, { title: string; singular: string; icon: IconName }> = {
+  lesson: { title: 'Plan lekcji', singular: 'Lekcja', icon: 'book' },
+  homework: { title: 'Zadania domowe', singular: 'Zadanie domowe', icon: 'homework' },
+  test: { title: 'Sprawdziany', singular: 'Sprawdzian', icon: 'test' },
+  grade: { title: 'Oceny', singular: 'Ocena', icon: 'grade' },
+  message: { title: 'Wiadomości', singular: 'Wiadomość', icon: 'message' },
+  activity: { title: 'Zajęcia dodatkowe', singular: 'Zajęcia dodatkowe', icon: 'activity' },
 };
 const WEEKDAYS = ['Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota', 'Niedziela'];
 const CHILD_TYPES: SchoolType[] = ['lesson', 'homework', 'test', 'activity'];
@@ -87,23 +91,28 @@ function blankForm(person: string, type: SchoolType, day: string): SchoolForm {
   };
 }
 
-/** Native dialogs supply modal focus isolation, Escape handling and return focus to the opener. */
+/** Native dialogs isolate focus; layout cleanup restores it before React removes the portal. */
 function SchoolDialog({ title, children, onClose, busy = false }: { title: string; children: React.ReactNode; onClose: () => void; busy?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const dialog = ref.current;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (dialog && !dialog.open) dialog.showModal();
-    return () => { dialog?.close(); };
+    return () => {
+      dialog?.close();
+      // A replacement modal supplies its own focus. A detached opener cannot receive it.
+      if (opener?.isConnected && !document.querySelector('dialog[open]')) opener.focus({ preventScroll: true });
+    };
   }, []);
-  return createPortal(<dialog ref={ref} className="school-dialog" aria-labelledby={titleId} aria-busy={busy} onCancel={(event) => { event.preventDefault(); if (!busy) closeRef.current(); }} onClick={(event) => {
+  return createPortal(<dialog ref={ref} className="school-dialog family-ui" aria-labelledby={titleId} aria-busy={busy} onCancel={(event) => { event.preventDefault(); if (!busy) closeRef.current(); }} onClick={(event) => {
     if (event.target !== event.currentTarget || busy) return;
     const box = event.currentTarget.getBoundingClientRect();
     if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) closeRef.current();
   }}>
-    <header><div><small>Nasza Rodzina · Szkoła</small><h2 id={titleId}>{title}</h2></div><button type="button" className="school-close" onClick={onClose} disabled={busy} aria-label="Zamknij okno">✕</button></header>
+    <header><div><small>Nasza Rodzina · Szkoła</small><h2 id={titleId}>{title}</h2></div><button type="button" className="school-close" onClick={onClose} disabled={busy} aria-label="Zamknij okno"><Icon name="close" /></button></header>
     <div className="school-dialog-body">{children}</div>
   </dialog>, document.body);
 }
@@ -111,6 +120,10 @@ function SchoolDialog({ title, children, onClose, busy = false }: { title: strin
 export function SchoolModule({ user, member }: { user: User; member: SchoolMember | null }) {
   const parent = member?.role === 'parent';
   const ownStudent = member?.personKey || member?.name || '';
+  const profilePhotos = useSchoolProfilePhotos(user.uid, member);
+  const [connectionStatus, setConnectionStatus] = useState<EduVulcanStatus | null>(null);
+  const weekPanel = useRef<HTMLElement>(null);
+  const recordsPanel = useRef<HTMLElement>(null);
   const [records, setRecords] = useState<SchoolRecord[]>([]);
   const [parentMessages, setParentMessages] = useState<SchoolRecord[]>([]);
   const [messageError, setMessageError] = useState('');
@@ -184,6 +197,37 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
     if (a.type === 'grade' || a.type === 'message') return (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0);
     return (a.date || '9999').localeCompare(b.date || '9999') || a.weekday - b.weekday || a.time.localeCompare(b.time) || a.title.localeCompare(b.title, 'pl');
   });
+  // Dashboard values are views of the records already available to this account.
+  const today = dateKey(new Date());
+  const todaySessions = ownRecords.filter((row) => (row.type === 'lesson' || row.type === 'activity') && matchesDay(row, today)).sort((a, b) => a.time.localeCompare(b.time));
+  const todayDeadlines = ownRecords.filter((row) => (row.type === 'homework' || row.type === 'test') && row.date === today);
+  const visibleTypes = SCHOOL_TYPES.filter((type) => parent || type !== 'message');
+  const linkedToPerson = parent && connectionStatus?.selectedStudent?.personKey === person;
+  const schoolProfile = linkedToPerson ? connectionStatus?.profiles.find((profile) => profile.id === connectionStatus.selectedStudent?.profileId) : undefined;
+  const connected = linkedToPerson && connectionStatus?.state === 'connected';
+  const latestCachedSync = ownRecords.reduce<Date | undefined>((latest, row) => row.syncedAt && (!latest || row.syncedAt > latest) ? row.syncedAt : latest, undefined);
+  const lastSync = linkedToPerson ? recordDate(connectionStatus?.lastSyncAt || connectionStatus?.lastSuccessAt) || latestCachedSync : latestCachedSync;
+  const avatarFor = (student: string) => student === 'Layla' ? '🌸' : student === 'Nikodem' ? '🚀' : '🎓';
+
+  function focusSection(section: React.RefObject<HTMLElement | null>) {
+    const target = section.current;
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }
+  function openCategory(type: SchoolType) {
+    setFilter(type);
+    focusSection(type === 'lesson' ? weekPanel : recordsPanel);
+  }
+  function previewFor(type: SchoolType): string {
+    const rows = ownRecords.filter((row) => row.type === type);
+    if (!rows.length) return type === 'grade' ? 'Oceny pojawią się po dodaniu lub synchronizacji.' : type === 'message' ? 'Brak zapisanych wiadomości dla rodzica.' : 'Brak zapisanych wpisów.';
+    if (type === 'grade' || type === 'message') {
+      const latest = [...rows].sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0))[0];
+      return `${type === 'grade' ? 'Ostatnia' : 'Ostatnia wiadomość'}: ${[latest.subject, latest.title].filter(Boolean).join(' · ')}`;
+    }
+    const next = [...rows].filter((row) => !row.date || row.date >= today).sort((a, b) => (a.date || nextWeekday(a.weekday || 1)).localeCompare(b.date || nextWeekday(b.weekday || 1)) || a.time.localeCompare(b.time))[0];
+    return next ? [next.title, next.date ? shortDate(next.date) : WEEKDAYS[next.weekday - 1], next.time].filter(Boolean).join(' · ') : 'Zobacz wszystkie zapisane wpisy.';
+  }
   const canEdit = (row: SchoolEntry) => {
     const linked = row as SchoolRecord;
     if (linked.source === 'eduvulcan' || linked.parentOnly) return false;
@@ -316,46 +360,63 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
 
   function rowButton(row: SchoolRecord, inPlan = false) {
     return <button type="button" className={`school-entry ${inPlan ? 'school-plan-entry' : ''}`} key={row.id} onClick={() => setDetail(row)}>
-      <span className={`school-entry-icon school-type-${row.type}`} aria-hidden="true">{META[row.type].icon}</span>
+      <span className={`school-entry-icon school-type-${row.type}`} aria-hidden="true"><Icon name={META[row.type].icon} /></span>
       {inPlan && <time>{row.time}<small>{row.endTime}</small></time>}
       <span className="school-entry-copy"><strong>{row.title}</strong><span>{[row.subject, inPlan ? row.note : row.date ? shortDate(row.date) : row.weekday ? WEEKDAYS[row.weekday - 1] : '', !inPlan && row.time ? `${row.time}${row.endTime ? `–${row.endTime}` : ''}` : ''].filter(Boolean).join(' · ') || META[row.type].singular}</span>{row.source === 'eduvulcan' && <small className="school-source-badge">eduVULCAN · {row.parentOnly ? 'dla rodzica' : 'tylko odczyt'}</small>}</span>
       {!inPlan && <span className="school-entry-type">{META[row.type].singular}</span>}
-      <span className="school-entry-arrow" aria-hidden="true">›</span>
+      <span className="school-entry-arrow" aria-hidden="true"><Icon name="chevron-right" /></span>
     </button>;
   }
 
-  return <div className="page-content school-module">
-    <header className="school-heading"><div><span className="school-eyebrow">Codzienność dzieci</span><h1>🎒 Szkoła</h1><p>Plan tygodnia, zadania i ważne szkolne sprawy w jednym miejscu.</p></div><div className="school-heading-actions">
-      {parent && <button className="secondary-button" type="button" onClick={() => { setImportError(''); setImportRows([]); setImportName(''); setImportOpen(true); }}>Importuj plik</button>}
-      {person && <button className="primary-button" type="button" onClick={() => openAdd()}>＋ Dodaj wpis</button>}
-    </div></header>
-    <p className="school-access-note">{parent ? 'Widok rodzica · możesz zarządzać danymi wszystkich dzieci.' : ownStudent ? `Twój szkolny widok · ${ownStudent}. Oceny i wiadomości uzupełnia rodzic.` : 'Konto nie ma przypisanej osoby. Rodzic może uzupełnić profil w ustawieniach.'}</p>
-    {notice && <div className="school-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Zamknij komunikat">✕</button></div>}
-    {loadError && <div className="school-error" role="alert"><span>{loadError}</span><button type="button" className="secondary-button" onClick={() => setRetry((value) => value + 1)}>Spróbuj ponownie</button></div>}
-    {parent && messageError && <div className="school-error" role="alert"><span>{messageError}</span><button type="button" className="secondary-button" onClick={() => setRetry((value) => value + 1)}>Ponów odczyt wiadomości</button></div>}
-    {students.length > 0 && <nav className="school-students" aria-label="Wybierz dziecko">{students.map((student) => <button type="button" key={student} className={person === student ? 'active' : ''} aria-pressed={person === student} onClick={() => setSelectedPerson(student)}><span aria-hidden="true">{student === 'Layla' ? '🌸' : student === 'Nikodem' ? '🚀' : '🎓'}</span>{student}</button>)}</nav>}
+  return <div className="page-content school-module family-ui">
+    <SectionHeader className="school-heading" title="Szkoła" eyebrow="Codzienność dzieci" description="Plan, postępy i ważne szkolne sprawy. Wszystko blisko siebie." icon="school" actions={<>
+      {parent && <SecondaryButton icon="upload" onClick={() => { setImportError(''); setImportRows([]); setImportName(''); setImportOpen(true); }}>Importuj plik</SecondaryButton>}
+      {person && <PrimaryButton icon="plus" onClick={() => openAdd()}>Dodaj wpis</PrimaryButton>}
+    </>} />
+    <p className="school-access-note"><Icon name="shield" />{parent ? 'Widok rodzica · szkolne sprawy wszystkich dzieci.' : ownStudent ? `Twój szkolny widok · ${ownStudent}.` : 'Konto nie ma przypisanej osoby. Rodzic może uzupełnić profil w ustawieniach.'}</p>
+    {notice && <div className="school-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Zamknij komunikat"><Icon name="close" /></button></div>}
+    {loadError && <div className="school-error" role="alert"><span>{loadError}</span><SecondaryButton onClick={() => setRetry((value) => value + 1)}>Spróbuj ponownie</SecondaryButton></div>}
+    {parent && messageError && <div className="school-error" role="alert"><span>{messageError}</span><SecondaryButton onClick={() => setRetry((value) => value + 1)}>Ponów odczyt wiadomości</SecondaryButton></div>}
+    {students.length > 0 && <ProfileSelector className="school-students" label={parent ? 'Wybierz dziecko' : 'Twój profil szkolny'} profiles={students.map((student) => ({ key: student, label: student, avatar: avatarFor(student), photoURL: profilePhotos.get(student) }))} value={person} onChange={setSelectedPerson} />}
     {loading ? <div className="school-loading" role="status">Ładowanie danych szkolnych…</div> : person && <>
-      <section className="school-panel school-week-panel" aria-labelledby="school-week-title">
-        <div className="school-panel-heading"><div><h2 id="school-week-title">Tydzień {person === 'Layla' ? 'Layli' : person === 'Nikodem' ? 'Nikodema' : person === 'Paweł' ? 'Pawła' : person}</h2><p>{shortDate(week[0])} – {shortDate(week[6])}</p></div><div className="school-week-controls"><button type="button" className="school-arrow-button" onClick={() => setSelectedDate(moveDate(selectedDate, -7))} aria-label="Poprzedni tydzień">‹</button><button type="button" className="secondary-button" onClick={() => setSelectedDate(dateKey(new Date()))}>Dzisiaj</button><button type="button" className="school-arrow-button" onClick={() => setSelectedDate(moveDate(selectedDate, 7))} aria-label="Następny tydzień">›</button></div></div>
-        <div className="school-week-days">{week.map((key, index) => {
-          const count = ownRecords.filter((row) => (row.type === 'lesson' || row.type === 'activity') && matchesDay(row, key)).length;
-          return <button type="button" key={key} className={`${selectedDate === key ? 'active' : ''} ${dateKey(new Date()) === key ? 'today' : ''}`} aria-pressed={selectedDate === key} onClick={() => setSelectedDate(key)}><span>{WEEKDAYS[index].slice(0, 3)}</span><strong>{localDate(key).getDate()}</strong><small>{count ? `${count} zajęć` : 'Wolne'}</small></button>;
-        })}</div>
-        <div className="school-plan-heading"><h3>{WEEKDAYS[weekdayOf(selectedDate) - 1]}, {shortDate(selectedDate)}</h3><label className="school-date-select"><span>Wybierz datę</span><input type="date" value={selectedDate} onChange={(event) => { if (event.target.value) setSelectedDate(event.target.value); }} /></label></div>
-        <div className="school-plan-list">{dayRecords.length ? dayRecords.map((row) => rowButton(row, true)) : <div className="school-empty-state"><span aria-hidden="true">☀️</span><strong>Na ten dzień nie ma zajęć.</strong><p>Dodaj plan lekcji lub zajęcia dodatkowe.</p><button type="button" className="secondary-button" onClick={() => openAdd('lesson')}>Dodaj lekcję</button></div>}</div>
+      <Card className="school-student-panel" tone="blue" as="section" aria-label={`Profil szkolny: ${person}`}>
+        <span className="school-student-avatar" aria-hidden="true"><span>{avatarFor(person)}</span>{profilePhotos.get(person) && <img src={profilePhotos.get(person)} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} />}</span>
+        <div className="school-student-copy"><span className="school-eyebrow">Twój szkolny plan</span><h2>{person}</h2><p>{schoolProfile?.schoolName || 'Plan i szkolne sprawy'}{schoolProfile?.className ? ` · klasa ${schoolProfile.className}` : ''}</p>{schoolProfile?.academicYear && <small>Rok szkolny {schoolProfile.academicYear}</small>}</div>
+        <div className="school-student-status"><StatusPill tone={connected ? 'success' : linkedToPerson && connectionStatus?.state === 'expired' ? 'warning' : 'neutral'}>{connected ? 'Połączono z eduVULCAN' : linkedToPerson && connectionStatus?.state === 'expired' ? 'Sesja eduVULCAN wygasła' : ownRecords.some((row) => row.source === 'eduvulcan') ? 'Dane z eduVULCAN' : 'Wpisy rodzinne'}</StatusPill><small>{lastSync ? `Ostatnia synchronizacja: ${lastSync.toLocaleString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : 'Twoje zapisane informacje są poniżej.'}</small></div>
+      </Card>
+      <section className="school-dashboard-grid" aria-label={`Szkolne podsumowanie: ${person}`}>
+        <StatCard className="school-today-card" data-testid="school-stat-today" label="Dzisiaj" value={todaySessions.length + todayDeadlines.length} icon="sun" tone="violet" preview={<><span>{todaySessions.length ? `${todaySessions.length} zajęć${todaySessions[0].time ? ` · od ${todaySessions[0].time}` : ''}` : 'Brak zaplanowanych zajęć na dziś.'}</span>{todayDeadlines.length > 0 && <span>{todayDeadlines.length} szkolnych spraw na dziś</span>}{todaySessions.slice(0, 2).map((row) => <span key={row.id}>{row.time} · {row.title}</span>)}</>} onClick={() => { setSelectedDate(today); focusSection(weekPanel); }} badge={<StatusPill tone={todayDeadlines.length ? 'important' : 'neutral'}>{todayDeadlines.length ? 'Ważne dzisiaj' : shortDate(today)}</StatusPill>} />
+        <StatCard data-testid="school-stat-lessons" label="Plan lekcji" value={ownRecords.filter((row) => row.type === 'lesson').length} icon="book" tone="blue" preview={previewFor('lesson')} onClick={() => openCategory('lesson')} />
+        <StatCard data-testid="school-stat-grades" label="Oceny" value={ownRecords.filter((row) => row.type === 'grade').length} icon="grade" tone="gold" preview={previewFor('grade')} active={filter === 'grade'} onClick={() => openCategory('grade')} />
+        <StatCard data-testid="school-stat-homework" label="Zadania domowe" value={ownRecords.filter((row) => row.type === 'homework').length} icon="homework" tone="mint" preview={previewFor('homework')} active={filter === 'homework'} onClick={() => openCategory('homework')} />
+        <StatCard data-testid="school-stat-tests" label="Sprawdziany" value={ownRecords.filter((row) => row.type === 'test').length} icon="test" tone="violet" preview={previewFor('test')} active={filter === 'test'} onClick={() => openCategory('test')} />
+        {parent && <StatCard data-testid="school-stat-messages" label="Wiadomości" value={ownRecords.filter((row) => row.type === 'message').length} icon="message" tone="rose" preview={previewFor('message')} active={filter === 'message'} onClick={() => openCategory('message')} badge={<StatusPill tone="neutral">Tylko rodzice</StatusPill>} />}
+        <StatCard data-testid="school-stat-activities" label="Zajęcia dodatkowe" value={ownRecords.filter((row) => row.type === 'activity').length} icon="activity" tone="mint" preview={previewFor('activity')} active={filter === 'activity'} onClick={() => openCategory('activity')} />
       </section>
-      <section className="school-panel school-records-panel" aria-labelledby="school-records-title"><div className="school-panel-heading"><div><h2 id="school-records-title">Wpisy szkolne</h2><p>Wszystkie zapisane informacje · {ownRecords.length} wpisów</p></div></div>
-        <div className="school-filters" role="group" aria-label="Rodzaj wpisów"><button type="button" className={filter === 'all' ? 'active' : ''} aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>Wszystkie <span>{ownRecords.length}</span></button>{SCHOOL_TYPES.map((type) => <button type="button" key={type} className={filter === type ? 'active' : ''} aria-pressed={filter === type} onClick={() => setFilter(type)}>{META[type].icon} {META[type].title} <span>{ownRecords.filter((row) => row.type === type).length}</span></button>)}</div>
-        <div className="school-record-list">{filteredRecords.length ? filteredRecords.map((row) => rowButton(row)) : <div className="school-empty-state"><strong>Brak wpisów w tej kategorii.</strong>{(filter === 'all' || parent || CHILD_TYPES.includes(filter)) && <button type="button" className="secondary-button" onClick={() => openAdd(filter === 'all' ? 'homework' : filter)}>Dodaj pierwszy wpis</button>}</div>}</div>
-      </section>
+      <div className="school-details-grid">
+        <section ref={weekPanel} tabIndex={-1} className="school-panel school-week-panel" aria-labelledby="school-week-title">
+          <SectionHeader id="school-week-title" level={2} title={`Tydzień ${person === 'Layla' ? 'Layli' : person === 'Nikodem' ? 'Nikodema' : person === 'Paweł' ? 'Pawła' : person}`} description={`${shortDate(week[0])} – ${shortDate(week[6])}`} icon="calendar" className="school-panel-heading" actions={<div className="school-week-controls"><SecondaryButton className="school-arrow-button" onClick={() => setSelectedDate(moveDate(selectedDate, -7))} aria-label="Poprzedni tydzień"><Icon name="chevron-left" /></SecondaryButton><SecondaryButton onClick={() => setSelectedDate(dateKey(new Date()))}>Dzisiaj</SecondaryButton><SecondaryButton className="school-arrow-button" onClick={() => setSelectedDate(moveDate(selectedDate, 7))} aria-label="Następny tydzień"><Icon name="chevron-right" /></SecondaryButton></div>} />
+          <div className="school-week-days">{week.map((key, index) => {
+            const count = ownRecords.filter((row) => (row.type === 'lesson' || row.type === 'activity') && matchesDay(row, key)).length;
+            return <button type="button" key={key} className={`${selectedDate === key ? 'active' : ''} ${dateKey(new Date()) === key ? 'today' : ''}`} aria-pressed={selectedDate === key} onClick={() => setSelectedDate(key)}><span>{WEEKDAYS[index].slice(0, 3)}</span><strong>{localDate(key).getDate()}</strong><small>{count ? `${count} zajęć` : 'Wolne'}</small></button>;
+          })}</div>
+          <div className="school-plan-heading"><h3>{WEEKDAYS[weekdayOf(selectedDate) - 1]}, {shortDate(selectedDate)}</h3><label className="school-date-select"><span>Wybierz datę</span><input type="date" value={selectedDate} onChange={(event) => { if (event.target.value) setSelectedDate(event.target.value); }} /></label></div>
+          <div className="school-plan-list">{dayRecords.length ? dayRecords.map((row) => rowButton(row, true)) : <div className="school-empty-state"><Icon name="sun" /><strong>Na ten dzień nie ma zajęć.</strong><p>Dodaj plan lekcji lub zajęcia dodatkowe.</p><SecondaryButton onClick={() => openAdd('lesson')}>Dodaj lekcję</SecondaryButton></div>}</div>
+        </section>
+        <section ref={recordsPanel} tabIndex={-1} className="school-panel school-records-panel" aria-labelledby="school-records-title">
+          <SectionHeader id="school-records-title" level={2} title="Wpisy szkolne" description={`Wszystkie zapisane informacje · ${ownRecords.length} wpisów`} icon="book" className="school-panel-heading" />
+          <div className="school-filters" role="group" aria-label="Rodzaj wpisów"><button type="button" className={filter === 'all' ? 'active' : ''} aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>Wszystkie <span>{ownRecords.length}</span></button>{visibleTypes.map((type) => <button type="button" key={type} className={filter === type ? 'active' : ''} aria-pressed={filter === type} onClick={() => setFilter(type)}><Icon name={META[type].icon} />{META[type].title}<span>{ownRecords.filter((row) => row.type === type).length}</span></button>)}</div>
+          <div className="school-record-list">{filteredRecords.length ? filteredRecords.map((row) => rowButton(row)) : <div className="school-empty-state"><strong>Brak wpisów w tej kategorii.</strong>{(filter === 'all' || parent || CHILD_TYPES.includes(filter)) && <SecondaryButton onClick={() => openAdd(filter === 'all' ? 'homework' : filter)}>Dodaj pierwszy wpis</SecondaryButton>}</div>}</div>
+        </section>
+      </div>
     </>}
-    {parent ? <EduVulcanConnection user={user} member={member} onSelectedStudent={setSelectedPerson} /> : <aside className="school-vulcan-card"><span className="school-vulcan-icon" aria-hidden="true">🔗</span><div><h2>eduVULCAN</h2><p>Połączeniem z dziennikiem zarządza rodzic. Dane oznaczone „eduVULCAN” są tylko do odczytu.</p></div><a className="secondary-button" href="https://uczen.eduvulcan.pl/" target="_blank" rel="noopener noreferrer">Otwórz eduVULCAN ↗</a></aside>}
+    {parent ? <EduVulcanConnection user={user} member={member} onSelectedStudent={setSelectedPerson} onConnectionStatus={setConnectionStatus} /> : <aside className="school-vulcan-card"><span className="school-vulcan-icon" aria-hidden="true"><Icon name="link" /></span><div><h2>eduVULCAN</h2><p>Połączeniem z dziennikiem zarządza rodzic. Dane oznaczone „eduVULCAN” są tylko do odczytu.</p></div><a className="secondary-button" href="https://uczen.eduvulcan.pl/" target="_blank" rel="noopener noreferrer">Otwórz eduVULCAN <Icon name="arrow-right" /></a></aside>}
 
     {form && <SchoolDialog title={`${editing ? 'Edytuj' : 'Dodaj'} · ${META[form.type].singular}`} onClose={closeForm} busy={busy}>
       <form onSubmit={save}><fieldset className="school-form" disabled={busy}>
         {actionError && <p className="school-error school-span-all" role="alert">{actionError}</p>}
         {parent && <label className="field"><span>Dziecko</span><select aria-label="Dziecko" value={form.person} onChange={(event) => setForm({ ...form, person: event.target.value })}>{[...new Set([...students, ...SCHOOL_PEOPLE])].map((student) => <option key={student}>{student}</option>)}</select></label>}
-        <label className="field"><span>Rodzaj wpisu</span><select aria-label="Rodzaj wpisu" value={form.type} onChange={(event) => changeType(event.target.value as SchoolType)}>{(parent ? SCHOOL_TYPES : CHILD_TYPES).map((type) => <option value={type} key={type}>{META[type].icon} {META[type].singular}</option>)}</select></label>
+        <label className="field"><span>Rodzaj wpisu</span><select aria-label="Rodzaj wpisu" value={form.type} onChange={(event) => changeType(event.target.value as SchoolType)}>{(parent ? SCHOOL_TYPES : CHILD_TYPES).map((type) => <option value={type} key={type}>{META[type].singular}</option>)}</select></label>
         <label className="field school-span-all"><span>{form.type === 'grade' ? 'Ocena / wynik' : 'Nazwa wpisu'} *</span><input autoFocus maxLength={160} required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder={form.type === 'grade' ? 'Np. 5 · odpowiedź ustna' : 'Np. Matematyka / kartkówka / fortepian'} /></label>
         <label className="field"><span>Przedmiot</span><input maxLength={100} value={form.subject} onChange={(event) => setForm({ ...form, subject: event.target.value })} placeholder="Np. Matematyka" /></label>
         {(form.type === 'lesson' || form.type === 'activity') ? <>
@@ -370,7 +431,7 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
         <label className="field school-span-all"><span>Notatka / sala / treść wiadomości</span><textarea rows={4} maxLength={2000} value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /></label>
         {form.type === 'activity' && <div className="school-calendar-option school-span-all"><label><input type="checkbox" checked={form.addToCalendar} onChange={(event) => setForm({ ...form, addToCalendar: event.target.checked })} /><span>Pokaż zajęcia także w rodzinnym kalendarzu</span></label><p>Rodzina zobaczy nazwę i termin zajęć. Notatka pozostaje w module Szkoła.</p>{form.addToCalendar && form.scheduleMode === 'weekly' && <label className="field"><span>Data pierwszych zajęć w kalendarzu *</span><input type="date" required value={form.calendarDate} onChange={(event) => setForm({ ...form, calendarDate: event.target.value })} /></label>}</div>}
         {editing?.calendarEventId && !form.addToCalendar && <p className="school-form-hint school-span-all">Zapis usunie także połączony wpis z rodzinnego kalendarza.</p>}
-        <div className="school-form-actions school-span-all"><button type="button" className="secondary-button" disabled={busy} onClick={closeForm}>Anuluj</button><button className="primary-button" disabled={busy}>{busy ? 'Zapisywanie…' : 'Zapisz wpis'}</button></div>
+        <div className="school-form-actions school-span-all"><SecondaryButton disabled={busy} onClick={closeForm}>Anuluj</SecondaryButton><PrimaryButton type="submit" disabled={busy}>{busy ? 'Zapisywanie…' : 'Zapisz wpis'}</PrimaryButton></div>
       </fieldset></form>
     </SchoolDialog>}
 
@@ -378,9 +439,9 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
       <dl className="school-detail"><div><dt>Osoba</dt><dd>{detail.person}</dd></div><div><dt>Rodzaj</dt><dd>{META[detail.type].singular}</dd></div>{detail.subject && <div><dt>Przedmiot</dt><dd>{detail.subject}</dd></div>}{detail.date && <div><dt>Data</dt><dd>{localDate(detail.date).toLocaleDateString('pl-PL')}</dd></div>}{detail.weekday > 0 && !detail.date && <div><dt>Co tydzień</dt><dd>{WEEKDAYS[detail.weekday - 1]}</dd></div>}{detail.time && <div><dt>Godzina</dt><dd>{detail.time}{detail.endTime ? `–${detail.endTime}` : ''}</dd></div>}{detail.note && <div className="school-detail-note"><dt>Notatka</dt><dd>{detail.note}</dd></div>}</dl>
       {detail.source === 'eduvulcan' && <div className="school-provider-detail"><strong>Źródło: eduVULCAN · tylko do odczytu</strong>{detail.syncedAt && <p>Odczytano: {detail.syncedAt.toLocaleString('pl-PL')}</p>}{detail.parentOnly && <p>Wiadomość z dziennika jest dostępna wyłącznie rodzicom.</p>}<p>Zmiany w dzienniku pojawią się po kolejnym odświeżeniu. Własne wpisy możesz dodawać osobno.</p></div>}
       {!parent && detail.calendarEventId && !canEdit(detail) && <p className="school-form-hint">Te zajęcia są połączone z kalendarzem rodzica. Zmiany wprowadza rodzic.</p>}
-      {canEdit(detail) && <div className="school-form-actions"><button type="button" className="danger-button" onClick={() => { setActionError(''); setDeleting(detail); setDetail(null); }}>Usuń</button><button type="button" className="primary-button" onClick={() => openEdit(detail)}>Edytuj wpis</button></div>}
+      {canEdit(detail) && <div className="school-form-actions"><button type="button" className="danger-button" onClick={() => { setActionError(''); setDeleting(detail); setDetail(null); }}>Usuń</button><PrimaryButton onClick={() => openEdit(detail)}>Edytuj wpis</PrimaryButton></div>}
     </SchoolDialog>}
-    {deleting && <SchoolDialog title="Usunąć wpis szkolny?" onClose={() => { if (!busy) { setDeleting(null); setActionError(''); } }} busy={busy}><p>Wpis „{deleting.title}” zostanie usunięty.</p>{deleting.calendarEventId && <p>Usuniemy również połączony wpis w rodzinnym kalendarzu.</p>}{actionError && <p className="school-error" role="alert">{actionError}</p>}<div className="school-form-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => setDeleting(null)}>Anuluj</button><button type="button" className="danger-button" disabled={busy} onClick={() => void remove()}>{busy ? 'Usuwanie…' : 'Usuń wpis'}</button></div></SchoolDialog>}
+    {deleting && <SchoolDialog title="Usunąć wpis szkolny?" onClose={() => { if (!busy) { setDeleting(null); setActionError(''); } }} busy={busy}><p>Wpis „{deleting.title}” zostanie usunięty.</p>{deleting.calendarEventId && <p>Usuniemy również połączony wpis w rodzinnym kalendarzu.</p>}{actionError && <p className="school-error" role="alert">{actionError}</p>}<div className="school-form-actions"><SecondaryButton disabled={busy} onClick={() => setDeleting(null)}>Anuluj</SecondaryButton><button type="button" className="danger-button" disabled={busy} onClick={() => void remove()}>{busy ? 'Usuwanie…' : 'Usuń wpis'}</button></div></SchoolDialog>}
 
     {importOpen && parent && <SchoolDialog title="Ręczny import szkolnych wpisów" onClose={() => { if (!importBusy) { fileVersion.current += 1; setImportOpen(false); setImportRows([]); } }} busy={importBusy}>
       <p className="school-import-intro">Przygotuj plik według naszego szablonu CSV lub JSON. To format aplikacji Nasza Rodzina; nie jest to import eksportu z eduVULCAN.</p>
@@ -390,7 +451,7 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
       {importError && <p className="school-error" role="alert">{importError}</p>}
       {importBusy && <p role="status">Sprawdzanie lub zapisywanie pliku…</p>}
       {importRows.length > 0 && <><h3 className="school-preview-title">Podgląd: {importName} · {importRows.length} wpisów</h3><p className="school-form-hint">Powtórzenia tego samego wpisu są pomijane. Istniejące wpisy i późniejsze ręczne zmiany pozostają zachowane.</p><div className="school-import-preview"><table><thead><tr><th>Osoba</th><th>Rodzaj</th><th>Nazwa / przedmiot</th><th>Termin</th><th>Notatka</th></tr></thead><tbody>{importRows.map((row, index) => <tr key={index}><td>{row.person}</td><td>{META[row.type].singular}</td><td>{row.title}<small>{row.subject}</small></td><td>{row.date || (row.weekday ? WEEKDAYS[row.weekday - 1] : '—')}{row.time && <small>{row.time}{row.endTime ? `–${row.endTime}` : ''}</small>}</td><td className="school-preview-note">{row.note || '—'}</td></tr>)}</tbody></table></div></>}
-      <div className="school-form-actions"><button type="button" className="secondary-button" disabled={importBusy} onClick={() => { fileVersion.current += 1; setImportOpen(false); setImportRows([]); }}>Anuluj</button><button type="button" className="primary-button" disabled={importBusy || !importRows.length} onClick={() => void commitImport()}>{importBusy ? 'Proszę czekać…' : `Importuj${importRows.length ? ` (${importRows.length})` : ''}`}</button></div>
+      <div className="school-form-actions"><SecondaryButton disabled={importBusy} onClick={() => { fileVersion.current += 1; setImportOpen(false); setImportRows([]); }}>Anuluj</SecondaryButton><PrimaryButton disabled={importBusy || !importRows.length} onClick={() => void commitImport()}>{importBusy ? 'Proszę czekać…' : `Importuj${importRows.length ? ` (${importRows.length})` : ''}`}</PrimaryButton></div>
     </SchoolDialog>}
   </div>;
 }

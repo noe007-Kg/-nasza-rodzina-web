@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import type { User } from 'firebase/auth';
 import { auth } from './firebase';
 import { SCHOOL_PEOPLE } from './school-import';
+import { Card, Icon, StatusPill } from './ui';
 import './edu-vulcan.css';
 
 export type EduVulcanProfile = {
@@ -216,7 +217,7 @@ function displayTime(value?: string): string {
   return value ? new Date(value).toLocaleString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Jeszcze nie odświeżano';
 }
 
-export function EduVulcanConnection({ user, member, onSelectedStudent }: { user: User; member: { role?: string } | null; onSelectedStudent?: (personKey: string) => void }) {
+export function EduVulcanConnection({ user, member, onSelectedStudent, onConnectionStatus }: { user: User; member: { role?: string } | null; onSelectedStudent?: (personKey: string) => void; onConnectionStatus?: (status: EduVulcanStatus | null) => void }) {
   const parent = member?.role === 'parent';
   const [status, setStatus] = useState<EduVulcanStatus | null>(null);
   const [operation, setOperation] = useState<Operation>(parent ? 'loading' : null);
@@ -239,6 +240,8 @@ export function EduVulcanConnection({ user, member, onSelectedStudent }: { user:
   activeIdentity.current = identity;
   const selectionCallback = useRef(onSelectedStudent);
   selectionCallback.current = onSelectedStudent;
+  const statusCallback = useRef(onConnectionStatus);
+  statusCallback.current = onConnectionStatus;
   const headingId = useId();
   const errorId = useId();
   const busy = operation !== null;
@@ -248,6 +251,12 @@ export function EduVulcanConnection({ user, member, onSelectedStudent }: { user:
   const chosenProfile = status?.profiles.find((profile) => profile.id === profileId);
   const showLogin = !backendMissing && !accessDenied && status?.configured !== false && (!status || status.state === 'disconnected' || expired || reconnect);
   const showProfiles = !!status?.configured && status.state === 'needs_profile' && !expired && !reconnect;
+
+  // Share already loaded public status with the visual school header. This does
+  // not add a request, change synchronization or expose any session credentials.
+  useEffect(() => {
+    statusCallback.current?.(parent ? (status && expired ? { ...status, state: 'expired' } : status) : null);
+  }, [status, expired, parent, user.uid]);
 
   useEffect(() => {
     setStatus(null); setPassword(''); setLogin(''); setProfileId(''); setPersonKey(''); setError(''); setNotice('');
@@ -327,8 +336,8 @@ export function EduVulcanConnection({ user, member, onSelectedStudent }: { user:
   }
 
   if (!parent) return null;
-  return <section className="edu-vulcan-connection" aria-labelledby={headingId} aria-busy={busy}>
-    <header className="edu-vulcan-heading"><div className="edu-vulcan-brand" aria-hidden="true">🔗</div><div><span className="edu-vulcan-eyebrow">Dziennik szkolny · wspólne konto rodziny</span><h2 id={headingId}>eduVULCAN</h2><p>Jedno aktywne konto rodzica w eduVULCAN udostępnia szkolne dane dziecka rodzinie. Oboje rodzice mogą zarządzać połączeniem w Naszej Rodzinie.</p></div><span className={`edu-vulcan-state ${status?.state === 'connected' && !expired ? 'connected' : ''}`} role="status">{operation === 'loading' ? 'Sprawdzanie…' : operation === 'sync' ? 'Synchronizowanie…' : expired ? 'Sesja wygasła' : status?.state === 'connected' ? 'Połączono' : status?.state === 'needs_profile' ? 'Wybierz dziennik' : 'Niepołączono'}</span></header>
+  return <Card as="section" tone="blue" className="edu-vulcan-connection" aria-labelledby={headingId} aria-busy={busy}>
+    <header className="edu-vulcan-heading"><div className="edu-vulcan-brand" aria-hidden="true"><Icon name="link" /></div><div><span className="edu-vulcan-eyebrow">Dziennik szkolny · wspólne konto rodziny</span><h2 id={headingId}>eduVULCAN</h2><p>Jedno aktywne konto rodzica w eduVULCAN udostępnia szkolne dane dziecka rodzinie. Oboje rodzice mogą zarządzać połączeniem w Naszej Rodzinie.</p></div><StatusPill tone={expired ? 'warning' : status?.state === 'connected' ? 'success' : 'neutral'} className={`edu-vulcan-state ${status?.state === 'connected' && !expired ? 'connected' : ''}`} role="status">{operation === 'loading' ? 'Sprawdzanie…' : operation === 'sync' ? 'Synchronizowanie…' : expired ? 'Sesja wygasła' : status?.state === 'connected' ? 'Połączono' : status?.state === 'needs_profile' ? 'Wybierz dziennik' : 'Niepołączono'}</StatusPill></header>
     <div className="edu-vulcan-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => setRefresh((value) => value + 1)}>Sprawdź stan połączenia</button></div>
     {error && !backendMissing && <div id={errorId} className="edu-vulcan-error" role="alert">{error}</div>}
     {notice && <p className="edu-vulcan-notice" role="status">{notice}</p>}
@@ -355,7 +364,7 @@ export function EduVulcanConnection({ user, member, onSelectedStudent }: { user:
     {status?.configured && status.state === 'connected' && !expired && !reconnect && <><div className="edu-vulcan-actions"><button type="button" className="primary-button" disabled={busy || backendMissing || cooldown || status.syncing} onClick={() => void perform('sync')}>{operation === 'sync' || status.syncing ? 'Synchronizowanie…' : 'Synchronizuj teraz'}</button><button type="button" className="secondary-button" disabled={busy} onClick={() => { setReconnect(true); setProfileId(''); setPersonKey(''); setPassword(''); }}>Zmień dostęp</button></div>{cooldown && <p className="edu-vulcan-readonly">Kolejna synchronizacja będzie dostępna od {displayTime(status.nextSyncAt)}. Dane odświeżamy najwyżej co 5 minut.</p>}</>}
     {status?.configured && (status.state !== 'disconnected' || status.selectedStudent) && <div className="edu-vulcan-disconnect">{confirmDisconnect ? <><strong>Rozłączyć eduVULCAN dla rodziny?</strong><p>Usuniemy wspólną sesję po stronie serwera i zatrzymamy synchronizację dla obojga rodziców. Własne wpisy i pobrana historia pozostają zachowane; historia dziennika nadal jest tylko do odczytu.</p><div className="edu-vulcan-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => setConfirmDisconnect(false)}>Anuluj rozłączenie</button><button type="button" className="danger-button" disabled={busy} onClick={() => void perform('disconnect')}>{operation === 'disconnect' ? 'Usuwanie dostępu…' : 'Rozłącz i usuń dostęp'}</button></div></> : <button type="button" className="edu-vulcan-disconnect-link" disabled={busy} onClick={() => setConfirmDisconnect(true)}>Rozłącz</button>}</div>}
     <footer className="edu-vulcan-footer"><span>Wiadomości pobrane z dziennika są dostępne tylko rodzicom. Integracja nie wysyła wiadomości ani nie zmienia danych w szkole.</span><a href="https://uczen.eduvulcan.pl/" target="_blank" rel="noopener noreferrer">Otwórz eduVULCAN ↗</a></footer>
-  </section>;
+  </Card>;
 }
 
 export default EduVulcanConnection;

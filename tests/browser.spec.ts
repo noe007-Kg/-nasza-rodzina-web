@@ -239,6 +239,7 @@ test('zdrowie: dokument PDF zapisuje się w Storage i poufne dokumenty są niewi
   await page.locator('.document-row').filter({ hasText: 'Wynik Nikodema E2E' }).getByRole('button', { name: 'Otwórz', exact: true }).click();
   expect((await fileResponse).ok()).toBe(true);
   await page.getByRole('button', { name: 'Wyloguj', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Zaloguj się', exact: true })).toBeVisible();
   await login(page, accounts.child);
   await goTo(page, 'Zdrowie');
   await expect(page.locator('.health-dashboard-grid')).toContainText('Wynik Nikodema E2E');

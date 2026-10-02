@@ -1,0 +1,276 @@
+/* Shared presentation tokens. Applied only inside migrated modules / modal portals. */
+.family-ui {
+  --family-rose: #e83e9f;
+  --family-primary: #d92a8a;
+  --family-violet: #7c5cfc;
+  --family-blue: #3ba7ff;
+  --family-mint: #5ed3a2;
+  --family-gold: #f7c948;
+  --family-text: #171b4b;
+  --family-muted: #6b6682;
+  --family-surface: #ffffff;
+  --family-background: #fff9fc;
+  --family-line: #eee5f3;
+  --family-soft-rose: #fff0f8;
+  --family-soft-violet: #f2eeff;
+  --family-soft-blue: #eaf5ff;
+  --family-soft-mint: #eafaf2;
+  --family-soft-gold: #fff8df;
+  --family-ink-rose: #a72068;
+  --family-ink-violet: #5b3fc9;
+  --family-ink-blue: #2467a5;
+  --family-ink-mint: #146443;
+  --family-ink-gold: #775718;
+  --family-error-background: #fff0f2;
+  --family-error-text: #b12746;
+  --family-radius-card: 22px;
+  --family-radius-button: 15px;
+  --family-shadow: 0 6px 24px rgb(86 45 110 / 5%);
+  --family-shadow-hover: 0 10px 28px rgb(86 45 110 / 10%);
+  --family-space-1: 4px;
+  --family-space-2: 8px;
+  --family-space-3: 12px;
+  --family-space-4: 16px;
+  --family-space-5: 20px;
+  --family-space-6: 24px;
+  --family-space-8: 32px;
+  --family-focus-ring: 0 0 0 4px rgb(124 92 252 / 22%);
+  color: var(--family-text);
+  font-family: inherit;
+}
+
+.family-ui .family-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: middle;
+}
+
+.family-ui .family-card {
+  --family-card-accent: var(--family-ink-violet);
+  --family-card-tint: var(--family-soft-violet);
+  min-width: 0;
+  padding: var(--family-space-6);
+  border: 1px solid var(--family-line);
+  border-radius: var(--family-radius-card);
+  background: var(--family-surface);
+  color: var(--family-text);
+  box-shadow: var(--family-shadow);
+}
+
+.family-ui .family-card--rose { --family-card-accent: var(--family-ink-rose); --family-card-tint: var(--family-soft-rose); }
+.family-ui .family-card--violet { --family-card-accent: var(--family-ink-violet); --family-card-tint: var(--family-soft-violet); }
+.family-ui .family-card--blue { --family-card-accent: var(--family-ink-blue); --family-card-tint: var(--family-soft-blue); }
+.family-ui .family-card--mint { --family-card-accent: var(--family-ink-mint); --family-card-tint: var(--family-soft-mint); }
+.family-ui .family-card--gold { --family-card-accent: var(--family-ink-gold); --family-card-tint: var(--family-soft-gold); }
+
+.family-ui .family-stat-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--family-space-1);
+  min-height: 180px;
+  width: 100%;
+  padding: var(--family-space-5);
+  text-align: left;
+  font: inherit;
+}
+
+.family-ui button.family-stat-card {
+  cursor: pointer;
+  transition: border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+}
+
+.family-ui button.family-stat-card:hover:not(:disabled) {
+  border-color: var(--family-card-accent);
+  box-shadow: var(--family-shadow-hover);
+}
+.family-ui button.family-stat-card:disabled { opacity: .55; cursor: not-allowed; }
+
+.family-ui .family-stat-card.is-active {
+  border-color: var(--family-primary);
+  box-shadow: 0 0 0 2px var(--family-soft-rose), var(--family-shadow);
+}
+
+.family-ui .family-stat-card__top {
+  display: flex;
+  align-items: center;
+  gap: var(--family-space-2);
+  width: 100%;
+  margin-bottom: var(--family-space-2);
+}
+
+.family-ui .family-stat-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  border-radius: 16px;
+  color: var(--family-card-accent);
+  background: var(--family-card-tint);
+}
+
+.family-ui .family-stat-card__badge { margin-left: auto; min-width: 0; }
+.family-ui .family-stat-card__arrow { margin-left: auto; color: var(--family-muted); }
+.family-ui .family-stat-card__badge + .family-stat-card__arrow { margin-left: 0; }
+
+.family-ui .family-stat-card__value {
+  display: block;
+  max-width: 100%;
+  font-size: clamp(25px, 2.3vw, 34px);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -.035em;
+  overflow-wrap: anywhere;
+}
+
+.family-ui .family-stat-card__label { color: var(--family-text); font-size: 15px; font-weight: 750; line-height: 1.4; }
+.family-ui .family-stat-card__preview { display: block; width: 100%; color: var(--family-muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+
+.family-ui .family-profile-selector {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--family-space-3);
+  min-width: 0;
+}
+
+.family-ui .family-profile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--family-space-2);
+  min-height: 94px;
+  min-width: 84px;
+  max-width: 150px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 19px;
+  color: var(--family-muted);
+  background: transparent;
+  cursor: pointer;
+  text-align: center;
+  font: inherit;
+  transition: background-color .18s ease, border-color .18s ease;
+}
+
+.family-ui .family-profile:hover { background: var(--family-soft-violet); }
+.family-ui .family-profile.is-active { border-color: #f3b9d9; background: var(--family-soft-rose); color: var(--family-ink-rose); }
+
+.family-ui .family-profile__avatar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 50px;
+  height: 50px;
+  flex: 0 0 50px;
+  overflow: hidden;
+  border: 3px solid var(--family-surface);
+  border-radius: 50%;
+  background: var(--family-soft-violet);
+  color: var(--family-ink-violet);
+  box-shadow: 0 0 0 1px var(--family-line);
+  font-size: 27px;
+}
+
+.family-ui .family-profile.is-active .family-profile__avatar { box-shadow: 0 0 0 2px var(--family-primary); }
+.family-ui .family-profile__avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.family-ui .family-profile__avatar img[hidden] { display: none; }
+.family-ui .family-profile__name { max-width: 100%; font-size: 13px; font-weight: 750; overflow-wrap: anywhere; }
+.family-ui .family-profile__caption { max-width: 100%; margin-top: -4px; color: var(--family-muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+
+.family-ui .family-section-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--family-space-4);
+  padding: 0;
+}
+
+.family-ui .family-section-header__intro { display: flex; align-items: center; gap: var(--family-space-4); min-width: 0; flex: 1 1 240px; }
+.family-ui .family-section-header__copy { min-width: 0; }
+.family-ui .family-section-header__icon { display: inline-flex; align-items: center; justify-content: center; width: 58px; height: 58px; flex: 0 0 58px; border-radius: 20px; color: var(--family-ink-violet); background: var(--family-soft-violet); }
+.family-ui .family-section-header h1, .family-ui .family-section-header h2, .family-ui .family-section-header h3 { margin: 0; color: var(--family-text); font-size: clamp(28px, 2.8vw, 37px); font-weight: 800; line-height: 1.2; letter-spacing: -.035em; overflow-wrap: anywhere; }
+.family-ui .family-section-header__eyebrow { margin: 0 0 5px; color: var(--family-ink-rose); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.family-ui .family-section-header__description { margin: 7px 0 0; color: var(--family-muted); font-size: 13px; line-height: 1.65; }
+.family-ui .family-section-header__actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--family-space-2); }
+
+.family-ui .family-status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--family-soft-violet);
+  color: var(--family-ink-violet);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.family-ui .family-status-pill__dot { display: block; flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.family-ui .family-status-pill--success { color: var(--family-ink-mint); background: var(--family-soft-mint); }
+.family-ui .family-status-pill--important { color: var(--family-ink-rose); background: var(--family-soft-rose); }
+.family-ui .family-status-pill--warning { color: var(--family-ink-gold); background: var(--family-soft-gold); }
+.family-ui .family-status-pill--error { color: var(--family-error-text); background: var(--family-error-background); }
+
+.family-ui .family-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  min-width: 44px;
+  max-width: 100%;
+  padding: 11px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--family-radius-button);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.45;
+  text-align: center;
+  cursor: pointer;
+  transition: background-color .18s ease, box-shadow .18s ease;
+}
+
+.family-ui .family-button > span { min-width: 0; overflow-wrap: anywhere; }
+.family-ui .family-button.family-primary-button { color: #fff; background: linear-gradient(135deg, #d92a8a, #bf2479); box-shadow: 0 5px 14px rgb(217 42 138 / 16%); }
+.family-ui .family-button.family-primary-button:hover:not(:disabled) { background: linear-gradient(135deg, #c12179, #a71c69); box-shadow: 0 7px 19px rgb(217 42 138 / 23%); }
+.family-ui .family-button.family-secondary-button { color: var(--family-ink-violet); background: var(--family-soft-violet); border-color: var(--family-line); box-shadow: none; }
+.family-ui .family-button.family-secondary-button:hover:not(:disabled) { color: var(--family-ink-rose); background: var(--family-soft-rose); }
+.family-ui .family-button:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
+.family-ui :is(.family-button, .family-stat-card, .family-profile):focus-visible { outline: 2px solid var(--family-violet); outline-offset: 3px; box-shadow: var(--family-focus-ring); }
+
+/* Existing user-selected dark mode stays available without changing other modules. */
+html[data-theme="dark"] .family-ui {
+  --family-text: #f7f2ff;
+  --family-muted: #c3bcd6;
+  --family-surface: #23233d;
+  --family-background: #1a1a2f;
+  --family-line: #40394f;
+  --family-soft-rose: #42253b;
+  --family-soft-violet: #352a50;
+  --family-soft-blue: #23384e;
+  --family-soft-mint: #223d36;
+  --family-soft-gold: #403721;
+  --family-ink-rose: #ffb9df;
+  --family-ink-violet: #c8b8ff;
+  --family-ink-blue: #add8ff;
+  --family-ink-mint: #a5e7c5;
+  --family-ink-gold: #f5dda0;
+  --family-error-background: #482733;
+  --family-error-text: #ffc4ce;
+  --family-shadow: 0 6px 24px rgb(0 0 0 / 12%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .family-ui :is(.family-stat-card, .family-profile, .family-button) { transition: none; }
+}

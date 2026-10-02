@@ -7,7 +7,7 @@ process.env.FIREBASE_STORAGE_EMULATOR_HOST = '127.0.0.1:9199';
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: ['browser.spec.ts', 'school-browser.spec.ts', 'edu-browser.spec.ts'],
+  testMatch: ['browser.spec.ts', 'school-browser.spec.ts', 'edu-browser.spec.ts', 'school-layout.spec.ts'],
   fullyParallel: false,
   workers: 1,
   timeout: 45_000,
