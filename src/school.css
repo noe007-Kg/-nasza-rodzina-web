@@ -38,6 +38,10 @@
 .school-entry-copy > span { font-size: 12px; line-height: 1.5; color: var(--nr-muted,#637b94); overflow-wrap: anywhere; }
 .school-entry-type { flex: 0 0 auto; max-width: 145px; padding: 5px 8px; background: var(--nr-soft,#eef3f8); border-radius: 7px; font-size: 11px; color: var(--nr-muted,#637b94); }
 .school-entry-arrow { font-size: 22px; color: #8da4bb; }
+.school-entry-copy .school-source-badge { justify-self: start; padding: 3px 7px; border-radius: 6px; background: var(--nr-soft,#edf4fc); color: #2873bf; font-size: 10px; font-weight: 700; }
+.school-provider-detail { margin-top: 16px; padding: 13px 15px; border: 1px solid var(--nr-line,#dde7f0); border-radius: 11px; background: var(--nr-panel-2,#f7faff); font-size: 12px; color: var(--nr-muted,#637b94); line-height: 1.7; }
+.school-provider-detail strong { color: var(--nr-text,#12345e); }.school-provider-detail p { margin: 5px 0 0; }
+html[data-theme="dark"] .school-entry-copy .school-source-badge { color: #a6cfff; }
 .school-filters { display: flex; gap: 7px; overflow-x: auto; margin: 18px -2px; padding: 3px 2px 6px; }
 .school-filters button { flex: 0 0 auto; border: 1px solid var(--nr-line,#dde7f0); border-radius: 10px; background: var(--nr-panel,#fff); color: var(--nr-muted,#637b94); padding: 8px 11px; font-weight: 700; }
 .school-filters button span { margin-left: 4px; font-size: 11px; opacity: .7; }

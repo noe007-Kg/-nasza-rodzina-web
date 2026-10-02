@@ -1,16 +1,110 @@
 # Szkoła i eduVULCAN
 
-Stan tej paczki: 30 września 2026 r. Rodzina korzysta z **eduVULCAN**. Moduł „Szkoła” działa jako rodzinny organizer szkolny: przechowuje plan lekcji, zadania domowe, sprawdziany, oceny, wiadomości i zajęcia dodatkowe. W tej wersji dane dodaje się ręcznie lub importuje z pliku przygotowanego według szablonu aplikacji.
+Wersja **1.5.0**, stan: 1 października 2026 r. Moduł „Szkoła” zachowuje ręczne wpisy i import CSV/JSON oraz dodaje serwerowe połączenie do konta rodzica w portalu **uczen.eduvulcan.pl**. Przed użyciem integracji trzeba wdrożyć pełny projekt z funkcjami Vercel i ustawić sekretne zmienne serwerowe opisane poniżej.
+
+W paczce jest kod połączenia, wyboru ucznia i pobierania danych tylko do odczytu. **Nie sprawdzono udanego logowania ani pobrania danych z rzeczywistego konta rodziny/SP4.** Zidentyfikowanie endpointów portalu i lokalne testy nie potwierdzają całego procesu na Twoim koncie. Jeżeli portal zmieni logowanie, wymaga dodatkowego potwierdzenia lub odmówi dostępu, aplikacja ma pokazać błąd; nie tworzy przykładowych danych zamiast wyniku dziennika.
 
 ## Co działa teraz
 
-- Przycisk „Otwórz eduVULCAN” prowadzi do <https://eduvulcan.pl/logowanie> w osobnej karcie. Logowanie do dziennika odbywa się w dzienniku.
-- Rodzic może dodawać i edytować wpisy dla wszystkich dzieci oraz importować JSON/CSV. Dziecko widzi własne dane; uzupełnia własne lekcje, zadania, sprawdziany i zajęcia. Oceny i wiadomości uzupełnia rodzic.
+- Przycisk „Otwórz eduVULCAN” pozwala przejść do dziennika w osobnej karcie. Panel połączenia jest dostępny dla aktywnego rodzica po wdrożeniu backendu.
+- Rodzic może dodawać i edytować ręczne wpisy dla wszystkich dzieci oraz importować JSON/CSV. Dziecko widzi własne dane; uzupełnia własne lekcje, zadania, sprawdziany i zajęcia. Ręczne oceny i wiadomości uzupełnia rodzic. Wpisy oznaczone jako pochodzące z eduVULCAN aktualizuje wyłącznie backend integracji; nie edytuje się ich jak notatek.
 - Lekcje i zajęcia można zapisać na konkretny dzień lub jako plan powtarzający się w wybranym dniu tygodnia.
 - Zajęcia dodatkowe dodawane lub edytowane przez formularz można połączyć z rodzinnym kalendarzem. Sam import zapisuje wpisy szkolne i nie tworzy wydarzeń kalendarza.
 - Dane zapisuje Firebase/Firestore projektu rodziny. Dostęp wymaga konfiguracji opisanej w [FIREBASE.md](FIREBASE.md), zalogowanego konta i przypisanej roli.
 
-**Automatyczna synchronizacja z eduVULCAN nie została zaimplementowana.** Aplikacja nie pobiera danych po wpisaniu hasła, nie przechowuje hasła do dziennika i nie przyjmuje kodu QR parowania. Wiadomości są kopiami/notatkami w organizerze; aplikacja nie wysyła wiadomości do nauczycieli.
+Integracja jest wyłącznie do odczytu. Nie wysyła wiadomości nauczycielom i nie zmienia ocen ani danych w dzienniku. Odświeżanie inicjuje rodzic przyciskiem; nie ma harmonogramu cron ani obietnicy pobierania w tle. Ręczne wpisy i import pozostają dostępne także bez połączenia.
+
+## Co pobiera obecny adapter
+
+Zakres dotyczy **jednego, jawnie wybranego profilu szkoły i dziecka**, potwierdzonego w `Context` portalu. Backend odrzuca profil przedszkolny oraz niejednoznaczne powiązanie ucznia. Daty okien wylicza według polskiej strefy `Europe/Warsaw`.
+
+| Dane | Zakres i sposób odczytu |
+| --- | --- |
+| Oceny | `OkresyKlasyfikacyjne` i pełne `Oceny` dla okresu obejmującego dzisiejszą datę. Oceny cząstkowe, poprawy, opisowe, proponowane i okresowe oraz podsumowania pozostają tekstem dziennika. Nie przeliczamy ocen opisowych na stopnie ani nie wymyślamy średniej; zachowujemy podaną przez szkołę, jeśli jest dostępna. |
+| Plan lekcji | `PlanZajec`: konkretne daty od **7 dni wstecz do 21 dni naprzód**, z godzinami, salą, nauczycielem i informacjami o zmianach lub odwołaniu. To plan datowany, nie powtarzanie stałego tygodnia. |
+| Zadania i sprawdziany | `SprawdzianyZadaniaDomowe`: od **7 dni wstecz do 30 dni naprzód**. Szczegóły przez `ZadanieDomoweSzczegoly` albo `SprawdzianSzczegoly`, najwyżej dla **30 wpisów** na pobranie tej sekcji. Dla zadań zachowujemy termin odpowiedzi, jeśli portal go podaje. |
+| Wiadomości rodzica | `OdebraneSkrzynka` dla `globalKeySkrzynka` wybranego profilu, najwyżej **30 ostatnich wiadomości**, oraz GET `WiadomoscSzczegoly`. Treść jako zwykły tekst, do **20 000 znaków**. Nie wczytujemy zewnętrznych obrazków i nie pobieramy załączników; załączniki pozostają dostępne w oficjalnym dzienniku. |
+
+Jedna synchronizacja zapisuje najwyżej **400 wpisów łącznie**. Nie jest to eksport całej historii dziennika. Osiągnięcie limitu szczegółów, rozmiaru lub czasu może dać częściowy wynik i komunikat z zakresem, którego nie pobrano. Liczba zero przy ostrzeżeniu nie jest potwierdzeniem, że w dzienniku nie ma wpisów.
+
+Udane sekcje można zapisać mimo błędu innej sekcji. **Nieudany odczyt zachowuje wcześniej pobrane dane tej sekcji.** Gdy cały bieżący zakres ocen albo datowany zakres planu został poprawnie odczytany, backend usuwa z lokalnej kopii wycofane oceny i nieaktualne lekcje wyłącznie wybranego profilu i dziecka. Nie usuwa ręcznych wpisów, danych innych dzieci, ocen innych okresów ani planu poza pobranym oknem. Nie wykonuje takiego usuwania dla częściowo odczytanych zadań lub wiadomości.
+
+Wszystkie żądania danych dziennika są **GET**; logowanie i przekazywanie formularzy SSO mogą używać POST. Backend nie wysyła `PUT` oznaczającego wiadomość jako przeczytaną, odpowiedzi do nauczyciela, usuwania ani przenoszenia wiadomości. Frekwencja, archiwalne okresy, załączniki i inne zakresy nie zostały dodane do tej integracji.
+
+## Logowanie w obecnej wersji portalu
+
+Adapter korzysta z formularza [`/logowanie`](https://eduvulcan.pl/logowanie), jego tokenu anty-CSRF, pól `UserName`/`Password` oraz zapytania `Account/QueryUserInfo`. Jeśli portal wymaga swojego opublikowanego widgetu obliczeniowego (`ShowCaptcha`), adapter wykonuje to obliczenie w ograniczonym czasie. Nieznane dodatkowe lub interaktywne potwierdzenie logowania kończy się komunikatem o konieczności sprawdzenia konta w oficjalnym portalu.
+
+Po zalogowaniu odczytuje listę dostępów także z aktualnego panelu [`/dostep-do-dziennika/`](https://eduvulcan.pl/dostep-do-dziennika/). Dopiero potwierdzenie profilu przez rodzica rozpoczyna wejście do konkretnego dziennika i jego SSO. Portal wiadomości ma osobne przejście logowania z tą samą sesją. Wybrana skrzynka pochodzi z identyfikatora konkretnego profilu; wiadomości nie są przypisywane dziecku na podstawie słów w temacie lub imieniu.
+
+## Wdrożenie integracji na Twoim Vercel
+
+Użyj paczki **PROJEKT 1.5.0**, z katalogami `api/` i `server/`. Wgranie samego `dist` lub paczki **STRONA** uruchamia organizer, ale nie uruchamia funkcji integracji. Dotychczasowy statyczny Firebase Hosting i Docker/nginx również nie uruchamiają tego backendu.
+
+1. W swoim Firebase przygotuj profile rodziny oraz opublikuj nowe reguły z tej paczki według [FIREBASE.md](FIREBASE.md). Integracją zarządza zalogowany użytkownik z profilem `members/{UID}`: `role: parent`, `active: true`, `canLogin: true` oraz poprawnymi `name` i `personKey`.
+2. W **Firebase Console → Project settings → Service accounts → Firebase Admin SDK → Generate new private key** pobierz plik JSON dla tego samego projektu, którego używa aplikacja. Zachowaj plik poza repozytorium i katalogiem strony. Nie przesyłaj go w czacie.
+3. W **Vercel → projekt nasza-rodzina-web → Settings → Environment Variables** dodaj poniższe zmienne dla **Production**. Nie dodawaj ich do `VITE_*` ani do plików `public`/`dist`.
+
+   | Zmienna | Wartość |
+   | --- | --- |
+   | `FIREBASE_PROJECT_ID` | Identyfikator Twojego projektu, np. `nasza-rodzina`; taki sam jak `VITE_FIREBASE_PROJECT_ID` i `project_id` w kluczu. |
+   | `FIREBASE_SERVICE_ACCOUNT_JSON` | Cała, niezmieniona zawartość pobranego pliku JSON; bez ręcznej edycji klucza. |
+   | `EDUVULCAN_ENCRYPTION_KEY_BASE64` | Wygenerowany losowy klucz 32-bajtowy, według polecenia poniżej. |
+   | `EDUVULCAN_ENCRYPTION_KEY_ID` | `v1`. |
+   | `EDUVULCAN_SESSION_TTL_HOURS` | `24`; dopuszczalny zakres to 1–24 godziny. |
+   | `EDUVULCAN_SITE_ORIGIN` | Dokładny adres produkcyjnej aplikacji, np. `https://twoja-rodzina.vercel.app`, bez dodatkowej ścieżki. |
+
+4. W terminalu na swoim komputerze z Node.js wygeneruj klucz szyfrowania. **Nie uruchamiaj tego polecenia podczas każdego buildu** — wynik ma pozostać stałą, prywatną wartością w Vercel:
+
+   ```bash
+   node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))"
+   ```
+
+   Skopiuj wynik wyłącznie do `EDUVULCAN_ENCRYPTION_KEY_BASE64` w Vercel i przechowaj bezpiecznie. Nie wklejaj go do rozmowy ani repozytorium. Zmiana klucza lub jego ID unieważni odczyt zapisanych sesji; rodzice będą musieli połączyć dziennik ponownie.
+
+5. Zamiast `FIREBASE_SERVICE_ACCOUNT_JSON` możesz użyć `FIREBASE_SERVICE_ACCOUNT_BASE64` z tym samym plikiem zakodowanym w base64. Ustaw **tylko jeden** z tych dwóch wariantów; base64 jest sposobem zapisu, nie szyfrowaniem. Opcjonalne polecenie lokalne:
+
+   ```bash
+   node -e "process.stdout.write(require('node:fs').readFileSync(process.argv[1]).toString('base64'))" "/prywatna/sciezka/firebase-admin.json"
+   ```
+
+6. Do GitHub wgraj pełny projekt razem z `api/`, `server/` i `package-lock.json`, bez prawdziwych sekretów. Ustaw Vercel: **Vite**, **Node 22.x**, `npm ci`, `npm run build`, wynik `dist`. Po zapisaniu zmiennych wykonaj nowe wdrożenie.
+7. Dodaj domenę w Firebase Authentication → Authorized domains. Po statusie **Ready** zaloguj się jako rodzic i otwórz Szkołę. Brak konfiguracji serwera powinien wyświetlić czytelny komunikat, nie formularz udający połączenie.
+
+Klucz administratora Firebase ma dostęp do danych poza regułami klienta. Udostępniaj go tylko swojemu projektowi Vercel. Nie ustawiaj produkcyjnych sekretów dla przypadkowych podglądów pull requestów. Jeśli testujesz własny Preview, użyj właściwej domeny i osobnych ustawień środowiska. Backend Vercel wymaga jawnego klucza; ścieżka `GOOGLE_APPLICATION_CREDENTIALS` z Twojego komputera nie działa jako plik w Vercel.
+
+## Połączenie konta i wybór SP4
+
+1. Zaloguj się do Naszej Rodziny kontem rodzica. Otwórz **Szkoła → eduVULCAN**.
+2. Wpisz login i hasło do **własnego konta rodzica** w formularzu połączenia na swojej stronie z HTTPS i wybierz **Pobierz dostępne dzienniki**. UUID z ustawień dziennika nie zastępuje loginu. Nie przesyłaj hasła w czacie. Formularz wysyła je do backendu tylko w żądaniu logowania; hasło nie jest zapisywane w Firestore ani w konfiguracji aplikacji.
+3. Po udanym logowaniu sprawdź listę uczniów i placówek. Dla planowanego połączenia wybierz jawnie profil **Nikodema w SP4** i przypisz go Nikodemowi w Naszej Rodzinie. Jeśli konto zawiera również przedszkole, pomiń ten profil. Aplikacja nie zgaduje szkoły na podstawie imienia ani nie wybiera pierwszej placówki.
+4. Przypisz wybrany profil do właściwego dziecka w Naszej Rodzinie. Sprawdź szkołę i klasę, a potem wybierz **Połącz wybrany dziennik**. Wybór zapisuje się od razu i uruchamia próbę pobrania danych.
+5. Sprawdź wynik i datę ostatniego udanego pobrania. Później używaj **Odśwież dane**. Kolejne udane odświeżenia są ograniczone do jednego na **5 minut**; przeładowanie strony nie omija tego limitu. Jeżeli limit zatrzyma próbę po zmianie profilu, odczekaj i odśwież ponownie.
+6. Po wygaśnięciu sesji połącz konto ponownie. **Dostęp przez zapisaną sesję jest ważny maksymalnie 24 godziny**, a eduVULCAN może unieważnić go wcześniej. Nie przechowujemy hasła do automatycznego ponownego logowania. Ten limit dotyczy możliwości użycia sesji na serwerze; nie oznacza automatycznego fizycznego usunięcia rekordu z Firestore dokładnie po 24 godzinach.
+
+Jeżeli SP4 lub właściwy uczeń nie pojawi się na liście, nie wybieraj przedszkola jako zamiennika. Sprawdź uprawnienia i powiązania swojego konta w dzienniku. Przy błędzie logowania najpierw sprawdź to samo konto na oficjalnej stronie; dodatkowe kroki logowania mogą wymagać dopracowania adaptera.
+
+Wybierz **Odłącz dziennik**, a następnie potwierdź **Odłącz i usuń dostęp**, aby usunąć zapisaną sesję z Naszej Rodziny. Wcześniej pobrane wpisy szkolne pozostają w organizerze; odłączenie nie usuwa konta ani danych w eduVULCAN.
+
+## Prywatność i zakres techniczny
+
+- Wszystkie endpointy `/api/eduvulcan/status`, `connect`, `select`, `sync` i `disconnect` wymagają tokenu Firebase aktywnego rodzica. Konto dziecka nie może łączyć ani odświeżać dziennika. Wybrany profil musi pochodzić z sesji tego rodzica.
+- Backend przechowuje wyłącznie sesję/cookies w zaszyfrowanej postaci AES-256-GCM w `_eduConnections/{UID}`. Szyfrowanie wiąże sesję z UID właściciela; klucz jest osobno w Vercel. Przeglądarka nie ma dostępu do kolekcji sesji. Wygasła sesja przestaje dawać dostęp; zaszyfrowany rekord jest usuwany przy sprawdzeniu stanu lub próbie użycia. Paczka **nie konfiguruje automatycznej polityki Firestore TTL**: bez osobnego ustawienia jej w Firebase rekord może pozostać w bazie do następnego żądania albo odłączenia konta.
+- Pobraną szkołę zapisujemy w Firestore. Dziecko widzi własne oceny, plan i sprawdziany zgodnie z regułami. Wiadomości pobrane z konta rodzica trafiają do `schoolParentMessages` i są dostępne **wyłącznie rodzicom**. Ręczne wiadomości/notatki w organizerze pozostają osobną funkcją.
+- Odpowiedzi integracji nie są cache'owane przez PWA. Hasła, cookies i tokeny nie powinny trafiać do logów ani eksportu danych interfejsu.
+- Zakres danych zależy od odpowiedzi portalu i praw zalogowanego konta. Nie potwierdzono jeszcze kompletności ocen, planu, sprawdzianów ani wiadomości na Twoim rzeczywistym koncie. Nie jest to oficjalny plugin ani oficjalnie gwarantowane API eduVULCAN.
+
+## Problemy po wdrożeniu
+
+| Komunikat/objaw | Co sprawdzić |
+| --- | --- |
+| Integracja nie jest skonfigurowana | Zmienne serwerowe w Production, poprawny projekt klucza JSON, klucz szyfrowania i nowe wdrożenie po zmianie ustawień. |
+| Endpoint `/api/eduvulcan/...` zwraca 404 lub HTML | Czy opublikowano pełny projekt z `api/`, a nie sam `dist`; Vite `npm run dev` również nie uruchamia funkcji Vercel. |
+| Dostęp tylko dla rodzica | Poprawny profil `members/{UID}`, aktywna rola i ponowne logowanie do Naszej Rodziny. |
+| Niedozwolona domena | `EDUVULCAN_SITE_ORIGIN` musi odpowiadać domenie otwartej aplikacji i właściwemu środowisku. |
+| Sesja wygasła lub nie można jej odczytać | Połącz ponownie; sprawdź, czy nie zmieniono klucza szyfrowania/ID. |
+| Poczekaj na odświeżenie | Limit 5 minut lub trwające pobieranie. Nie uruchamiaj wielu równoległych prób. |
+| Logowanie do eduVULCAN lub pobranie nie działa | Poprawne własne konto na oficjalnej stronie, uprawnienia do SP4 i aktualny mechanizm portalu. Sam poprawny build nie potwierdza tego kroku. |
 
 ## Import CSV albo JSON
 
@@ -72,6 +166,21 @@ Import rozpoznaje identyczne importowane wpisy po całej treści i pomija powtó
 
 ## Co udało się potwierdzić o integracji
 
+Na 1 października 2026 r. przejrzano aktualne publiczne implementacje korzystające z portali `uczen.eduvulcan.pl` i `wiadomosci.eduvulcan.pl`. Poniższe linki prowadzą do konkretnych przejrzanych wersji kodu, a nie do zmiennej gałęzi. Są źródłami ustaleń o protokole, nie oficjalną dokumentacją producenta i nie dowodem udanego połączenia konta rodziny:
+
+| Źródło | Co potwierdza |
+| --- | --- |
+| [htomasz/vultron — vultron.py](https://github.com/htomasz/vultron/blob/69cbc4a6ef3f93e53f2b6d805afe7d9c15bd9d07/vultron/vultron.py) | Odczyt współczesnych API ucznia i wiadomości, okresy ocen, zmiany planu i rozdzielone skrzynki placówek. |
+| [budzikt/edu-vulcan-mcp — auth.ts](https://github.com/budzikt/edu-vulcan-mcp/blob/bf7cbbfb1623b3b3b559be30158276704ab4f0a8/auth.ts) i [grades.ts](https://github.com/budzikt/edu-vulcan-mcp/blob/bf7cbbfb1623b3b3b559be30158276704ab4f0a8/grades/grades.ts) | Sesje HTTP z cookies i formularzami federacji oraz szczegółowy format ocen, w tym tryb opisowy. |
+| [tumski/eduvulcan-cli — fetch.ts](https://github.com/tumski/eduvulcan-cli/blob/b582b14d8a0a0fa86777e53185d699c8dbc834c7/src/fetch.ts) i [types.ts](https://github.com/tumski/eduvulcan-cli/blob/b582b14d8a0a0fa86777e53185d699c8dbc834c7/src/types.ts) | Plan, lista zadań i ich szczegóły w nowoczesnym API webowym. Automatyczny wybór pierwszego profilu z tej implementacji nie jest używany w Naszej Rodzinie. |
+| [DzienniczekSzpontniczek — PrometheusMessagesApi.kt](https://github.com/szponciciel04/DzienniczekSzpontniczek/blob/73d35c3d4a331fe009919004df860c9e97067374/composeApp/src/commonMain/kotlin/io/github/szpontium/api/prometheus/PrometheusMessagesApi.kt) | Osobne SSO wiadomości, nagłówki, GET treści oraz oddzielny PUT oznaczający przeczytanie, którego nie używamy. |
+| [PrometheusMailbox.kt](https://github.com/szponciciel04/DzienniczekSzpontniczek/blob/73d35c3d4a331fe009919004df860c9e97067374/composeApp/src/commonMain/kotlin/io/github/szpontium/api/prometheus/models/PrometheusMailbox.kt) i [PrometheusMessage.kt](https://github.com/szponciciel04/DzienniczekSzpontniczek/blob/73d35c3d4a331fe009919004df860c9e97067374/composeApp/src/commonMain/kotlin/io/github/szpontium/api/prometheus/models/PrometheusMessage.kt) | Pola identyfikatora skrzynki, nadawcy, treści i metadanych załączników. |
+| [omirek/eduvulcan-scraper — index.js](https://github.com/omirek/eduvulcan-scraper/blob/761e402df280449579bc303afb3bdc8fc8e0e600/index.js) | Endpoint listy sprawdzianów/zadań, typ zadania domowego i adresy `App`. Wybór pierwszego profilu w tym projekcie nie jest stosowany u nas. |
+
+Starsze zgodne warianty struktury ocen sprawdzono również w [pdobosz-playground/vulcan-sdk](https://github.com/pdobosz-playground/vulcan-sdk/tree/fc343c3cbff8c7927c1b6d049222ae05f94689cf). To materiał historyczny, nie bieżąca odpowiedź eduVULCAN. Opis adaptera powyżej obejmuje zakres faktycznie zaimplementowany; publiczne źródła zawierają też funkcje, których ta aplikacja nie pobiera.
+
+### Wcześniejsze sprawdzenie przy wersji 1.4.0
+
 Przejrzano publiczne README i metadane poniższych repozytoriów przez GitHub. Te źródła są informacjami autorów nieoficjalnych projektów, nie dokumentacją producenta eduVULCAN.
 
 | Źródło | Potwierdzony fakt | Znaczenie dla tej aplikacji |
@@ -81,14 +190,14 @@ Przejrzano publiczne README i metadane poniższych repozytoriów przez GitHub. T
 | [wulkanowy/wulkanowy — README](https://github.com/wulkanowy/wulkanowy/blob/develop/README.md) | Opisuje nieoficjalnego klienta **VULCAN UONET+** z ocenami, planem i wiadomościami. | Funkcji starszego klienta nie można obiecać jako funkcji nowej integracji eduVULCAN. |
 | [wulkanowy/sdk — metadane](https://api.github.com/repos/wulkanowy/sdk), [wulkanowy/wulkanowy — metadane](https://api.github.com/repos/wulkanowy/wulkanowy) | Oba sprawdzone repozytoria mają `archived: true`; ostatnie push wskazują czerwiec 2024. | Nie przyjmujemy tych repozytoriów jako dowodu utrzymywanego wsparcia eduVULCAN. |
 
-Potwierdzono stronę eduVULCAN oraz adres logowania. Nie udało się pozyskać i zweryfikować oficjalnej dokumentacji interfejsu **eduVULCAN** dla prywatnej aplikacji rodzinnej. **Nie stwierdzamy na tej podstawie, że takie API nie istnieje.** Nie potwierdzono też oficjalnego eksportu CSV/JSON z konta rodzica, aktualnej obsługi kodu QR przez konkretną bibliotekę ani dostępu do ocen, planu i wiadomości przez ten sam interfejs.
+Powyższe starsze repozytoria nie stanowią podstawy obietnicy zgodności z eduVULCAN. Nowy adapter 1.5.0 opiera się na formularzu producenta i aktualnych publicznych implementacjach wskazanych wcześniej. Logowanie i zakres danych nadal wymagają potwierdzenia na koncie rodzica. Nie uzyskano oficjalnej gwarancji API dla tej prywatnej integracji ani potwierdzenia oficjalnego eksportu CSV/JSON. Dlatego szablony importu pozostają formatem aplikacji.
 
 Adresy producenta do sprawdzenia przy dalszych pracach: [eduVULCAN](https://eduvulcan.pl/) oraz [VULCAN](https://www.vulcan.edu.pl/). W tej paczce nie ma fikcyjnych endpointów ani przycisku udającego udaną synchronizację.
 
-## Jak przygotować rzeczywistą synchronizację w przyszłości
+## Sprawdzenie rzeczywistego połączenia
 
-Najpierw należy uzyskać od producenta dokumentację lub potwierdzoną metodę dostępu dla **eduVULCAN**, wraz z zakresem danych i warunkami integracji. Kolejny krok to sprawdzenie połączenia tylko do odczytu na rzeczywistym koncie rodzica, z autoryzacją w oficjalnym mechanizmie dostawcy. Nie należy przekazywać danych logowania w rozmowie.
+Po wdrożeniu backendu i sekretów sprawdź logowanie własnym kontem, poprawną listę placówek i jawny wybór SP4. Następnie porównaj kilka ocen, lekcji, sprawdzianów i treści wiadomości z oficjalnym dziennikiem. Sprawdź również zachowanie statusu odczytu wiadomości. Zwróć uwagę na właściwe dziecko, terminy i dostęp rodzic/dziecko. Nie przekazuj danych logowania w rozmowie.
 
-Jeżeli dostęp jest wspierany, integracja powinna działać przez osobny backend. Musi przechowywać niezbędne tokeny poza kodem przeglądarki, pozwalać odłączyć konto, przypisywać dane do właściwego dziecka i pokazywać czas ostatniego udanego pobrania oraz błędy. Połączenia muszą uwzględniać ważność tokenów, ograniczenia zapytań i ewentualne różnice uprawnień kont. Sam serwer z plikami statycznymi lub dopisanie hasła do `.env` frontendu nie tworzy takiej integracji.
+Potwierdzenie tych kroków jest oddzielne od testów lokalnych. Jeśli portal zgłasza dodatkowe uwierzytelnienie lub adapter nie potrafi odczytać odpowiedzi, wymaga dalszej poprawki; nie należy nazywać samego endpointu „działającą synchronizacją” bez udanego wyniku na koncie. Sam statyczny hosting lub dopisanie hasła do `.env` frontendu nie uruchamiają integracji.
 
-Przed włączeniem automatyzacji trzeba potwierdzić osobno oceny, plan lekcji i wiadomości. Jeżeli producent nie udostępnia odpowiedniego sposobu dostępu, ręczny import i odnośnik do dziennika pozostają działającym rozwiązaniem.
+Ręczne wpisy, import i odnośnik do dziennika pozostają dostępne podczas konfiguracji i w razie wygaśnięcia połączenia. Nie dodano automatycznego harmonogramu pobierania ani wysyłania wiadomości do szkoły.

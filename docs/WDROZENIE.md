@@ -1,6 +1,6 @@
 # Wdrożenie aplikacji Nasza Rodzina
 
-Projekt składa się ze statycznej strony zbudowanej przez Vite oraz usług Firebase. Hosting wyświetla stronę; Firebase Authentication obsługuje konta, Firestore dane, a Storage pliki. W tej paczce nie ma własnego serwera aplikacyjnego.
+Projekt **1.5.0** składa się ze strony zbudowanej przez Vite, usług Firebase oraz funkcji serwerowych Vercel do połączenia eduVULCAN. Firebase Authentication obsługuje konta, Firestore dane, a Storage pliki. Organizer można uruchomić na zwykłym hostingu statycznym; integracja eduVULCAN wymaga pełnego projektu z `api/` i `server/`, wdrożonego do Vercel z konfiguracją serwerową.
 
 ## 1. Firebase i konta rodziny
 
@@ -22,6 +22,8 @@ W `.env.example` znajdziesz nazwy obsługiwanych ustawień. Aby zmienić projekt
 
 Nie ustawiaj `VITE_USE_EMULATORS=true` na publicznym hostingu. Ta opcja służy do pracy lokalnej. Nie wprowadzaj sekretów do zmiennych zaczynających się od `VITE_`, ponieważ mogą trafić do kodu pobieranego przez przeglądarkę.
 
+Dla eduVULCAN ustaw oddzielnie zmienne **serwerowe** w Vercel: `FIREBASE_PROJECT_ID`, jeden wariant klucza `FIREBASE_SERVICE_ACCOUNT_JSON` albo `FIREBASE_SERVICE_ACCOUNT_BASE64`, `EDUVULCAN_ENCRYPTION_KEY_BASE64` oraz domenę `EDUVULCAN_SITE_ORIGIN`. `.env.example` zawiera wyłącznie puste pola na sekrety. Szczegółowe kroki pobrania klucza Firebase Admin, wygenerowania klucza szyfrowania i wyboru SP4: [VULCAN.md](VULCAN.md). Do repozytorium nie dodawaj uzupełnionego pliku z sekretami.
+
 Publikuj tę wersję w głównym katalogu domeny, np. `https://rodzina.example.pl/` lub na osobnej subdomenie. Adres `https://example.pl/rodzina/` wymaga dodatkowych zmian ścieżek zasobów i PWA w kodzie.
 
 ## 3. GitHub i Vercel — Twój obecny wariant
@@ -31,7 +33,7 @@ Repozytorium: [noe007-Kg/-nasza-rodzina-web](https://github.com/noe007-Kg/-nasza
 Deployments: [projekt nasza-rodzina-web w Vercel](https://vercel.com/noe007-kg/nasza-rodzina-web/deployments).
 
 1. Zachowaj kopię repozytorium. Dane Firebase zabezpiecz osobno: pliki projektu nie zawierają bazy rodzinnej.
-2. Do głównego folderu repozytorium wgraj zawartość paczki. `package.json` musi znajdować się bezpośrednio w katalogu ustawionym w Vercel jako **Root Directory**.
+2. Do głównego folderu repozytorium wgraj zawartość paczki **PROJEKT 1.5.0**, łącznie z `api/` i `server/`. `package.json` musi znajdować się bezpośrednio w katalogu ustawionym w Vercel jako **Root Directory**. Paczka **STRONA** i samo `dist` nie zawierają uruchamialnego backendu integracji.
 3. Zacommituj także `package-lock.json`. Pomiń `node_modules`, `dist`, `.env.local` i klucze administratora.
 4. Ustaw w Vercel:
 
@@ -43,16 +45,16 @@ Deployments: [projekt nasza-rodzina-web w Vercel](https://vercel.com/noe007-kg/n
    | Build Command | `npm run build` |
    | Output Directory | `dist` |
 
-5. Uzupełnij zmienne Firebase, jeśli zmieniasz domyślną konfigurację projektu. Włącz je dla właściwego środowiska, zwłaszcza **Production**.
+5. Uzupełnij publiczne zmienne Firebase, jeśli zmieniasz domyślną konfigurację projektu. Dla integracji eduVULCAN dodaj również **serwerowe** zmienne z [VULCAN.md](VULCAN.md) dla **Production**. Sekrety nie mogą mieć przedrostka `VITE_`. Nie umieszczaj loginu/hasła dziennika w Vercel — wpiszesz je we własnym formularzu połączenia.
 6. Zapisz zmiany w gałęzi połączonej z Vercel. Poczekaj na **Ready**. Przy **Error** otwórz Build Logs i sprawdź pierwszy błąd.
 7. Dodaj domenę do Authorized domains w Firebase Authentication i wdróż reguły Firebase z kroku 1.
 8. Sprawdź działanie według końca instrukcji.
 
-`vercel.json` ustawia polecenie budowania i `dist`. Vercel zapewnia HTTPS i publikuje kompletny nowy zestaw plików.
+`vercel.json` ustawia polecenie budowania i `dist`. Vercel zapewnia HTTPS, publikuje stronę oraz funkcje z katalogu `api/`. Poprawny build nie potwierdza konfiguracji sekretów ani udanego logowania do eduVULCAN; po publikacji sprawdź te kroki osobno. Logowanie i pobieranie z rzeczywistego konta rodziny nie zostały zweryfikowane podczas przygotowania paczki.
 
 ## 4. Zwykły hosting — FTP/SFTP lub panel serwera
 
-Ten wariant działa na hostingu statycznym, także z Apache lub nginx. Serwer nie wymaga Node.js.
+Ten wariant uruchamia organizer na hostingu statycznym, także z Apache lub nginx. Serwer nie wymaga Node.js. **Połączenie eduVULCAN nie działa przez samo wgranie `dist`**; funkcje Vercel wymagają wdrożenia pełnego projektu według rozdziału 3. Wpisy ręczne i import szkoły pozostają dostępne.
 
 Na komputerze w folderze projektu:
 
@@ -81,7 +83,7 @@ Adres poda terminal. To podgląd, nie serwer do hostowania produkcji.
 
 ## 5. Firebase Hosting
 
-To alternatywa dla Vercel. Baza może zostać w tym samym projekcie.
+To alternatywa dla hostowania statycznego organizera. Baza może zostać w tym samym projekcie. Obecna konfiguracja Firebase Hosting nie publikuje funkcji z `api/`; dla integracji eduVULCAN użyj Vercel. Samo `firebase deploy --only hosting` nie uruchamia backendu.
 
 Zainstaluj Firebase CLI według [oficjalnej instrukcji](https://firebase.google.com/docs/cli), zaloguj się kontem z dostępem do właściwego projektu i uruchom w folderze projektu:
 
@@ -98,6 +100,8 @@ Zastąp `TWOJ_PROJECT_ID` identyfikatorem, np. `nasza-rodzina`. `firebase.json` 
 ## 6. Opcjonalnie: serwer z Dockerem
 
 Dockerfile udostępnia **wcześniej zbudowane `dist`** przez nginx. Nie uruchamia backendu ani emulatorów. Obraz nie potrzebuje haseł ani kluczy administratora.
+
+Ten kontener udostępnia organizer, bez backendu eduVULCAN. Nie kopiuj sekretów integracji do obrazu statycznej strony. Wariant dla działających funkcji integracji opisano w rozdziale Vercel.
 
 ```bash
 npm ci
@@ -124,6 +128,7 @@ Nowa wersja pokaże komunikat i przycisk **Odśwież**. Kliknięcie przeładuje 
 - Prześlij niesensytywny plik testowy. Sprawdź, czy konto bez uprawnień nie może go pobrać.
 - Wyloguj się i sprawdź ponowne logowanie.
 - Zweryfikuj reguły Firebase na serwerze. Ukryta karta w interfejsie nie dowodzi ochrony danych.
+- Jeśli włączasz eduVULCAN, połącz własne konto rodzica, wybierz jawnie SP4 i odpowiednie dziecko. Sprawdź wynik odświeżenia z oficjalnym dziennikiem oraz brak dostępu dziecka do połączenia i wiadomości rodziców. Nie testowano tego wcześniej na Twoim koncie.
 
 ## Typowe problemy
 
@@ -137,3 +142,5 @@ Nowa wersja pokaże komunikat i przycisk **Odśwież**. Kliknięcie przeładuje 
 | Vercel nie buduje | Root Directory, Node.js 22.x, `package-lock.json` i pierwszy błąd w Build Logs. |
 | Stara wersja strony | Przycisk aktualizacji PWA, cache CDN, kompletne `dist` i cache-control dla `sw.js`. |
 | Brak przypomnienia w tle | Uprawnienia przeglądarki i systemu; zamknięta/wstrzymana strona nie daje niezawodnych alarmów. |
+| eduVULCAN nie jest skonfigurowany | Pełny projekt z `api/`, serwerowe zmienne Vercel, zgodny klucz Firebase i redeployment. Szczegóły: [VULCAN.md](VULCAN.md). |
+| Logowanie lub odczyt eduVULCAN nie działa | Własne konto na oficjalnej stronie, uprawnienia do SP4 i mechanizm portalu; zgodność adaptera wymaga sprawdzenia na rzeczywistym koncie. |

@@ -38,7 +38,7 @@ test('szkoła: import wymaga zatwierdzenia, pomija powtórzenia i zachowuje ręc
   expect((await fixtureDatabase().collection('schoolItems').get()).size).toBe(originalCount);
   await dialog.getByRole('button', { name: 'Importuj (2)', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole('status')).toContainText('dodano 1 wpisów, pominięto 1 powtórzeń');
+  await expect(page.locator('.school-notice')).toContainText('dodano 1 wpisów, pominięto 1 powtórzeń');
   await page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true }).click();
   await page.locator('.school-record-list .school-entry').filter({ hasText: 'Importowane zadanie E2E' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Edytuj wpis', exact: true }).click();
@@ -50,7 +50,7 @@ test('szkoła: import wymaga zatwierdzenia, pomija powtórzenia i zachowuje ręc
   await page.getByRole('dialog').getByLabel('Wybierz przygotowany plik').setInputFiles(payload);
   await page.getByRole('dialog').getByRole('button', { name: 'Importuj (2)', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(page.getByRole('status')).toContainText('dodano 0 wpisów, pominięto 2 powtórzeń');
+  await expect(page.locator('.school-notice')).toContainText('dodano 0 wpisów, pominięto 2 powtórzeń');
   expect((await fixtureDatabase().collection('schoolItems').get()).size).toBe(originalCount + 1);
   const imported = await fixtureDatabase().collection('schoolItems').where('title', '==', 'Zadanie po ręcznej poprawce E2E').get();
   expect(imported.size).toBe(1);

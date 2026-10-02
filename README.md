@@ -2,7 +2,7 @@
 
 Prywatna aplikacja rodzinna działająca w przeglądarce. Jeden adres dla telefonu, tabletu i komputera, w pionie i w poziomie. Zawiera kalendarz, zadania, zakupy, wiadomości, sprawy szkolne i zdrowotne.
 
-To paczka projektu do uruchomienia na Twoim hostingu. Rozpakowanie plików nie publikuje aplikacji. Konta i dane korzystają z zewnętrznych usług Firebase: Authentication, Firestore i Storage.
+To paczka projektu **1.5.0** do uruchomienia na Twoim hostingu. Rozpakowanie plików nie publikuje aplikacji. Konta i dane korzystają z Firebase: Authentication, Firestore i Storage. Nowe połączenie eduVULCAN wymaga dodatkowo funkcji serwerowych Vercel i prywatnej konfiguracji.
 
 ## Najprostsza droga dla Twojego projektu
 
@@ -10,10 +10,12 @@ Masz już [repozytorium GitHub](https://github.com/noe007-Kg/-nasza-rodzina-web)
 
 1. Zachowaj kopię obecnego projektu i danych przed podmianą.
 2. Przygotuj konta rodziny, migrację istniejących danych z 1.3.3 i reguły dostępu Firebase zgodnie z [instrukcją wdrożenia](docs/WDROZENIE.md). Ten krok chroni dane na serwerze; zachowaj kolejność z dokumentacji.
-3. Podmień pliki w repozytorium **zawartością tego folderu**, a nie całym ZIP-em. Zachowaj konfigurację własnego projektu Firebase. Nie dodawaj `node_modules`, plików `.env.local` ani kluczy administratora.
+3. Podmień pliki w repozytorium **zawartością paczki PROJEKT**, a nie całym ZIP-em; uwzględnij katalogi `api/` i `server/`. Zachowaj konfigurację własnego projektu Firebase. Nie dodawaj `node_modules`, plików `.env.local` ani kluczy administratora.
 4. Zapisz zmiany w GitHub. Jeśli Vercel jest połączony z właściwą gałęzią, rozpocznie budowanie strony. Ustawienia: **Vite**, `npm run build`, folder wynikowy **dist**.
 5. W Firebase → Authentication → Settings → Authorized domains dodaj domenę aplikacji.
 6. Otwórz stronę, zaloguj się kontem rodzica, dodaj próbne zadanie i sprawdź, czy widać je na drugim urządzeniu. Sprawdź również konto dziecka i uprawnienia do dokumentów.
+
+Dla połączenia eduVULCAN ustaw też **serwerowe** zmienne Vercel według [docs/VULCAN.md](docs/VULCAN.md), opublikuj nowe reguły, a następnie połącz własne konto rodzica na swojej stronie z HTTPS. Hasła nie podajesz w czacie ani w kodzie.
 
 Szczegółowe kroki dla Vercel, zwykłego hostingu i Firebase Hosting znajdziesz w [docs/WDROZENIE.md](docs/WDROZENIE.md). Konfigurację dostępu i kont opisuje [docs/FIREBASE.md](docs/FIREBASE.md).
 
@@ -31,7 +33,9 @@ Wymagany jest HTTPS. Skrót otwiera tę samą aplikację i dane. PWA przechowuje
 
 ## Szkoła i eduVULCAN
 
-Plan lekcji, oceny i informacje szkolne można prowadzić w aplikacji. Połączenie z eduVULCAN wymaga sprawdzenia autoryzacji i dostępnego interfejsu dla Twojej szkoły. Ta paczka nie pobiera automatycznie danych z dziennika. Nie umieszczaj hasła do eduVULCAN w kodzie lub plikach udostępnianych przez hosting. Szczegóły oraz format importu opisuje [docs/VULCAN.md](docs/VULCAN.md).
+Plan lekcji, oceny i informacje szkolne możesz prowadzić ręcznie albo importować z CSV/JSON. Wersja 1.5.0 dodaje backend i panel połączenia do konta rodzica w eduVULCAN, jawny wybór ucznia **SP4** oraz pobieranie tylko do odczytu. Odświeżanie uruchamia rodzic; nie ma harmonogramu pobierania w tle. Hasło nie jest zapisywane, a dostęp przez szyfrowaną sesję wygasa najpóźniej po 24 godzinach. Wygasły rekord jest usuwany przy sprawdzeniu stanu lub próbie wczytania sesji; nie ustawiono automatycznej polityki usuwania Firestore TTL.
+
+**Połączenie nie zostało sprawdzone na rzeczywistym koncie rodziny.** Konfiguracja Vercel i poprawny build nie dowodzą udanego logowania ani pełnego zakresu danych. Nie umieszczaj hasła w kodzie. Szczegóły wdrożenia, wyboru SP4 i formatu importu: [docs/VULCAN.md](docs/VULCAN.md).
 
 ## Uruchomienie na komputerze
 
@@ -48,7 +52,7 @@ Otwórz adres pokazany w terminalu. Bez kont Firebase i uprawnień aplikacja nie
 npm run build
 ```
 
-Na serwer wgrywasz **zawartość folderu `dist`**. Serwer nie potrzebuje Node.js, PHP ani własnego backendu tej aplikacji. Firebase pozostaje potrzebny do kont, danych i plików.
+Na zwykły serwer wgrywasz **zawartość `dist`** — to organizer bez backendu eduVULCAN. Serwer statyczny nie potrzebuje Node.js ani PHP; Firebase pozostaje potrzebny do kont, danych i plików. Aby uruchomić także integrację, publikuj pełny projekt przez GitHub/Vercel. Sam `npm run dev` uruchamia frontend Vite, bez funkcji `/api/eduvulcan/...`.
 
 ## Ograniczenia
 

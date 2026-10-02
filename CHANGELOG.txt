@@ -1,5 +1,11 @@
 NASZA RODZINA — CHANGELOG
 
+v1.5.0 — 02.10.2026
+- Serwerowe połączenie eduVULCAN: wybór profilu szkoły i dziecka, pobieranie ocen, planu, zadań, sprawdzianów oraz odebranych wiadomości.
+- Zaszyfrowana sesja, autoryzacja rodzica, prywatna skrzynka, ponowne logowanie i odłączenie.
+- Zachowanie wcześniejszych danych przy błędach oraz aktualizacja pełnego zakresu ocen i planu.
+- Konfiguracja pełnego projektu Vercel i reguł Firebase. Integracja nie została jeszcze zweryfikowana na rzeczywistym koncie rodziny.
+
 v1.4.2 — 01.10.2026
 - Oryginalne logo w menu, nagłówku, logowaniu i ikonach PWA/przeglądarki.
 - Różowo-lawendowe tło, białe karty, granatowy tekst i różowe akcenty wg wzoru.

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+*-debug.log
+playwright-report/
+test-results/
+credentials/
+config/members.private.json
+**/*private*.json
+*service-account*.json
+**/*serviceAccount*.json
+*.pem
+*.key

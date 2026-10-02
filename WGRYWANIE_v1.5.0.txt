@@ -1,0 +1,15 @@
+NASZA RODZINA 1.5.0 — CO WGRYWAĆ
+
+Zacznij od START_TUTAJ.md. Szczegóły: docs/WDROZENIE.md i docs/VULCAN.md.
+
+GitHub/Vercel: cała zawartość folderu projektu, w tym api/, server/,
+package-lock.json i vercel.json, bez node_modules, dist, .env.local
+ani prywatnych kluczy administratora. Klucze ustaw w zmiennych Vercel.
+Opublikuj reguły Firestore/Storage tej wersji również po aktualizacji z 1.4.x.
+
+Zwykły hosting: npm run build, następnie cała zawartość dist.
+Paczka STRONA uruchamia organizer bez połączenia eduVULCAN.
+Pobieranie dziennika wymaga backendu z paczki PROJEKT.
+
+Przy przechodzeniu z 1.3.3 przygotuj profile i migrację Firebase
+według docs/FIREBASE.md. Publikacja strony nie wykonuje tych kroków.

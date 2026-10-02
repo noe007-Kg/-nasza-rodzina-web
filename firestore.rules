@@ -37,6 +37,9 @@ service cloud.firestore {
       return title(data.title) && data.person in ['Paweł', 'Nikodem', 'Layla']
         && data.type in ['lesson', 'homework', 'test', 'grade', 'message', 'activity'];
     }
+    function manualSchool(data) {
+      return !data.keys().hasAny(['source', 'provider', 'providerScopeId', 'sourceRecordId', 'sourceExternalId', 'sourceProfileId', 'sourceOwnerUid', 'sourceSyncId', 'syncedAt']);
+    }
     function privateParticipant(data) {
       return request.auth.uid in data.participants;
     }
@@ -126,15 +129,23 @@ service cloud.firestore {
     }
     match /schoolItems/{id} {
       allow read: if member() && (parent() || resource.data.person == ownPerson());
-      allow create: if member() && creator(request.resource.data) && validSchool(request.resource.data)
+      allow create: if member() && creator(request.resource.data) && validSchool(request.resource.data) && manualSchool(request.resource.data)
         && (parent() || (request.resource.data.person == ownPerson()
           && request.resource.data.type in ['lesson', 'homework', 'test', 'activity']));
-      allow update: if member() && preserveCreator() && validSchool(request.resource.data)
+      allow update: if member() && preserveCreator() && validSchool(request.resource.data) && manualSchool(request.resource.data)
+        && resource.data.get('source', '') != 'eduvulcan'
         && (parent() || (resource.data.person == ownPerson() && request.resource.data.person == ownPerson()
           && resource.data.type in ['lesson', 'homework', 'test', 'activity']
           && request.resource.data.type in ['lesson', 'homework', 'test', 'activity']));
-      allow delete: if parent() || (member() && resource.data.person == ownPerson()
-        && resource.data.type in ['lesson', 'homework', 'test', 'activity']);
+      allow delete: if resource.data.get('source', '') != 'eduvulcan' && (parent() || (member() && resource.data.person == ownPerson()
+        && resource.data.type in ['lesson', 'homework', 'test', 'activity']));
+    }
+    match /schoolParentMessages/{id} {
+      allow read: if parent();
+      allow write: if false;
+    }
+    match /_eduConnections/{uid} {
+      allow read, write: if false;
     }
     match /{document=**} { allow read, write: if false; }
   }

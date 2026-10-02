@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { after, before, beforeEach, test } from 'node:test';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, getDocs, query, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
 import { getMetadata, ref, uploadBytes } from 'firebase/storage';
 
 let environment;
@@ -124,6 +124,35 @@ test('new health entries cannot contain publicly tokenized document URLs', async
   await assertSucceeds(setDoc(doc(parentDb, 'healthRecords', 'new'), record));
   await assertFails(setDoc(doc(parentDb, 'healthRecords', 'public-url'), { ...record, documentURL: 'https://example.com/file?token=secret' }));
   await assertFails(setDoc(doc(parentDb, 'healthRecords', 'shared-path'), { ...record, documentPath: 'health/shared/Paweł/parent/result.pdf' }));
+});
+
+test('eduVULCAN session secrets are server-only, including for parents', async () => {
+  await environment.withSecurityRulesDisabled(async (context) => setDoc(doc(context.firestore(), '_eduConnections', 'parent'), { envelope: { ciphertext: 'encrypted' }, students: [] }));
+  await assertFails(getDoc(doc(parentDb, '_eduConnections', 'parent')));
+  await assertFails(getDocs(collection(parentDb, '_eduConnections')));
+  await assertFails(setDoc(doc(parentDb, '_eduConnections', 'parent'), { session: 'forged' }));
+});
+
+test('browser users cannot forge eduVULCAN provenance or change imported school entries', async () => {
+  const manual = { person: 'Paweł', type: 'lesson', title: 'Polski', createdBy: 'parent' };
+  await assertSucceeds(setDoc(doc(parentDb, 'schoolItems', 'manual'), manual));
+  await assertFails(setDoc(doc(parentDb, 'schoolItems', 'forged'), { ...manual, source: 'eduvulcan', sourceRecordId: 'provider-1' }));
+  await assertFails(updateDoc(doc(parentDb, 'schoolItems', 'manual'), { provider: 'eduvulcan' }));
+  await environment.withSecurityRulesDisabled(async (context) => setDoc(doc(context.firestore(), 'schoolItems', 'synced'), { ...manual, source: 'eduvulcan', provider: 'eduvulcan', sourceRecordId: 'provider-2' }));
+  await assertSucceeds(getDoc(doc(parentDb, 'schoolItems', 'synced')));
+  await assertSucceeds(getDoc(doc(childDb, 'schoolItems', 'synced')));
+  await assertFails(updateDoc(doc(parentDb, 'schoolItems', 'synced'), { title: 'Sfałszowany wpis' }));
+  await assertFails(updateDoc(doc(childDb, 'schoolItems', 'synced'), { title: 'Inny wpis' }));
+  await assertFails(deleteDoc(doc(parentDb, 'schoolItems', 'synced')));
+});
+
+test('synchronized parent messages are readable only by parents and cannot be forged by the browser', async () => {
+  const message = { person: 'Paweł', personKey: 'Paweł', type: 'message', title: 'Wiadomość wychowawcy', note: 'Tylko rodzice', source: 'eduvulcan' };
+  await environment.withSecurityRulesDisabled(async (context) => setDoc(doc(context.firestore(), 'schoolParentMessages', 'synced'), message));
+  await assertSucceeds(getDocs(collection(parentDb, 'schoolParentMessages')));
+  await assertFails(getDocs(collection(childDb, 'schoolParentMessages')));
+  await assertFails(getDoc(doc(childDb, 'schoolParentMessages', 'synced')));
+  await assertFails(setDoc(doc(parentDb, 'schoolParentMessages', 'forged'), message));
 });
 
 test('storage protects private health documents, own shared documents, file types and old paths', async () => {

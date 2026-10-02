@@ -1,6 +1,6 @@
 # Uruchomienie prywatnego Firebase
 
-Ta aplikacja używa istniejących kolekcji `members`, `calendarEvents`, `tasks`, `shoppingItems`, `quickProducts`, `familyMessages`, `healthRecords`, `medicalContacts`, `schoolItems`. Kod nie zakłada otwartych reguł. Uprawnienia działają na serwerze Firebase, niezależnie od tego, co ktoś zmieni w swojej przeglądarce.
+Ta aplikacja używa istniejących kolekcji `members`, `calendarEvents`, `tasks`, `shoppingItems`, `quickProducts`, `familyMessages`, `healthRecords`, `medicalContacts`, `schoolItems`. Integracja eduVULCAN dodaje `schoolParentMessages` (odczyt wyłącznie dla rodziców) i `_eduConnections` (dostęp wyłącznie z backendu). Kod nie zakłada otwartych reguł. Uprawnienia działają na serwerze Firebase, niezależnie od tego, co ktoś zmieni w swojej przeglądarce.
 
 ## Konfiguracja projektu
 
@@ -23,7 +23,13 @@ Zalogowanie samym e-mailem i hasłem nie nadaje dostępu do rodziny. Osoba spoza
 3. Sprawdź plan: `node scripts/bootstrap-family.mjs --project TWOJ_PROJECT_ID --members family-members.private.json`.
 4. Zapisz konta/profile: ta sama komenda z `--apply`. Nowe konta dostają losowe hasło, którego skrypt nie wyświetla. Członkowie ustawiają własne hasło przez „Nie pamiętam hasła” w aplikacji; można także wysłać reset z Authentication w konsoli. Używaj kont z prawdziwymi skrzynkami e-mail. Dla istniejących kont hasło pozostaje bez zmian.
 
-`firebase-admin` służy tylko temu narzędziu. Administrator omija reguły Firebase, dlatego klucz konta usługi nigdy nie może znaleźć się w aplikacji, repozytorium ani katalogu strony.
+`firebase-admin` służy temu narzędziu oraz serwerowej integracji eduVULCAN w funkcjach Vercel. Administrator omija reguły Firebase, dlatego klucz konta usługi nigdy nie może znaleźć się w aplikacji przeglądarkowej, repozytorium ani katalogu `dist`. Backend sprawdza Firebase ID token, jego unieważnienie i aktualny profil aktywnego rodzica przy każdym żądaniu. Konfiguracja serwera wymaga jawnego `FIREBASE_PROJECT_ID` i `FIREBASE_SERVICE_ACCOUNT_JSON` albo `FIREBASE_SERVICE_ACCOUNT_BASE64`; na Vercel nie zakłada się dostępnych lokalnych Application Default Credentials. Szczegóły wdrożenia integracji są w `docs/VULCAN.md`.
+
+Sesje eduVULCAN są szyfrowane AES-256-GCM z kluczem `EDUVULCAN_ENCRYPTION_KEY_BASE64` zawierającym 32 losowe bajty. Szyfrowanie wiąże sesję z UID rodzica; druga osoba nie może wykorzystać przeniesionego szyfrogramu. Hasło dziennika nie jest zapisywane. Sesja ma maksymalnie 24 godziny ważności i jest usuwana przy odłączeniu lub odczycie po wygaśnięciu. Dodatkowo można włączyć politykę Firestore TTL dla pola `expiresAt` w `_eduConnections`, aby usuwała wygasłe sesje również bez kolejnego żądania; usuwanie TTL jest asynchroniczne. Po zmianie klucza szyfrującego rodzice muszą ponownie połączyć dziennik.
+
+Importowane przez backend wpisy mają `source: eduvulcan` i stabilne identyfikatory. Przeglądarka nie może ich zmieniać, usuwać ani tworzyć wpisów z polami potwierdzającymi pochodzenie od dostawcy. Wpisy ręczne pozostają osobne; synchronizacja nie nadpisuje wpisu lokalnego przy kolizji identyfikatora. Odłączenie dziennika usuwa sesję, zachowując już zaimportowaną historię szkolną.
+
+Kompletny, prawidłowo odczytany zakres ocen bieżącego okresu lub datowanego planu lekcji może usuwać wycofane wpisy dostawcy z tego samego profilu, dziecka i zakresu. Nie usuwa wpisów ręcznych, innych okresów ani dat poza potwierdzonym zakresem. Niepełne i nieudane pobrania pozostawiają wcześniejsze wpisy; limitowane strony wiadomości i zadań nie uruchamiają usuwania. Zbyt wiele zmian przerywa synchronizację przed zapisem. Odłączenie podczas logowania anuluje również zapis właśnie tworzonego połączenia.
 
 ## Jeśli masz już konta — ustawienia w konsoli
 

@@ -3,12 +3,16 @@ import { createPortal } from 'react-dom';
 import type { User } from 'firebase/auth';
 import { collection, deleteField, doc, getDoc, onSnapshot, query, Timestamp, where, writeBatch } from 'firebase/firestore';
 import { db } from './firebase';
+import { EduVulcanConnection } from './EduVulcanConnection';
 import { isSchoolType, MAX_SCHOOL_FILE_BYTES, MAX_SCHOOL_ROWS, parseSchoolFile, SCHOOL_PEOPLE, SCHOOL_TYPES, schoolImportId, validateSchoolEntry } from './school-import';
 import type { SchoolEntry, SchoolType } from './school-import';
 import './school.css';
 
 type SchoolMember = { name?: string; role?: string; personKey?: string };
-type SchoolRecord = SchoolEntry & { id: string; calendarEventId?: string; calendarCreatedBy?: string; createdBy?: string; createdAt?: Date };
+type SchoolRecord = SchoolEntry & {
+  id: string; calendarEventId?: string; calendarCreatedBy?: string; createdBy?: string; createdAt?: Date;
+  source?: string; syncedAt?: Date; parentOnly?: boolean;
+};
 type SchoolForm = SchoolEntry & { scheduleMode: 'weekly' | 'date'; addToCalendar: boolean; calendarDate: string };
 const META: Record<SchoolType, { title: string; singular: string; icon: string }> = {
   lesson: { title: 'Plan lekcji', singular: 'Lekcja', icon: '📚' },
@@ -48,6 +52,25 @@ function errorText(error: unknown): string {
 }
 function matchesDay(record: SchoolEntry, key: string): boolean {
   return record.date ? record.date === key : record.weekday === weekdayOf(key);
+}
+function recordDate(value: unknown): Date | undefined {
+  if (value instanceof Timestamp) return value.toDate();
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : undefined;
+}
+function readSchoolRecord(id: string, data: Record<string, unknown>, parentOnly = false): SchoolRecord | null {
+  if ((!parentOnly && !isSchoolType(data.type)) || typeof data.person !== 'string') return null;
+  return {
+    id, person: data.person, type: parentOnly ? 'message' : data.type as SchoolType, title: String(data.title || ''),
+    subject: String(data.subject || ''), date: String(data.date || ''), time: String(data.time || ''),
+    endTime: String(data.endTime || ''), weekday: Number(data.weekday || 0), note: String(data.note || ''),
+    calendarEventId: typeof data.calendarEventId === 'string' ? data.calendarEventId : undefined,
+    calendarCreatedBy: typeof data.calendarCreatedBy === 'string' ? data.calendarCreatedBy : undefined,
+    createdBy: typeof data.createdBy === 'string' ? data.createdBy : undefined,
+    createdAt: recordDate(data.createdAt), syncedAt: recordDate(data.syncedAt),
+    source: parentOnly ? 'eduvulcan' : typeof data.source === 'string' ? data.source : undefined, parentOnly,
+  };
 }
 function entryFromForm(form: SchoolForm): SchoolEntry {
   const { scheduleMode: _mode, addToCalendar: _calendar, calendarDate: _calendarDate, ...entry } = form;
@@ -89,6 +112,8 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
   const parent = member?.role === 'parent';
   const ownStudent = member?.personKey || member?.name || '';
   const [records, setRecords] = useState<SchoolRecord[]>([]);
+  const [parentMessages, setParentMessages] = useState<SchoolRecord[]>([]);
+  const [messageError, setMessageError] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -122,19 +147,21 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
         const data = item.data();
         if (!isSchoolType(data.type) || typeof data.person !== 'string') continue;
         if (!parent && data.person !== ownStudent) continue;
-        next.push({
-          id: item.id, person: data.person, type: data.type, title: String(data.title || ''),
-          subject: String(data.subject || ''), date: String(data.date || ''), time: String(data.time || ''),
-          endTime: String(data.endTime || ''), weekday: Number(data.weekday || 0), note: String(data.note || ''),
-          calendarEventId: typeof data.calendarEventId === 'string' ? data.calendarEventId : undefined,
-          calendarCreatedBy: typeof data.calendarCreatedBy === 'string' ? data.calendarCreatedBy : undefined,
-          createdBy: typeof data.createdBy === 'string' ? data.createdBy : undefined,
-          createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : undefined,
-        });
+        const record = readSchoolRecord(item.id, data);
+        if (record) next.push(record);
       }
       setRecords(next); setLoading(false); setLoadError('');
     }, (error) => { setLoadError(errorText(error)); setLoading(false); });
   }, [parent, ownStudent, user.uid, retry]);
+
+  useEffect(() => {
+    setParentMessages([]); setMessageError('');
+    if (!parent) return;
+    return onSnapshot(collection(db, 'schoolParentMessages'), (snapshot) => {
+      const messages = snapshot.docs.map((item) => readSchoolRecord(`parent-message:${item.id}`, item.data(), true)).filter((item): item is SchoolRecord => item !== null);
+      setParentMessages(messages); setMessageError('');
+    }, () => setMessageError('Nie udało się odczytać wiadomości rodzica z dziennika. Sprawdź połączenie i konfigurację uprawnień Firebase.'));
+  }, [parent, user.uid, retry]);
 
   useEffect(() => {
     if (!parent) setSelectedPerson(ownStudent);
@@ -143,9 +170,10 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
     fileVersion.current += 1;
   }, [parent, ownStudent, user.uid]);
 
-  const students = useMemo(() => parent ? [...new Set([...DEFAULT_STUDENTS, ...records.map((row) => row.person)])] : ownStudent ? [ownStudent] : [], [parent, ownStudent, records]);
+  const allRecords = useMemo(() => parent ? [...records, ...parentMessages] : records, [parent, records, parentMessages]);
+  const students = useMemo(() => parent ? [...new Set([...DEFAULT_STUDENTS, ...allRecords.map((row) => row.person)])] : ownStudent ? [ownStudent] : [], [parent, ownStudent, allRecords]);
   const person = parent ? (students.includes(selectedPerson) ? selectedPerson : students[0]) : ownStudent;
-  const ownRecords = useMemo(() => records.filter((row) => row.person === person), [records, person]);
+  const ownRecords = useMemo(() => allRecords.filter((row) => row.person === person), [allRecords, person]);
   const monday = moveDate(selectedDate, 1 - weekdayOf(selectedDate));
   const week = Array.from({ length: 7 }, (_, index) => moveDate(monday, index));
   const dayRecords = ownRecords.filter((row) => (row.type === 'lesson' || row.type === 'activity') && matchesDay(row, selectedDate)).sort((a, b) => a.time.localeCompare(b.time));
@@ -157,9 +185,10 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
     return (a.date || '9999').localeCompare(b.date || '9999') || a.weekday - b.weekday || a.time.localeCompare(b.time) || a.title.localeCompare(b.title, 'pl');
   });
   const canEdit = (row: SchoolEntry) => {
+    const linked = row as SchoolRecord;
+    if (linked.source === 'eduvulcan' || linked.parentOnly) return false;
     if (parent) return true;
     if (row.person !== ownStudent || !CHILD_TYPES.includes(row.type)) return false;
-    const linked = row as SchoolRecord;
     return !linked.calendarEventId || (linked.calendarCreatedBy || linked.createdBy) === user.uid;
   };
 
@@ -289,7 +318,7 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
     return <button type="button" className={`school-entry ${inPlan ? 'school-plan-entry' : ''}`} key={row.id} onClick={() => setDetail(row)}>
       <span className={`school-entry-icon school-type-${row.type}`} aria-hidden="true">{META[row.type].icon}</span>
       {inPlan && <time>{row.time}<small>{row.endTime}</small></time>}
-      <span className="school-entry-copy"><strong>{row.title}</strong><span>{[row.subject, inPlan ? row.note : row.date ? shortDate(row.date) : row.weekday ? WEEKDAYS[row.weekday - 1] : '', !inPlan && row.time ? `${row.time}${row.endTime ? `–${row.endTime}` : ''}` : ''].filter(Boolean).join(' · ') || META[row.type].singular}</span></span>
+      <span className="school-entry-copy"><strong>{row.title}</strong><span>{[row.subject, inPlan ? row.note : row.date ? shortDate(row.date) : row.weekday ? WEEKDAYS[row.weekday - 1] : '', !inPlan && row.time ? `${row.time}${row.endTime ? `–${row.endTime}` : ''}` : ''].filter(Boolean).join(' · ') || META[row.type].singular}</span>{row.source === 'eduvulcan' && <small className="school-source-badge">eduVULCAN · {row.parentOnly ? 'dla rodzica' : 'tylko odczyt'}</small>}</span>
       {!inPlan && <span className="school-entry-type">{META[row.type].singular}</span>}
       <span className="school-entry-arrow" aria-hidden="true">›</span>
     </button>;
@@ -303,6 +332,7 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
     <p className="school-access-note">{parent ? 'Widok rodzica · możesz zarządzać danymi wszystkich dzieci.' : ownStudent ? `Twój szkolny widok · ${ownStudent}. Oceny i wiadomości uzupełnia rodzic.` : 'Konto nie ma przypisanej osoby. Rodzic może uzupełnić profil w ustawieniach.'}</p>
     {notice && <div className="school-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Zamknij komunikat">✕</button></div>}
     {loadError && <div className="school-error" role="alert"><span>{loadError}</span><button type="button" className="secondary-button" onClick={() => setRetry((value) => value + 1)}>Spróbuj ponownie</button></div>}
+    {parent && messageError && <div className="school-error" role="alert"><span>{messageError}</span><button type="button" className="secondary-button" onClick={() => setRetry((value) => value + 1)}>Ponów odczyt wiadomości</button></div>}
     {students.length > 0 && <nav className="school-students" aria-label="Wybierz dziecko">{students.map((student) => <button type="button" key={student} className={person === student ? 'active' : ''} aria-pressed={person === student} onClick={() => setSelectedPerson(student)}><span aria-hidden="true">{student === 'Layla' ? '🌸' : student === 'Nikodem' ? '🚀' : '🎓'}</span>{student}</button>)}</nav>}
     {loading ? <div className="school-loading" role="status">Ładowanie danych szkolnych…</div> : person && <>
       <section className="school-panel school-week-panel" aria-labelledby="school-week-title">
@@ -319,7 +349,7 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
         <div className="school-record-list">{filteredRecords.length ? filteredRecords.map((row) => rowButton(row)) : <div className="school-empty-state"><strong>Brak wpisów w tej kategorii.</strong>{(filter === 'all' || parent || CHILD_TYPES.includes(filter)) && <button type="button" className="secondary-button" onClick={() => openAdd(filter === 'all' ? 'homework' : filter)}>Dodaj pierwszy wpis</button>}</div>}</div>
       </section>
     </>}
-    <aside className="school-vulcan-card"><span className="school-vulcan-icon" aria-hidden="true">🔗</span><div><h2>eduVULCAN</h2><p>Automatyczna synchronizacja z dziennikiem nie jest dostępna w tej wersji. Wpisy dodajesz ręcznie lub importujesz plik przygotowany według naszego szablonu.</p><small>Nie potrzebujemy loginu ani hasła do dziennika.</small></div><a className="secondary-button" href="https://eduvulcan.pl/logowanie" target="_blank" rel="noopener noreferrer">Otwórz eduVULCAN ↗</a></aside>
+    {parent ? <EduVulcanConnection user={user} member={member} onSelectedStudent={setSelectedPerson} /> : <aside className="school-vulcan-card"><span className="school-vulcan-icon" aria-hidden="true">🔗</span><div><h2>eduVULCAN</h2><p>Połączeniem z dziennikiem zarządza rodzic. Dane oznaczone „eduVULCAN” są tylko do odczytu.</p></div><a className="secondary-button" href="https://uczen.eduvulcan.pl/" target="_blank" rel="noopener noreferrer">Otwórz eduVULCAN ↗</a></aside>}
 
     {form && <SchoolDialog title={`${editing ? 'Edytuj' : 'Dodaj'} · ${META[form.type].singular}`} onClose={closeForm} busy={busy}>
       <form onSubmit={save}><fieldset className="school-form" disabled={busy}>
@@ -346,6 +376,7 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
 
     {detail && <SchoolDialog title={detail.title} onClose={() => setDetail(null)}>
       <dl className="school-detail"><div><dt>Osoba</dt><dd>{detail.person}</dd></div><div><dt>Rodzaj</dt><dd>{META[detail.type].singular}</dd></div>{detail.subject && <div><dt>Przedmiot</dt><dd>{detail.subject}</dd></div>}{detail.date && <div><dt>Data</dt><dd>{localDate(detail.date).toLocaleDateString('pl-PL')}</dd></div>}{detail.weekday > 0 && !detail.date && <div><dt>Co tydzień</dt><dd>{WEEKDAYS[detail.weekday - 1]}</dd></div>}{detail.time && <div><dt>Godzina</dt><dd>{detail.time}{detail.endTime ? `–${detail.endTime}` : ''}</dd></div>}{detail.note && <div className="school-detail-note"><dt>Notatka</dt><dd>{detail.note}</dd></div>}</dl>
+      {detail.source === 'eduvulcan' && <div className="school-provider-detail"><strong>Źródło: eduVULCAN · tylko do odczytu</strong>{detail.syncedAt && <p>Odczytano: {detail.syncedAt.toLocaleString('pl-PL')}</p>}{detail.parentOnly && <p>Wiadomość z dziennika jest dostępna wyłącznie rodzicom.</p>}<p>Zmiany w dzienniku pojawią się po kolejnym odświeżeniu. Własne wpisy możesz dodawać osobno.</p></div>}
       {!parent && detail.calendarEventId && !canEdit(detail) && <p className="school-form-hint">Te zajęcia są połączone z kalendarzem rodzica. Zmiany wprowadza rodzic.</p>}
       {canEdit(detail) && <div className="school-form-actions"><button type="button" className="danger-button" onClick={() => { setActionError(''); setDeleting(detail); setDetail(null); }}>Usuń</button><button type="button" className="primary-button" onClick={() => openEdit(detail)}>Edytuj wpis</button></div>}
     </SchoolDialog>}
