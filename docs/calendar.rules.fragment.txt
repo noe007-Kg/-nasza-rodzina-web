@@ -1,0 +1,22 @@
+// Apply inside service cloud.firestore / match /databases/{database}/documents.
+// Existing calendarEvents remains public/legacy. Do NOT copy private records there.
+// Add this guard to public calendarEvents create/update:
+//   && request.resource.data.get('private', false) == false
+// Parent permissions for public events stay unchanged.
+match /privateCalendarEvents/{id} {
+  allow read: if member() && resource.data.ownerUid == request.auth.uid;
+  allow create: if member()
+    && request.resource.data.ownerUid == request.auth.uid
+    && request.resource.data.createdBy == request.auth.uid
+    && request.resource.data.private == true
+    && title(request.resource.data.title)
+    && person(request.resource.data.person)
+    && (parent() || ownOrFamily(request.resource.data.person));
+  allow update: if member() && resource.data.ownerUid == request.auth.uid
+    && request.resource.data.ownerUid == resource.data.ownerUid
+    && request.resource.data.createdBy == resource.data.createdBy
+    && request.resource.data.private == true
+    && title(request.resource.data.title) && person(request.resource.data.person)
+    && (parent() || ownOrFamily(request.resource.data.person));
+  allow delete: if member() && resource.data.ownerUid == request.auth.uid;
+}

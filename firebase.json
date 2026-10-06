@@ -1,27 +1,123 @@
 {
-  "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" },
-  "storage": { "rules": "storage.rules" },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "nasza-rodzina",
+      "runtime": "nodejs22",
+      "predeploy": [
+        "node \"$PROJECT_DIR/scripts/prepare-functions.mjs\""
+      ],
+      "ignore": [
+        "node_modules",
+        ".git",
+        ".gitignore",
+        ".server-staging",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "**/.env*",
+        "**/credentials/**",
+        "**/*service-account*.json",
+        "**/*serviceAccount*.json",
+        "**/*private*.json",
+        "**/*.pem",
+        "**/*.key"
+      ]
+    }
+  ],
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
   "hosting": {
     "public": "dist",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-    "rewrites": [{ "source": "**", "destination": "/index.html" }],
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
     "headers": [
-      { "source": "/sw.js", "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }] },
-      { "source": "/index.html", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
-      { "source": "/assets/**", "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }] },
-      { "source": "**/*.webmanifest", "headers": [{ "key": "Content-Type", "value": "application/manifest+json" }] },
-      { "source": "**", "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "X-Frame-Options", "value": "DENY" }
-      ] }
+      {
+        "source": "/sw.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/index.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "/assets/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      },
+      {
+        "source": "**/*.webmanifest",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/manifest+json"
+          }
+        ]
+      },
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "strict-origin-when-cross-origin"
+          },
+          {
+            "key": "X-Frame-Options",
+            "value": "DENY"
+          }
+        ]
+      }
     ]
   },
   "emulators": {
-    "auth": { "host": "127.0.0.1", "port": 9099 },
-    "firestore": { "host": "127.0.0.1", "port": 8080 },
-    "storage": { "host": "127.0.0.1", "port": 9199 },
-    "ui": { "enabled": true, "host": "127.0.0.1", "port": 4000 },
+    "auth": {
+      "host": "127.0.0.1",
+      "port": 9099
+    },
+    "firestore": {
+      "host": "127.0.0.1",
+      "port": 8080
+    },
+    "storage": {
+      "host": "127.0.0.1",
+      "port": 9199
+    },
+    "ui": {
+      "enabled": true,
+      "host": "127.0.0.1",
+      "port": 4000
+    },
     "singleProjectMode": true
   }
 }

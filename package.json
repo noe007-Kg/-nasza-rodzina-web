@@ -1,7 +1,7 @@
 {
   "name": "nasza-rodzina-web",
   "private": true,
-  "version": "1.5.1",
+  "version": "1.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,12 +12,18 @@
     "test:e2e": "firebase emulators:exec --only auth,firestore,storage --project demo-nasza-rodzina \"playwright test\"",
     "family:setup": "node scripts/bootstrap-family.mjs",
     "family:migrate": "node scripts/bootstrap-family.mjs --migrate",
-    "test:server": "node --test tests/edu-*.test.mjs"
+    "test:server": "node --test tests/edu-*.test.mjs tests/account-*.test.mjs tests/notification-*.test.mjs",
+    "functions:prepare": "node scripts/prepare-functions.mjs",
+    "pretest:server": "npm run functions:prepare",
+    "test:functions": "npm --prefix functions run build && npm --prefix functions run check && node --test tests/edu-scheduler.test.mjs tests/edu-functions-package.test.mjs tests/notification-functions.test.mjs tests/functions-runtime.test.mjs"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/utilities": "^3.2.2",
     "cheerio": "^1.2.0",
     "firebase": "^12.3.0",
     "firebase-admin": "^13.5.0",
+    "google-auth-library": "^11.1.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "tough-cookie": "^6.0.2"

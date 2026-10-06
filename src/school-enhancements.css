@@ -1,0 +1,23 @@
+.school-module .school-students { margin-top: 0; margin-bottom: 18px; }
+.school-module .school-no-students { margin-bottom: 18px; }
+.school-module .school-entry-wrapper { position: relative; min-width: 0; }
+.school-module .school-entry-with-star .school-entry { padding-right: 68px; }
+.school-module .school-entry-with-star .school-entry-type { display: none; }
+.school-module .school-entry-wrapper.is-important .school-entry { border-color: #f0cd62; background: #fff8e8; }
+.school-module .school-important-toggle {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 8px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: #866008;
+}
+.school-module .school-important-toggle[aria-pressed='true'] { background: #fff0c2; }
+.school-module .school-important-toggle:focus-visible { outline: 3px solid var(--family-primary); outline-offset: 2px; }

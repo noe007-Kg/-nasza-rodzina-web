@@ -1,0 +1,44 @@
+.notification-live-region { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.notification-bell-container { flex: 0 0 auto; }
+.notification-bell { width: 44px; height: 44px; position: relative; display: grid; place-items: center; border: 1px solid #eee3f0; border-radius: 15px; background: #fff3fa; color: #D92A8A; cursor: pointer; }
+.notification-badge { position: absolute; top: -4px; right: -3px; min-width: 19px; height: 19px; padding: 0 4px; display: grid; place-items: center; border: 2px solid white; border-radius: 20px; background: #D92A8A; color: white; font: 700 10px/1 system-ui; }
+.notification-center { color: #171B4B; width: min(560px, calc(100% - 24px)); max-height: min(740px, calc(100dvh - 32px)); padding: 22px; border: 1px solid #eee3f0; border-radius: 24px; background: #fffafe; box-shadow: 0 20px 90px #171b4b25; overflow: hidden; }
+.notification-center[open] { display: flex; flex-direction: column; gap: 18px; }
+.notification-center::backdrop { background: #171b4b55; backdrop-filter: blur(3px); }
+.notification-center header, .notification-settings header { display: flex; align-items: center; gap: 12px; }
+.notification-center header div, .notification-settings header div { flex: 1; min-width: 0; }
+.notification-center h2, .notification-settings h2 { margin: 0; font-size: 22px; color: #171B4B; }
+.notification-center header p, .notification-settings header p { margin: 3px 0 0; color: #79748b; font-size: 13px; }
+.notification-heading-icon { display: grid; place-items: center; width: 48px; height: 48px; flex: 0 0 auto; border-radius: 16px; background: #fff0f8; color: #D92A8A; }
+.notification-close, .notification-star { flex: 0 0 auto; display: grid; place-items: center; min-width: 44px; min-height: 44px; border: 0; border-radius: 12px; background: transparent; color: #74698b; cursor: pointer; }
+.notification-center-tabs { display: flex; gap: 8px; }
+.notification-center-tabs button { min-height: 44px; padding: 9px 16px; border: 1px solid #eee3f0; border-radius: 14px; color: #6c5c91; background: white; }
+.notification-center-tabs button.is-active { color: #D92A8A; border-color: #efbee0; background: #fff0f8; font-weight: 700; }
+.notification-center-list { min-height: 140px; overflow-y: auto; overscroll-behavior: contain; }
+.notification-item { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 8px; padding: 13px 8px 13px 13px; border: 1px solid #eee3f0; border-radius: 17px; background: white; }
+.notification-item.is-unread { background: #f7f1ff; border-color: #e4d3fb; }
+.notification-item > svg { flex: 0 0 auto; margin-top: 8px; color: #7C5CFC; }
+.notification-item-content { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; text-align: left; padding: 4px 0; border: 0; background: none; color: #171B4B; cursor: pointer; overflow-wrap: anywhere; }
+.notification-item-content strong { font-size: 14px; }
+.notification-item-content span { font-size: 12px; line-height: 1.45; }
+.notification-item-content small { font-size: 10px; color: #79748b; }
+.notification-star { font-size: 25px; }
+.notification-star.is-starred { color: #a57708; background: #fff8df; }
+.notification-empty { padding: 32px 14px; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; color: #79748b; }
+.notification-empty > svg { color: #d49bc0; }
+.notification-empty strong { color: #171B4B; }
+.notification-empty p { margin: 0; font-size: 13px; }
+.notification-settings { padding: 24px; border: 1px solid #eee3f0; border-radius: 22px; background: #fff; box-shadow: 0 3px 14px #171b4b05; }
+.notification-settings-toggles { margin: 20px 0 15px; display: grid; gap: 8px; }
+.notification-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 10px 12px; background: #fbf8ff; border: 1px solid #eee3f0; border-radius: 14px; text-align: left; color: #171B4B; }
+.notification-toggle > span { min-width: 48px; padding: 5px 8px; text-align: center; border-radius: 16px; background: #eae6ee; color: #74698b; font-size: 11px; font-weight: 700; }
+.notification-toggle > span.is-on { background: #e6faee; color: #14734c; }
+.notification-categories { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; }
+.notification-categories label { display: flex; gap: 9px; align-items: center; min-height: 44px; font-size: 13px; color: #171B4B; }
+.notification-categories input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: #D92A8A; }
+.notification-system-status { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; margin: 18px 0; font-size: 12px; color: #79748b; }
+.notification-settings-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.notification-note { color: #79748b; font-size: 12px; line-height: 1.6; margin: 14px 0 0; }
+.notification-feedback { color: #a9274b; background: #fff1f4; border-radius: 12px; padding: 12px; font-size: 13px; }
+.notification-bell:focus-visible, .notification-center button:focus-visible, .notification-settings button:focus-visible { outline: 3px solid #c6adff; outline-offset: 3px; }
+@media (max-width: 600px) { .notification-center { padding: 16px; max-height: calc(100dvh - 24px - env(safe-area-inset-bottom, 0px)); } .notification-center h2, .notification-settings h2 { font-size: 20px; } .notification-settings { padding: 18px; } .notification-categories { gap: 2px 8px; } .notification-categories label { font-size: 12px; } .notification-item { padding-left: 10px; gap: 7px; } .notification-item > svg { width: 20px; } }

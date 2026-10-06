@@ -1,5 +1,7 @@
 # Uruchomienie prywatnego Firebase
 
+**Aktualizacja 1.6.0 — harmonogram eduVULCAN:** późniejsza decyzja użytkownika dodała Firebase Functions i Cloud Scheduler, działające także przy zamkniętej aplikacji. **Harmonogram wymaga Blaze i Functions**, natomiast dostarczanie powiadomień pozostaje IN-APP bez FCM/Web Push. Obowiązuje [aktualny raport harmonogramu](EDUVULCAN_FUNCTIONS_HARMONOGRAM.md); wcześniejsza [instrukcja IN-APP](POWIADOMIENIA_IN_APP_1.6.0.md) jest historyczna. Niczego nie wdrożono i nie zmieniono sekretów. Zachowaj istniejące Storage, UID i dane; dalsze kroki bootstrapu/migracji w tym dokumencie dotyczą historycznej pierwszej konfiguracji, nie działającej rodziny 1.5.1. Warunki rozliczania istniejących usług Firebase są niezależne od dostarczania IN-APP; ten tryb nie zastępuje Storage ani nie zmienia zasad dostawcy.
+
 Ta aplikacja używa istniejących kolekcji `members`, `calendarEvents`, `tasks`, `shoppingItems`, `quickProducts`, `familyMessages`, `healthRecords`, `medicalContacts`, `schoolItems`. Integracja eduVULCAN dodaje `schoolParentMessages` (odczyt wyłącznie dla rodziców) i `_eduConnections` (dostęp wyłącznie z backendu). Kod nie zakłada otwartych reguł. Uprawnienia działają na serwerze Firebase, niezależnie od tego, co ktoś zmieni w swojej przeglądarce.
 
 ## Konfiguracja projektu

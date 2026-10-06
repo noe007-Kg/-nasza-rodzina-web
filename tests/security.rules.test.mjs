@@ -199,3 +199,171 @@ test('storage protects private health documents, own shared documents, file type
   await assertFails(uploadBytes(ref(childStorage, 'quick-products/child/script.js'), file, { contentType: 'application/javascript' }));
   await assertFails(uploadBytes(ref(childStorage, 'quick-products/parent/image.png'), file, { contentType: 'image/png' }));
 });
+
+const calendarEntry = (uid, extra = {}) => ({
+  title: 'Prywatna konsultacja', person: 'family',
+  date: Timestamp.fromDate(new Date('2026-10-05T10:00:00Z')),
+  endDate: Timestamp.fromDate(new Date('2026-10-05T11:00:00Z')),
+  allDay: false, description: 'Szczegóły dostępne tylko właścicielowi',
+  repeat: 'none', repeatUntil: null, createdBy: uid, ownerUid: uid, private: true,
+  ...extra,
+});
+
+test('private calendar read, query, create, edit and delete belong to the exact owner UID', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'members', 'another-parent'), { ...profiles.parent, name: 'Dominika', personKey: 'Dominika' });
+    await setDoc(doc(db, 'privateCalendarEvents', 'parent-private'), calendarEntry('parent'));
+    await setDoc(doc(db, 'privateCalendarEvents', 'child-private'), calendarEntry('child', { person: 'Paweł' }));
+  });
+  const otherParent = environment.authenticatedContext('another-parent').firestore();
+  for (const [db, uid] of [[parentDb, 'parent'], [childDb, 'child']]) {
+    await assertSucceeds(getDocs(query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', uid))));
+    await assertFails(getDocs(collection(db, 'privateCalendarEvents')));
+    await assertSucceeds(setDoc(doc(db, 'privateCalendarEvents', `${uid}-new`), calendarEntry(uid, { person: uid === 'child' ? 'Paweł' : 'family' })));
+    await assertSucceeds(updateDoc(doc(db, 'privateCalendarEvents', `${uid}-new`), { title: 'Zmieniona własna konsultacja' }));
+    await assertFails(updateDoc(doc(db, 'privateCalendarEvents', `${uid}-new`), { ownerUid: 'sibling' }));
+    await assertFails(updateDoc(doc(db, 'privateCalendarEvents', `${uid}-new`), { createdBy: 'sibling' }));
+    await assertFails(updateDoc(doc(db, 'privateCalendarEvents', `${uid}-new`), { private: false }));
+    await assertSucceeds(deleteDoc(doc(db, 'privateCalendarEvents', `${uid}-new`)));
+  }
+  for (const db of [otherParent, childDb, siblingDb]) {
+    await assertFails(getDoc(doc(db, 'privateCalendarEvents', 'parent-private')));
+    await assertFails(updateDoc(doc(db, 'privateCalendarEvents', 'parent-private'), { title: 'Nieuprawniona zmiana' }));
+    await assertFails(deleteDoc(doc(db, 'privateCalendarEvents', 'parent-private')));
+  }
+  await assertFails(getDoc(doc(parentDb, 'privateCalendarEvents', 'child-private')));
+  await assertFails(getDocs(query(collection(parentDb, 'privateCalendarEvents'), where('ownerUid', '==', 'child'))));
+  await assertFails(setDoc(doc(childDb, 'privateCalendarEvents', 'sibling-new'), calendarEntry('child', { person: 'Nikodem' })));
+  await assertFails(setDoc(doc(parentDb, 'privateCalendarEvents', 'spoofed-owner'), calendarEntry('parent', { ownerUid: 'child' })));
+});
+
+test('private calendar data cannot be mislabeled as private in the public calendar collection', async () => {
+  const event = calendarEntry('parent');
+  await assertFails(setDoc(doc(parentDb, 'calendarEvents', 'private-leak'), event));
+  await assertSucceeds(setDoc(doc(parentDb, 'calendarEvents', 'public'), { ...event, private: false }));
+  await assertFails(updateDoc(doc(parentDb, 'calendarEvents', 'public'), { private: true, description: 'Nie może udawać prywatności' }));
+  await assertSucceeds(getDoc(doc(childDb, 'calendarEvents', 'public')));
+});
+
+function notificationSettings(extra = {}) {
+  return { enabled: true, sound: false, categories: {
+    calendar: true, tasks: true, shopping: true, familyChat: true,
+    privateChat: true, health: true, school: true, important: true,
+  }, ...extra };
+}
+
+test('user preferences and important flags are private to the UID including against parents', async () => {
+  const preferences = {
+    dashboardOrder: ['calendar', 'family-time', 'tasks', 'shopping', 'chat', 'health', 'school'],
+    notifications: notificationSettings(), importantItems: ['school:message:nikodem:1', 'chat:family:1'],
+    updatedAt: Timestamp.now(),
+  };
+  await assertSucceeds(setDoc(doc(childDb, 'userPreferences', 'child'), preferences));
+  await assertSucceeds(getDoc(doc(childDb, 'userPreferences', 'child')));
+  await assertSucceeds(updateDoc(doc(childDb, 'userPreferences', 'child'), { importantItems: ['school:message:nikodem:1'] }));
+  await assertSucceeds(updateDoc(doc(childDb, 'userPreferences', 'child'), { notifications: notificationSettings({ sound: true }) }));
+  await assertSucceeds(setDoc(doc(parentDb, 'userPreferences', 'parent'), { dashboardOrder: ['school'] }));
+  await assertSucceeds(getDocs(query(collection(childDb, 'userPreferences'), where('__name__', '==', 'child'))));
+  for (const db of [parentDb, siblingDb]) {
+    await assertFails(getDoc(doc(db, 'userPreferences', 'child')));
+    await assertFails(updateDoc(doc(db, 'userPreferences', 'child'), { importantItems: [] }));
+    await assertFails(deleteDoc(doc(db, 'userPreferences', 'child')));
+  }
+  await assertFails(getDocs(collection(childDb, 'userPreferences')));
+  await assertFails(getDocs(collection(parentDb, 'userPreferences')));
+  await assertFails(setDoc(doc(childDb, 'userPreferences', 'parent'), preferences));
+});
+
+test('preferences reject secret/token injection, unknown fields and malformed dashboard or category data', async () => {
+  const target = doc(childDb, 'userPreferences', 'child');
+  const valid = { notifications: notificationSettings(), dashboardOrder: ['family-time', 'calendar'], importantItems: [], updatedAt: Timestamp.now() };
+  await assertSucceeds(setDoc(target, valid));
+  for (const payload of [
+    { ...valid, fcmToken: 'client-token-must-never-go-here' },
+    { ...valid, eduVulcanPassword: 'secret-placeholder' },
+    { ...valid, notifications: notificationSettings({ token: 'nested-token' }) },
+    { ...valid, notifications: notificationSettings({ categories: { ...notificationSettings().categories, unsafe: true } }) },
+    { ...valid, notifications: notificationSettings({ categories: { ...notificationSettings().categories, school: 'yes' } }) },
+    { ...valid, notifications: notificationSettings({ enabled: 'true' }) },
+    { ...valid, notifications: notificationSettings({ sound: 1 }) },
+    { ...valid, notifications: { enabled: true, sound: true, categories: { calendar: true } } },
+    { ...valid, dashboardOrder: ['calendar', 'calendar'] },
+    { ...valid, dashboardOrder: ['unknown-module'] },
+    { ...valid, dashboardOrder: 'calendar' },
+    { ...valid, importantItems: '★' },
+    { ...valid, importantItems: Array.from({ length: 501 }, (_, index) => `entry-${index}`) },
+    { ...valid, updatedAt: '2026-10-02' },
+  ]) await assertFails(setDoc(target, payload));
+  await assertFails(updateDoc(target, { password: 'secret-placeholder' }));
+});
+
+test('notification inbox owners can only mark read and starred; message content and delivery are server-only', async () => {
+  const notification = { title: 'Nowa wiadomość', body: 'Otwórz aplikację', category: 'school', module: 'Szkoła', read: false, starred: false, createdAt: Timestamp.now() };
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'notificationInbox', 'child', 'items', 'school-1'), notification);
+    await setDoc(doc(context.firestore(), 'notificationInbox', 'parent', 'items', 'school-parent'), notification);
+  });
+  const own = doc(childDb, 'notificationInbox', 'child', 'items', 'school-1');
+  await assertSucceeds(getDoc(own));
+  await assertSucceeds(getDocs(collection(childDb, 'notificationInbox', 'child', 'items')));
+  await assertSucceeds(updateDoc(own, { read: true, readAt: Timestamp.now() }));
+  await assertSucceeds(updateDoc(own, { starred: true }));
+  await assertSucceeds(updateDoc(own, { starred: false }));
+  for (const payload of [ { title: 'Fałszywy tytuł' }, { body: 'Fałszywe dane' }, { module: 'Czat' }, { category: 'privateChat' }, { read: 'yes' }, { starred: 1 }, { readAt: 'yesterday' }, { fcmToken: 'injected' } ]) await assertFails(updateDoc(own, payload));
+  await assertFails(setDoc(doc(childDb, 'notificationInbox', 'child', 'items', 'forged'), notification));
+  await assertFails(deleteDoc(own));
+  await assertFails(getDoc(doc(childDb, 'notificationInbox', 'parent', 'items', 'school-parent')));
+  for (const db of [parentDb, siblingDb]) {
+    await assertFails(getDoc(doc(db, 'notificationInbox', 'child', 'items', 'school-1')));
+    await assertFails(getDocs(collection(db, 'notificationInbox', 'child', 'items')));
+    await assertFails(updateDoc(doc(db, 'notificationInbox', 'child', 'items', 'school-1'), { read: true }));
+  }
+});
+
+test('push tokens, device owners, deduplication and outbox are inaccessible to browser accounts', async () => {
+  const collections = ['_notificationDevices', '_notificationTokenOwners', '_notificationEvents', '_notificationOutbox', '_notificationBaselines'];
+  await environment.withSecurityRulesDisabled(async context => {
+    await Promise.all(collections.map(name => setDoc(doc(context.firestore(), name, 'test-device'), { uid: 'parent', token: 'test-token-placeholder', sent: false })));
+  });
+  for (const db of [parentDb, childDb, siblingDb]) for (const name of collections) {
+    const target = doc(db, name, 'test-device');
+    await assertFails(getDoc(target));
+    await assertFails(getDocs(collection(db, name)));
+    await assertFails(setDoc(doc(db, name, 'forged'), { uid: 'child', token: 'test-token-placeholder' }));
+    await assertFails(updateDoc(target, { uid: 'child' }));
+    await assertFails(deleteDoc(target));
+  }
+});
+
+test('new dynamic member identities retain own-person health restrictions in Firestore and Storage', async () => {
+  const key = 'member-0123456789abcdef01234567';
+  const dynamicUid = 'dynamic-child';
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'members', dynamicUid), { name: 'Nowy członek', personKey: key, role: 'child', active: true, canLogin: true });
+    await setDoc(doc(context.firestore(), 'healthRecords', 'dynamic-private'), { person: key, title: 'Prywatny wynik', type: 'result', privateToParents: true, createdBy: 'parent' });
+  });
+  const dynamic = environment.authenticatedContext(dynamicUid);
+  const db = dynamic.firestore();
+  const record = { person: key, title: 'Własny lek', type: 'medicine', privateToParents: false, createdBy: dynamicUid, documentURL: '' };
+  await assertSucceeds(setDoc(doc(db, 'healthRecords', 'dynamic-own'), record));
+  await assertSucceeds(getDoc(doc(db, 'healthRecords', 'dynamic-own')));
+  await assertSucceeds(getDocs(query(collection(db, 'healthRecords'), where('privateToParents', '==', false), where('person', 'in', ['family', key]))));
+  await assertSucceeds(updateDoc(doc(db, 'healthRecords', 'dynamic-own'), { confirmedDate: '2026-10-02', updatedAt: Timestamp.now() }));
+  await assertFails(getDoc(doc(db, 'healthRecords', 'dynamic-private')));
+  await assertFails(getDoc(doc(db, 'healthRecords', 'own')));
+  await assertFails(getDoc(doc(childDb, 'healthRecords', 'dynamic-own')));
+  await assertFails(getDoc(doc(siblingDb, 'healthRecords', 'dynamic-own')));
+  await assertFails(setDoc(doc(db, 'healthRecords', 'dynamic-spoof'), { ...record, person: 'Paweł' }));
+  await assertFails(setDoc(doc(db, 'healthRecords', 'dynamic-invalid'), { ...record, person: 'member-not-a-valid-id' }));
+  await assertFails(updateDoc(doc(db, 'healthRecords', 'dynamic-own'), { privateToParents: true }));
+  const file = new Uint8Array([37, 80, 68, 70, 45]);
+  const ownPath = `health/shared/${key}/${dynamicUid}/own.pdf`;
+  const dynamicStorage = dynamic.storage(`gs://${projectId}.appspot.com`);
+  await assertSucceeds(uploadBytes(ref(dynamicStorage, ownPath), file, { contentType: 'application/pdf' }));
+  await assertSucceeds(getMetadata(ref(dynamicStorage, ownPath)));
+  await assertFails(getMetadata(ref(environment.authenticatedContext('child').storage(`gs://${projectId}.appspot.com`), ownPath)));
+  await assertFails(uploadBytes(ref(dynamicStorage, `health/shared/Paweł/${dynamicUid}/other.pdf`), file, { contentType: 'application/pdf' }));
+  await assertFails(uploadBytes(ref(dynamicStorage, `health/parents/${key}/${dynamicUid}/private.pdf`), file, { contentType: 'application/pdf' }));
+  await assertSucceeds(getMetadata(ref(environment.authenticatedContext('parent').storage(`gs://${projectId}.appspot.com`), ownPath)));
+});

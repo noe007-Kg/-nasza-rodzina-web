@@ -44,7 +44,8 @@ export async function seedEmulators() {
     const active = account.uid !== accounts.inactive.uid;
     await db.doc(`members/${account.uid}`).set({
       name: account.name, personKey: account.name, role: account.role,
-      active, canLogin: active, adult: account.adult,
+      // Layla is a visible, passive family profile, without application access.
+      active: true, canLogin: active, adult: account.adult,
     });
   }
 

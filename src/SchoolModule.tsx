@@ -6,13 +6,16 @@ import { db } from './firebase';
 import { EduVulcanConnection } from './EduVulcanConnection';
 import type { EduVulcanStatus } from './EduVulcanConnection';
 import { useSchoolProfilePhotos } from './useSchoolProfilePhotos';
+import { legacyFamilyProfiles, memberPersonKey, memberSchoolEnabled, schoolMemberProfiles, type FamilyMemberProfile } from './family-members';
+import { useImportantItems } from './notifications';
 import { Card, Icon, PrimaryButton, ProfileSelector, SecondaryButton, SectionHeader, StatCard, StatusPill } from './ui';
 import type { IconName } from './ui';
-import { isSchoolType, MAX_SCHOOL_FILE_BYTES, MAX_SCHOOL_ROWS, parseSchoolFile, SCHOOL_PEOPLE, SCHOOL_TYPES, schoolImportId, validateSchoolEntry } from './school-import';
+import { isSchoolType, MAX_SCHOOL_FILE_BYTES, MAX_SCHOOL_ROWS, parseSchoolFile, SCHOOL_TYPES, schoolImportId, validateSchoolEntry } from './school-import';
 import type { SchoolEntry, SchoolType } from './school-import';
 import './school.css';
+import './school-enhancements.css';
 
-type SchoolMember = { name?: string; role?: string; personKey?: string; photoURL?: string };
+type SchoolMember = { name?: string; role?: string; personKey?: string; photoURL?: string; schoolEnabled?: boolean; active?: boolean };
 type SchoolRecord = SchoolEntry & {
   id: string; calendarEventId?: string; calendarCreatedBy?: string; createdBy?: string; createdAt?: Date;
   source?: string; syncedAt?: Date; parentOnly?: boolean;
@@ -28,7 +31,6 @@ const META: Record<SchoolType, { title: string; singular: string; icon: IconName
 };
 const WEEKDAYS = ['Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota', 'Niedziela'];
 const CHILD_TYPES: SchoolType[] = ['lesson', 'homework', 'test', 'activity'];
-const DEFAULT_STUDENTS = ['Paweł', 'Nikodem', 'Layla'];
 
 function dateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -76,9 +78,12 @@ function readSchoolRecord(id: string, data: Record<string, unknown>, parentOnly 
     source: parentOnly ? 'eduvulcan' : typeof data.source === 'string' ? data.source : undefined, parentOnly,
   };
 }
-function entryFromForm(form: SchoolForm): SchoolEntry {
+function importantMessageId(row: SchoolRecord): string {
+  return `school:message:${row.person}:${row.id.replace(/^parent-message:/, '')}`;
+}
+function entryFromForm(form: SchoolForm, students: readonly string[]): SchoolEntry {
   const { scheduleMode: _mode, addToCalendar: _calendar, calendarDate: _calendarDate, ...entry } = form;
-  return validateSchoolEntry(entry);
+  return validateSchoolEntry(entry, students);
 }
 function blankForm(person: string, type: SchoolType, day: string): SchoolForm {
   const scheduled = type === 'lesson' || type === 'activity';
@@ -117,10 +122,11 @@ function SchoolDialog({ title, children, onClose, busy = false }: { title: strin
   </dialog>, document.body);
 }
 
-export function SchoolModule({ user, member }: { user: User; member: SchoolMember | null }) {
+export function SchoolModule({ user, member, familyMembers }: { user: User; member: SchoolMember | null; familyMembers?: readonly FamilyMemberProfile[] }) {
   const parent = member?.role === 'parent';
   const ownStudent = member?.personKey || member?.name || '';
-  const profilePhotos = useSchoolProfilePhotos(user.uid, member);
+  const profilePhotos = useSchoolProfilePhotos(user.uid, member, familyMembers);
+  const { isImportant, toggleImportant } = useImportantItems();
   const [connectionStatus, setConnectionStatus] = useState<EduVulcanStatus | null>(null);
   const weekPanel = useRef<HTMLElement>(null);
   const recordsPanel = useRef<HTMLElement>(null);
@@ -184,13 +190,23 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
   }, [parent, ownStudent, user.uid]);
 
   const allRecords = useMemo(() => parent ? [...records, ...parentMessages] : records, [parent, records, parentMessages]);
-  const students = useMemo(() => parent ? [...new Set([...DEFAULT_STUDENTS, ...allRecords.map((row) => row.person)])] : ownStudent ? [ownStudent] : [], [parent, ownStudent, allRecords]);
-  const person = parent ? (students.includes(selectedPerson) ? selectedPerson : students[0]) : ownStudent;
+  const studentProfiles = useMemo<FamilyMemberProfile[]>(() => {
+    if (parent) return schoolMemberProfiles(familyMembers ?? legacyFamilyProfiles());
+    const directoryMember = familyMembers?.find((profile) => profile.id === user.uid);
+    const ownMetadata = { ...member, ...directoryMember, id: user.uid, personKey: ownStudent, role: member?.role };
+    return ownStudent && memberSchoolEnabled(ownMetadata) ? [ownMetadata] : [];
+  }, [parent, ownStudent, member, familyMembers, user.uid]);
+  const students = useMemo(() => studentProfiles.map(memberPersonKey), [studentProfiles]);
+  const person = parent ? (students.includes(selectedPerson) ? selectedPerson : students[0]) : students[0];
   const ownRecords = useMemo(() => allRecords.filter((row) => row.person === person), [allRecords, person]);
   const monday = moveDate(selectedDate, 1 - weekdayOf(selectedDate));
   const week = Array.from({ length: 7 }, (_, index) => moveDate(monday, index));
   const dayRecords = ownRecords.filter((row) => (row.type === 'lesson' || row.type === 'activity') && matchesDay(row, selectedDate)).sort((a, b) => a.time.localeCompare(b.time));
   const filteredRecords = ownRecords.filter((row) => filter === 'all' || row.type === filter).sort((a, b) => {
+    const importantA = parent && a.type === 'message' && isImportant(importantMessageId(a));
+    const importantB = parent && b.type === 'message' && isImportant(importantMessageId(b));
+    if (importantA !== importantB) return Number(importantB) - Number(importantA);
+    if (importantA && importantB) return (b.createdAt?.getTime() || recordDate(b.date)?.getTime() || 0) - (a.createdAt?.getTime() || recordDate(a.date)?.getTime() || 0);
     const order: SchoolType[] = ['lesson', 'activity', 'test', 'homework', 'grade', 'message'];
     if (a.type !== b.type) return order.indexOf(a.type) - order.indexOf(b.type);
     if (a.type === 'lesson' && b.type === 'lesson') return a.weekday - b.weekday || a.date.localeCompare(b.date) || a.time.localeCompare(b.time);
@@ -207,7 +223,7 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
   const connected = linkedToPerson && connectionStatus?.state === 'connected';
   const latestCachedSync = ownRecords.reduce<Date | undefined>((latest, row) => row.syncedAt && (!latest || row.syncedAt > latest) ? row.syncedAt : latest, undefined);
   const lastSync = linkedToPerson ? recordDate(connectionStatus?.lastSyncAt || connectionStatus?.lastSuccessAt) || latestCachedSync : latestCachedSync;
-  const avatarFor = (student: string) => student === 'Layla' ? '🌸' : student === 'Nikodem' ? '🚀' : '🎓';
+  const avatarFor = (student: string) => studentProfiles.find((profile) => memberPersonKey(profile) === student)?.emoji || (student === 'Nikodem' ? '🚀' : '🎓');
 
   function focusSection(section: React.RefObject<HTMLElement | null>) {
     const target = section.current;
@@ -268,12 +284,12 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
     if (!form || busy) return;
     setActionError('');
     try {
-      const entry = entryFromForm(form);
+      const entry = entryFromForm(form, students);
       if (!canEdit(entry) || (editing && !canEdit(editing))) throw new Error('Nie masz uprawnień do edycji tego wpisu.');
       if (form.addToCalendar && entry.type !== 'activity') throw new Error('Do kalendarza można dodać zajęcia dodatkowe.');
       const firstCalendarDate = entry.date || form.calendarDate;
       if (form.addToCalendar) {
-        validateSchoolEntry({ ...entry, date: firstCalendarDate, weekday: 0 });
+        validateSchoolEntry({ ...entry, date: firstCalendarDate, weekday: 0 }, students);
         if (entry.weekday && weekdayOf(firstCalendarDate) !== entry.weekday) throw new Error('Data pierwszych zajęć w kalendarzu musi odpowiadać wybranemu dniu tygodnia.');
       }
       setBusy(true);
@@ -326,7 +342,7 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
     if (file.size > MAX_SCHOOL_FILE_BYTES) { setImportError('Plik jest za duży. Maksymalny rozmiar to 1 MB.'); return; }
     setImportBusy(true);
     try {
-      const rows = parseSchoolFile(await file.text(), file.name.split('.').pop() || '');
+      const rows = parseSchoolFile(await file.text(), file.name.split('.').pop() || '', students);
       if (version !== fileVersion.current) return;
       setImportRows(rows); setImportName(file.name);
     } catch (error) { if (version === fileVersion.current) setImportError(errorText(error)); }
@@ -339,7 +355,7 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
     const startingIdentity = identity;
     try {
       // Validate the entire file again before any write, then collapse identical rows.
-      const valid = importRows.map((entry) => validateSchoolEntry(entry));
+      const valid = importRows.map((entry) => validateSchoolEntry(entry, students));
       const keyed = await Promise.all(valid.map(async (entry) => ({ entry, id: await schoolImportId(entry) })));
       const unique = [...new Map(keyed.map((row) => [row.id, row])).values()];
       const existing = await Promise.all(unique.map(async (row) => ({ ...row, exists: (await getDoc(doc(db, 'schoolItems', row.id))).exists() })));
@@ -359,16 +375,18 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
   }
 
   function rowButton(row: SchoolRecord, inPlan = false) {
-    return <button type="button" className={`school-entry ${inPlan ? 'school-plan-entry' : ''}`} key={row.id} onClick={() => setDetail(row)}>
+    const starVisible = parent && row.type === 'message';
+    return <div className={`school-entry-wrapper ${starVisible ? 'school-entry-with-star' : ''} ${starVisible && isImportant(importantMessageId(row)) ? 'is-important' : ''}`} key={row.id}><button type="button" className={`school-entry ${inPlan ? 'school-plan-entry' : ''}`} onClick={() => setDetail(row)}>
       <span className={`school-entry-icon school-type-${row.type}`} aria-hidden="true"><Icon name={META[row.type].icon} /></span>
       {inPlan && <time>{row.time}<small>{row.endTime}</small></time>}
       <span className="school-entry-copy"><strong>{row.title}</strong><span>{[row.subject, inPlan ? row.note : row.date ? shortDate(row.date) : row.weekday ? WEEKDAYS[row.weekday - 1] : '', !inPlan && row.time ? `${row.time}${row.endTime ? `–${row.endTime}` : ''}` : ''].filter(Boolean).join(' · ') || META[row.type].singular}</span>{row.source === 'eduvulcan' && <small className="school-source-badge">eduVULCAN · {row.parentOnly ? 'dla rodzica' : 'tylko odczyt'}</small>}</span>
       {!inPlan && <span className="school-entry-type">{META[row.type].singular}</span>}
       <span className="school-entry-arrow" aria-hidden="true"><Icon name="chevron-right" /></span>
-    </button>;
+    </button>{starVisible && <button type="button" className="school-important-toggle" aria-label={isImportant(importantMessageId(row)) ? 'Usuń z ważnych' : 'Oznacz jako ważne'} aria-pressed={isImportant(importantMessageId(row))} onClick={() => { void toggleImportant(importantMessageId(row)).catch((error) => setNotice(errorText(error))); }}><Icon name="grade" fill={isImportant(importantMessageId(row)) ? 'currentColor' : 'none'} /></button>}</div>;
   }
 
   return <div className="page-content school-module family-ui">
+    {students.length > 0 && <ProfileSelector className="school-students" label={parent ? 'Wybierz dziecko' : 'Twój profil szkolny'} profiles={students.map((student) => ({ key: student, label: student, avatar: avatarFor(student), photoURL: profilePhotos.get(student) }))} value={person} onChange={setSelectedPerson} />}
     <SectionHeader className="school-heading" title="Szkoła" eyebrow="Codzienność dzieci" description="Plan, postępy i ważne szkolne sprawy. Wszystko blisko siebie." icon="school" actions={<>
       {parent && <SecondaryButton icon="upload" onClick={() => { setImportError(''); setImportRows([]); setImportName(''); setImportOpen(true); }}>Importuj plik</SecondaryButton>}
       {person && <PrimaryButton icon="plus" onClick={() => openAdd()}>Dodaj wpis</PrimaryButton>}
@@ -377,7 +395,7 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
     {notice && <div className="school-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Zamknij komunikat"><Icon name="close" /></button></div>}
     {loadError && <div className="school-error" role="alert"><span>{loadError}</span><SecondaryButton onClick={() => setRetry((value) => value + 1)}>Spróbuj ponownie</SecondaryButton></div>}
     {parent && messageError && <div className="school-error" role="alert"><span>{messageError}</span><SecondaryButton onClick={() => setRetry((value) => value + 1)}>Ponów odczyt wiadomości</SecondaryButton></div>}
-    {students.length > 0 && <ProfileSelector className="school-students" label={parent ? 'Wybierz dziecko' : 'Twój profil szkolny'} profiles={students.map((student) => ({ key: student, label: student, avatar: avatarFor(student), photoURL: profilePhotos.get(student) }))} value={person} onChange={setSelectedPerson} />}
+    {!students.length && !loading && <Card tone="neutral" className="school-no-students"><p>{parent ? 'Brak aktywnych profili szkolnych. Włącz szkołę dla dziecka w Ustawieniach → Członkowie rodziny.' : 'Ten profil nie ma włączonego modułu szkolnego.'}</p></Card>}
     {loading ? <div className="school-loading" role="status">Ładowanie danych szkolnych…</div> : person && <>
       <Card className="school-student-panel" tone="blue" as="section" aria-label={`Profil szkolny: ${person}`}>
         <span className="school-student-avatar" aria-hidden="true"><span>{avatarFor(person)}</span>{profilePhotos.get(person) && <img src={profilePhotos.get(person)} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} />}</span>
@@ -415,7 +433,7 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
     {form && <SchoolDialog title={`${editing ? 'Edytuj' : 'Dodaj'} · ${META[form.type].singular}`} onClose={closeForm} busy={busy}>
       <form onSubmit={save}><fieldset className="school-form" disabled={busy}>
         {actionError && <p className="school-error school-span-all" role="alert">{actionError}</p>}
-        {parent && <label className="field"><span>Dziecko</span><select aria-label="Dziecko" value={form.person} onChange={(event) => setForm({ ...form, person: event.target.value })}>{[...new Set([...students, ...SCHOOL_PEOPLE])].map((student) => <option key={student}>{student}</option>)}</select></label>}
+        {parent && <label className="field"><span>Dziecko</span><select aria-label="Dziecko" value={form.person} onChange={(event) => setForm({ ...form, person: event.target.value })}>{students.map((student) => <option key={student}>{student}</option>)}</select></label>}
         <label className="field"><span>Rodzaj wpisu</span><select aria-label="Rodzaj wpisu" value={form.type} onChange={(event) => changeType(event.target.value as SchoolType)}>{(parent ? SCHOOL_TYPES : CHILD_TYPES).map((type) => <option value={type} key={type}>{META[type].singular}</option>)}</select></label>
         <label className="field school-span-all"><span>{form.type === 'grade' ? 'Ocena / wynik' : 'Nazwa wpisu'} *</span><input autoFocus maxLength={160} required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder={form.type === 'grade' ? 'Np. 5 · odpowiedź ustna' : 'Np. Matematyka / kartkówka / fortepian'} /></label>
         <label className="field"><span>Przedmiot</span><input maxLength={100} value={form.subject} onChange={(event) => setForm({ ...form, subject: event.target.value })} placeholder="Np. Matematyka" /></label>
@@ -436,6 +454,7 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
     </SchoolDialog>}
 
     {detail && <SchoolDialog title={detail.title} onClose={() => setDetail(null)}>
+      {parent && detail.type === 'message' && <SecondaryButton icon="grade" aria-pressed={isImportant(importantMessageId(detail))} onClick={() => { void toggleImportant(importantMessageId(detail)).catch((error) => setNotice(errorText(error))); }}>{isImportant(importantMessageId(detail)) ? '★ Ważna wiadomość' : '☆ Oznacz jako ważne'}</SecondaryButton>}
       <dl className="school-detail"><div><dt>Osoba</dt><dd>{detail.person}</dd></div><div><dt>Rodzaj</dt><dd>{META[detail.type].singular}</dd></div>{detail.subject && <div><dt>Przedmiot</dt><dd>{detail.subject}</dd></div>}{detail.date && <div><dt>Data</dt><dd>{localDate(detail.date).toLocaleDateString('pl-PL')}</dd></div>}{detail.weekday > 0 && !detail.date && <div><dt>Co tydzień</dt><dd>{WEEKDAYS[detail.weekday - 1]}</dd></div>}{detail.time && <div><dt>Godzina</dt><dd>{detail.time}{detail.endTime ? `–${detail.endTime}` : ''}</dd></div>}{detail.note && <div className="school-detail-note"><dt>Notatka</dt><dd>{detail.note}</dd></div>}</dl>
       {detail.source === 'eduvulcan' && <div className="school-provider-detail"><strong>Źródło: eduVULCAN · tylko do odczytu</strong>{detail.syncedAt && <p>Odczytano: {detail.syncedAt.toLocaleString('pl-PL')}</p>}{detail.parentOnly && <p>Wiadomość z dziennika jest dostępna wyłącznie rodzicom.</p>}<p>Zmiany w dzienniku pojawią się po kolejnym odświeżeniu. Własne wpisy możesz dodawać osobno.</p></div>}
       {!parent && detail.calendarEventId && !canEdit(detail) && <p className="school-form-hint">Te zajęcia są połączone z kalendarzem rodzica. Zmiany wprowadza rodzic.</p>}
@@ -446,7 +465,7 @@ export function SchoolModule({ user, member }: { user: User; member: SchoolMembe
     {importOpen && parent && <SchoolDialog title="Ręczny import szkolnych wpisów" onClose={() => { if (!importBusy) { fileVersion.current += 1; setImportOpen(false); setImportRows([]); } }} busy={importBusy}>
       <p className="school-import-intro">Przygotuj plik według naszego szablonu CSV lub JSON. To format aplikacji Nasza Rodzina; nie jest to import eksportu z eduVULCAN.</p>
       <div className="school-template-links"><a href="/szkola-szablon.csv" download>Pobierz szablon CSV ↓</a><a href="/szkola-szablon.json" download>Pobierz szablon JSON ↓</a></div>
-      <p className="school-form-hint">Maksymalnie 200 wpisów i 1 MB. Dozwolone osoby: {SCHOOL_PEOPLE.join(', ')}. Dni tygodnia: 1 = poniedziałek, 7 = niedziela, 0 = brak. Lekcje i zajęcia wymagają dnia tygodnia albo daty; zadania i sprawdziany wymagają daty. Import nie dodaje wydarzeń do rodzinnego kalendarza.</p>
+      <p className="school-form-hint">Maksymalnie 200 wpisów i 1 MB. Dozwolone osoby: {students.join(', ')}. Dni tygodnia: 1 = poniedziałek, 7 = niedziela, 0 = brak. Lekcje i zajęcia wymagają dnia tygodnia albo daty; zadania i sprawdziany wymagają daty. Import nie dodaje wydarzeń do rodzinnego kalendarza.</p>
       <label className="field"><span>Wybierz przygotowany plik</span><input type="file" accept=".csv,.json,text/csv,application/json" disabled={importBusy} onChange={(event) => void readImport(event.target.files?.[0])} /></label>
       {importError && <p className="school-error" role="alert">{importError}</p>}
       {importBusy && <p role="status">Sprawdzanie lub zapisywanie pliku…</p>}

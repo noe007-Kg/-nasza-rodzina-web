@@ -12,7 +12,10 @@ service cloud.firestore {
     }
     function parent() { return member() && profile().role == 'parent'; }
     function ownPerson() { return profile().get('personKey', profile().get('name', '')); }
-    function person(value) { return value in ['family', 'Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla']; }
+    function person(value) {
+      return value is string && (value in ['family', 'Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla']
+        || value.matches('member-[a-f0-9]{24}'));
+    }
     function ownOrFamily(value) { return value == ownPerson() || value == 'family'; }
     function title(value) { return value is string && value.size() > 0 && value.size() <= 500; }
     function creator(data) { return data.createdBy == request.auth.uid; }
@@ -34,7 +37,7 @@ service cloud.firestore {
       return parent() || (member() && data.get('privateToParents', false) == false && ownOrFamily(data.person));
     }
     function validSchool(data) {
-      return title(data.title) && data.person in ['Paweł', 'Nikodem', 'Layla']
+      return title(data.title) && person(data.person) && !(data.person in ['family', 'Sebastian', 'Dominika'])
         && data.type in ['lesson', 'homework', 'test', 'grade', 'message', 'activity'];
     }
     function manualSchool(data) {
@@ -65,14 +68,66 @@ service cloud.firestore {
     match /calendarEvents/{id} {
       allow read: if member();
       allow create: if member() && creator(request.resource.data)
+        && request.resource.data.get('private', false) == false
         && title(request.resource.data.title) && person(request.resource.data.person)
         && (parent() || ownOrFamily(request.resource.data.person));
       allow update: if member() && preserveCreator()
+        && request.resource.data.get('private', false) == false
         && title(request.resource.data.title) && person(request.resource.data.person)
         && (parent() || (resource.data.createdBy == request.auth.uid
           && ownOrFamily(resource.data.person) && ownOrFamily(request.resource.data.person)));
       allow delete: if parent() || (member() && resource.data.createdBy == request.auth.uid && ownOrFamily(resource.data.person));
     }
+    match /privateCalendarEvents/{id} {
+      allow read: if member() && resource.data.ownerUid == request.auth.uid;
+      allow create: if member() && creator(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid && request.resource.data.private == true
+        && title(request.resource.data.title) && person(request.resource.data.person)
+        && (parent() || ownOrFamily(request.resource.data.person));
+      allow update: if member() && resource.data.ownerUid == request.auth.uid && preserveCreator()
+        && request.resource.data.ownerUid == resource.data.ownerUid && request.resource.data.private == true
+        && title(request.resource.data.title) && person(request.resource.data.person)
+        && (parent() || ownOrFamily(request.resource.data.person));
+      allow delete: if member() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    function notificationPreferences(value) {
+      return value is map && value.keys().hasOnly(['enabled', 'sound', 'categories'])
+        && value.enabled is bool && value.sound is bool && value.categories is map
+        && value.categories.keys().hasOnly(['calendar', 'tasks', 'shopping', 'familyChat', 'privateChat', 'health', 'school', 'important'])
+        && value.categories.calendar is bool && value.categories.tasks is bool
+        && value.categories.shopping is bool && value.categories.familyChat is bool
+        && value.categories.privateChat is bool && value.categories.health is bool
+        && value.categories.school is bool && value.categories.important is bool;
+    }
+    function validPreferences(data) {
+      return data.keys().hasOnly(['dashboardOrder', 'notifications', 'importantItems', 'updatedAt'])
+        && (!data.keys().hasAny(['dashboardOrder']) || (data.dashboardOrder is list && data.dashboardOrder.size() <= 7
+          && data.dashboardOrder.hasOnly(['family-time', 'calendar', 'tasks', 'shopping', 'chat', 'health', 'school'])
+          && data.dashboardOrder.toSet().size() == data.dashboardOrder.size()))
+        && (!data.keys().hasAny(['notifications']) || notificationPreferences(data.notifications))
+        && (!data.keys().hasAny(['importantItems']) || (data.importantItems is list && data.importantItems.size() <= 500))
+        && (!data.keys().hasAny(['updatedAt']) || data.updatedAt is timestamp);
+    }
+    match /userPreferences/{uid} {
+      allow read: if member() && request.auth.uid == uid;
+      allow create, update: if member() && request.auth.uid == uid && validPreferences(request.resource.data);
+      allow delete: if false;
+    }
+    match /notificationInbox/{uid}/items/{id} {
+      allow read: if member() && request.auth.uid == uid;
+      allow update: if member() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt', 'starred'])
+        && request.resource.data.get('read', false) is bool && request.resource.data.get('starred', false) is bool
+        && (!request.resource.data.keys().hasAny(['readAt']) || request.resource.data.readAt is timestamp);
+      allow create, delete: if false;
+    }
+    // Device tokens, ownership, deduplication and the delivery queue are server-only.
+    match /_notificationDevices/{id} { allow read, write: if false; }
+    match /_notificationTokenOwners/{id} { allow read, write: if false; }
+    match /_notificationEvents/{id} { allow read, write: if false; }
+    match /_notificationOutbox/{id} { allow read, write: if false; }
+    match /_notificationBaselines/{id} { allow read, write: if false; }
     match /tasks/{id} {
       allow read: if member();
       allow create: if member() && creator(request.resource.data) && validTask(request.resource.data)

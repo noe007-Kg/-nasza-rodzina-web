@@ -1,0 +1,84 @@
+html:root .start-dashboard-v151 { container: family-start / inline-size; color: #171B4B; min-width: 0; }
+html:root .start-family-banner { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(120px, .85fr) minmax(0, 1.2fr); align-items: stretch; min-height: 108px; overflow: hidden; margin-bottom: 12px; border: 1px solid #eee3f1; border-radius: 22px; background: #fff1f7; box-shadow: 0 3px 14px rgb(70 37 89 / 4%); }
+html:root .start-family-banner .start-welcome-copy { width: auto; min-width: 0; margin: 0; padding: 12px 16px; border: 0; border-radius: 0; box-shadow: none; align-self: center; background: transparent; color: #171B4B; }
+html:root .start-family-banner .start-welcome-copy h1 { margin: 0 0 5px; font-size: clamp(18px, 2vw, 28px); line-height: 1.18; letter-spacing: -.04em; overflow-wrap: normal; }
+html:root .start-family-banner .start-welcome-copy h1 > span:first-child { color: #D92A8A; }
+html:root .start-family-banner .start-welcome-copy p { margin: 0; font-size: 12px; line-height: 1.4; color: #655875; }
+.start-family-art { min-width: 0; position: relative; overflow: hidden; }
+.start-family-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 19% center; }
+.start-family-art::after { position: absolute; inset: 0; content: ''; background: linear-gradient(90deg, #fff1f7, transparent 18%, transparent 84%, #fff1f7); pointer-events: none; }
+html:root .start-banner-weather { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, .95fr); gap: 9px; margin: 10px; padding: 9px; align-items: center; border: 1px solid #f4e7ed; border-radius: 17px; background: rgb(255 255 255 / 95%); min-width: 0; color: #171B4B; }
+.start-weather-symbol { font-size: 34px; line-height: 1; }
+.start-weather-reading { min-width: 0; }
+.start-weather-reading strong, .start-weather-reading b, .start-weather-reading small, .start-weather-date strong, .start-weather-date time, .start-weather-date small { display: block; }
+.start-weather-reading strong, .start-weather-date strong { font-size: 11px; line-height: 1.3; }
+.start-weather-reading b { font-size: 29px; line-height: 1.15; letter-spacing: -.04em; }
+.start-weather-reading small, .start-weather-date time, .start-weather-date small { font-size: 10px; line-height: 1.4; color: #766f88; }
+.start-weather-date { min-width: 0; padding-left: 10px; border-left: 1px solid #efe8f3; }
+.start-weather-date small { margin-top: 5px; }
+html:root .start-drag-hint { display: flex; align-items: center; gap: 6px; margin: 0 3px 14px; color: #7e718e; font-size: 11px; line-height: 1.4; }
+.start-drag-hint svg { flex: 0 0 auto; }
+html:root .start-dashboard-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 15px; min-width: 0; }
+html:root .start-dashboard-card { --start-card-background: #FFF1F7; --start-card-color: #D92A8A; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; min-width: 0; min-height: 218px; margin: 0; padding: 19px; border: 1px solid color-mix(in srgb, var(--start-card-color) 11%, white); border-radius: 22px; background: var(--start-card-background); color: #171B4B; box-shadow: 0 3px 14px rgb(70 37 89 / 4%); text-align: left; cursor: pointer; -webkit-touch-callout: none; user-select: none; touch-action: manipulation; transition: border-color 140ms ease, box-shadow 140ms ease; line-height: 1.4; }
+html:root .start-card--calendar { --start-card-background: #F2EDFF; --start-card-color: #7C5CFC; }
+html:root .start-card--tasks { --start-card-background: #ECFBF3; --start-card-color: #24866a; }
+html:root .start-card--shopping { --start-card-background: #FFF7E8; --start-card-color: #ac710b; }
+html:root .start-card--chat { --start-card-background: #EDF7FF; --start-card-color: #287cc7; }
+html:root .start-card--health { --start-card-background: #FFF0F3; --start-card-color: #d3406c; }
+html:root .start-card--school { --start-card-background: #F5F0FF; --start-card-color: #7550cb; }
+html:root .start-dashboard-card:hover { box-shadow: 0 5px 20px rgb(70 37 89 / 7%); }
+html:root .start-dashboard-card:focus-visible { outline: 3px solid #D92A8A; outline-offset: 3px; }
+html:root .start-dashboard-card.is-drag-source { opacity: .35; }
+.start-card-heading { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.start-card-heading > strong { flex: 1; font-size: 14px; line-height: 1.2; }
+.start-card-heading > svg { flex: 0 0 auto; color: var(--start-card-color); opacity: .6; }
+.start-card-icon { display: grid; place-items: center; width: 43px; height: 43px; flex: 0 0 auto; border-radius: 14px; color: var(--start-card-color); background: color-mix(in srgb, var(--start-card-color) 11%, white); }
+.start-card-value { display: block; margin-top: 16px; font-size: 30px; font-weight: 850; line-height: 1.08; letter-spacing: -.035em; }
+.start-card-status { display: block; margin-top: 3px; margin-bottom: 13px; font-size: 12px; color: #6f627e; }
+.start-card-preview { display: block; min-width: 0; font-size: 12px; line-height: 1.45; color: #716580; overflow-wrap: anywhere; }
+.start-preview-rows { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.start-preview-rows > span { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.start-preview-rows > span > span:last-child { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.start-preview-rows time, .start-chat-name, .start-school-kind { flex: 0 0 auto; max-width: 45%; font-size: 10px; line-height: 1.55; color: var(--start-card-color); }
+.start-preview-dot { display: block; flex: 0 0 auto; width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: var(--start-card-color); opacity: .65; }
+.start-preview-dot.important { background: #D92A8A; opacity: 1; }
+html:root .start-card-overlay { min-height: 100%; height: 100%; transform: scale(1.02); outline: 9px solid rgb(223 149 244 / 57%); outline-offset: 1px; box-shadow: 0 0 0 3px rgb(244 166 220 / 80%), 0 0 30px rgb(219 74 182 / 32%), 0 18px 36px rgb(87 44 112 / 22%); cursor: grabbing; pointer-events: none; }
+@container family-start (max-width: 1050px) {
+  html:root .start-dashboard-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  html:root .start-family-banner { grid-template-columns: minmax(0, 1fr) minmax(110px, .7fr) minmax(0, 1.3fr); }
+  html:root .start-banner-weather { grid-template-columns: auto minmax(0, 1fr); gap: 6px; margin: 10px; padding: 10px; }
+  .start-weather-date { grid-column: 1 / -1; border-left: 0; border-top: 1px solid #efe8f3; padding: 5px 0 0; display: flex; flex-wrap: wrap; gap: 3px 7px; align-items: baseline; }
+  .start-weather-date small { margin: 0; }
+  .start-weather-date small br { display: none; }
+}
+@container family-start (max-width: 650px) {
+  html:root .start-dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  html:root .start-family-banner { position: relative; grid-template-columns: minmax(0, 1fr) minmax(0, .85fr); min-height: 116px; border-radius: 20px; }
+  html:root .start-family-banner .start-welcome-copy { padding: 13px; z-index: 1; }
+  html:root .start-family-banner .start-welcome-copy h1 { font-size: 19px; letter-spacing: -.045em; margin-bottom: 5px; }
+  html:root .start-family-banner .start-welcome-copy p { font-size: 11px; line-height: 1.4; }
+  .start-family-art { position: absolute; inset: 0 50% 0 0; opacity: .07; }
+  .start-family-art::after { background: linear-gradient(90deg, transparent, #fff1f7); }
+  html:root .start-banner-weather { margin: 8px; padding: 8px; border-radius: 13px; }
+  .start-weather-symbol { font-size: 24px; }
+  .start-weather-reading b { font-size: 24px; }
+  .start-weather-reading strong { font-size: 10px; }
+  .start-weather-reading small, .start-weather-date time, .start-weather-date small, .start-weather-date strong { font-size: 9px; }
+  html:root .start-dashboard-card { padding: 15px; min-height: 204px; }
+  .start-card-icon { width: 34px; height: 34px; border-radius: 11px; }
+  .start-card-icon svg { width: 23px; height: 23px; }
+  .start-card-heading { gap: 7px; }
+  .start-card-heading > strong { font-size: 12px; }
+  .start-card-heading > svg { width: 13px; height: 13px; }
+  .start-card-value { font-size: 28px; margin-top: 13px; }
+  .start-card-status, .start-card-preview { font-size: 11px; }
+  html:root .start-drag-hint { font-size: 10px; }
+}
+@container family-start (max-width: 335px) {
+  html:root .start-dashboard-card { padding: 12px; }
+  .start-card-heading > svg { display: none; }
+  html:root .start-family-banner .start-welcome-copy h1 { font-size: 16px; }
+  .start-weather-symbol { display: none; }
+  html:root .start-banner-weather { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { html:root .start-dashboard-card { transition: none; } }

@@ -7,8 +7,10 @@ import { decryptSession } from '../server/edu-secrets.mjs';
 import {
   acquireSyncLease, disconnectConnection, getConnectionStatus, loadConnection,
   prepareImportedSchoolItems, releaseSyncLease, retireLegacyParentConnections,
-  saveConnection, selectConnectionStudent, updateConnectionSession, upsertSchoolItems,
+  saveConnection, selectConnectionStudent, updateConnectionSession, upsertSchoolItems, markConnectionNeedsReconnect,
 } from '../server/edu-storage.mjs';
+import { syncAction } from '../server/edu-service.mjs';
+import { EduServerError } from '../server/edu-auth.mjs';
 
 const pupil = { id: 'nikodem-school', studentName: 'Nikodem Testowy', schoolName: 'Szkoła Podstawowa 4', schoolSymbol: 'SP4' };
 const sibling = { id: 'pawel-school', studentName: 'Paweł Testowy', schoolName: 'Szkoła Podstawowa 4', schoolSymbol: 'SP4' };
@@ -299,3 +301,180 @@ test('legacy retirement removes parent UID sessions and invalidates leases only'
   assert.equal(fixture.records.get('_eduConnectLocks/family').id, 'shared-lock');
   await assert.rejects(retireLegacyParentConnections(student(fixture)), { code: 'EDU_PARENT_REQUIRED' });
 });
+
+test('scheduled interval is enforced atomically without changing the manual five-minute limit', async () => withEncryption(async () => {
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAndSelect(context);
+  fixture.records.get('_eduConnections/family').lastSuccessfulSyncAt = Timestamp.fromMillis(Date.now() - 7 * 60000);
+  await assert.rejects(acquireSyncLease('family', { ...context, scheduledSyncIntervalMs: 10 * 60000 }), { code: 'EDU_SYNC_COOLDOWN' });
+  await assert.rejects(acquireSyncLease('family', { ...context, scheduledSyncIntervalMs: 60 * 60000 }), { code: 'EDU_SYNC_COOLDOWN' });
+  const manual = await acquireSyncLease('family', context);
+  assert.ok(manual.leaseId);
+  await releaseSyncLease('family', manual.leaseId, { success: false }, context);
+}));
+
+test('failed scheduled attempts also enforce the hourly gate and cannot relax it with an invalid interval', async () => withEncryption(async () => {
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAndSelect(context);
+  fixture.records.get('_eduConnections/family').lastSyncAttemptAt = Timestamp.fromMillis(Date.now() - 59 * 60000);
+  await assert.rejects(acquireSyncLease('family', { ...context, scheduledSyncIntervalMs: 60 * 60000 }), { code: 'EDU_SYNC_COOLDOWN' });
+  await assert.rejects(acquireSyncLease('family', { ...context, scheduledSyncIntervalMs: 1 }), { code: 'EDU_INVALID_REQUEST' });
+  fixture.records.get('_eduConnections/family').lastSyncAttemptAt = Timestamp.fromMillis(Date.now() - 60 * 60000 - 100);
+  assert.ok((await acquireSyncLease('family', { ...context, scheduledSyncIntervalMs: 60 * 60000 })).leaseId);
+}));
+
+test('expired sessions keep only a safe reconnect marker and retain school history and successful sync metadata', async () => withEncryption(async () => {
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAndSelect(context);
+  const stored = fixture.records.get('_eduConnections/family');
+  stored.expiresAt = Timestamp.fromMillis(Date.now() - 1000);
+  stored.lastSuccessfulSyncAt = Timestamp.fromMillis(Date.now() - 2 * 3600000);
+  fixture.records.set('schoolItems/history', { title: 'Unchanged school history' });
+  const status = await getConnectionStatus('family', context);
+  assert.equal(status.state, 'expired'); assert.equal(status.lastErrorCode, 'EDU_SESSION_EXPIRED');
+  const marker = fixture.records.get('_eduConnections/family');
+  assert.equal(marker.reconnectRequired, true); assert.equal(marker.envelope, undefined);
+  assert.ok(marker.lastSuccessfulSyncAt); assert.ok(marker.selectedStudent);
+  assert.ok(fixture.records.has('schoolItems/history'));
+  assert.equal((await getConnectionStatus('family', context)).state, 'expired');
+}));
+
+test('an expired observation cannot invalidate a newer reconnect or a still-valid session without its lease', async () => withEncryption(async () => {
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAndSelect(context);
+  const oldVersion = fixture.records.get('_eduConnections/family').sessionVersion;
+  await connectAndSelect(context);
+  const current = fixture.records.get('_eduConnections/family');
+  assert.equal(await markConnectionNeedsReconnect('family', { sessionVersion: oldVersion }, context), false);
+  assert.equal(await markConnectionNeedsReconnect('family', { sessionVersion: current.sessionVersion, errorCode: 'EDU_SESSION_INVALID' }, context), false);
+  assert.ok(fixture.records.get('_eduConnections/family').envelope);
+  assert.equal((await getConnectionStatus('family', context)).state, 'connected');
+}));
+
+test('the shared sync service retires a provider-rejected session while holding its existing lease', async () => withEncryption(async () => {
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAndSelect(context);
+  let reads = 0;
+  await assert.rejects(syncAction(context, {}, { readData: async session => {
+    reads += 1; assert.equal(session.cookieJar, 'private-session-cookie');
+    throw new EduServerError('EDU_SESSION_EXPIRED', 401, 'Safe provider expiry');
+  } }), { code: 'EDU_SESSION_EXPIRED' });
+  const marker = fixture.records.get('_eduConnections/family');
+  assert.equal(reads, 1); assert.equal(marker.reconnectRequired, true);
+  assert.equal(marker.lastErrorCode, 'EDU_SESSION_EXPIRED');
+  assert.equal(marker.envelope, undefined); assert.equal(marker.lease, undefined);
+  await assert.rejects(syncAction(context, {}, { readData: async () => { reads += 1; } }), { code: 'EDU_NOT_CONNECTED' });
+  assert.equal(reads, 1);
+}));
+
+test('a wrong Functions key fails decryption without destroying a valid encrypted Vercel session', async () => withEncryption(async () => {
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAndSelect(context);
+  const original = process.env.EDUVULCAN_ENCRYPTION_KEY_BASE64;
+  const envelope = fixture.records.get('_eduConnections/family').envelope;
+  process.env.EDUVULCAN_ENCRYPTION_KEY_BASE64 = randomBytes(32).toString('base64');
+  let reads = 0;
+  try {
+    await assert.rejects(syncAction(context, {}, { readData: async () => { reads += 1; } }), { code: 'EDU_SESSION_INVALID' });
+  } finally { process.env.EDUVULCAN_ENCRYPTION_KEY_BASE64 = original; }
+  assert.equal(reads, 0);
+  const current = fixture.records.get('_eduConnections/family');
+  assert.deepEqual(current.envelope, envelope); assert.equal(current.reconnectRequired, undefined);
+  assert.equal(decryptSession(current.envelope, { uid: 'family' }).cookieJar, 'private-session-cookie');
+}));
+
+test('scheduled cadence counts prior starts so provider duration does not skip every second cron slot', async () => withEncryption(async () => {
+  for (const interval of [10 * 60000, 60 * 60000]) {
+    const fixture = databaseFixture(); const context = family(fixture);
+    await connectAndSelect(context);
+    const connection = fixture.records.get('_eduConnections/family');
+    connection.lastSyncAttemptAt = Timestamp.fromMillis(Date.now() - interval - 100);
+    connection.lastSuccessfulSyncAt = Timestamp.fromMillis(Date.now() - interval + 30000);
+    assert.ok((await acquireSyncLease('family', { ...context, scheduledSyncIntervalMs: interval })).leaseId);
+  }
+}));
+
+test('the shared lease atomically claims both jittered school slots and rejects repeated or older slots', async t => withEncryption(async () => {
+  let now = Date.parse('2026-10-05T08:00:05+02:00');
+  t.mock.method(Date, 'now', () => now);
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAndSelect(context);
+  const slot = time => ({ ...context, scheduledSyncIntervalMs: 10 * 60000,
+    scheduledSchoolSlotStartMs: Date.parse(time) });
+  const firstContext = slot('2026-10-05T08:00:00+02:00');
+  const first = await acquireSyncLease('family', firstContext);
+  const stored = fixture.records.get('_eduConnections/family');
+  assert.equal(stored.lease.id, first.leaseId);
+  assert.equal(stored.lastScheduledSchoolSlotAt.toMillis(), firstContext.scheduledSchoolSlotStartMs);
+  assert.equal(stored.lastSyncAttemptAt.toMillis(), now);
+  await releaseSyncLease('family', first.leaseId, { success: true }, context);
+  now = Date.parse('2026-10-05T08:10:01+02:00');
+  const secondContext = slot('2026-10-05T08:10:00+02:00');
+  const second = await acquireSyncLease('family', secondContext);
+  assert.equal(stored.lastSyncAttemptAt.toMillis(), Date.parse('2026-10-05T08:00:05+02:00'));
+  assert.equal(fixture.records.get('_eduConnections/family').lastScheduledSchoolSlotAt.toMillis(), secondContext.scheduledSchoolSlotStartMs);
+  await releaseSyncLease('family', second.leaseId, { success: false }, context);
+  now = Date.parse('2026-10-05T08:20:15+02:00');
+  const writes = fixture.writes;
+  for (const retryContext of [firstContext, secondContext]) {
+    await assert.rejects(acquireSyncLease('family', retryContext), { code: 'EDU_SYNC_COOLDOWN' });
+  }
+  assert.equal(fixture.writes, writes);
+}));
+
+test('a completed manual attempt consumes its school slot even after the usual cooldown has elapsed', async t => withEncryption(async () => {
+  let now = Date.parse('2026-10-05T08:00:05+02:00');
+  t.mock.method(Date, 'now', () => now);
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAndSelect(context);
+  const manual = await acquireSyncLease('family', context);
+  await releaseSyncLease('family', manual.leaseId, { success: true }, context);
+  assert.equal(fixture.records.get('_eduConnections/family').lastScheduledSchoolSlotAt, undefined);
+  now = Date.parse('2026-10-05T08:10:01+02:00');
+  await assert.rejects(acquireSyncLease('family', { ...context, scheduledSyncIntervalMs: 10 * 60000,
+    scheduledSchoolSlotStartMs: Date.parse('2026-10-05T08:00:00+02:00') }), { code: 'EDU_SYNC_COOLDOWN' });
+  assert.ok((await acquireSyncLease('family', { ...context, scheduledSyncIntervalMs: 10 * 60000,
+    scheduledSchoolSlotStartMs: Date.parse('2026-10-05T08:10:00+02:00') })).leaseId);
+}));
+
+test('invalid, future and off-hours school slots cannot bypass the shared synchronization gate', async t => withEncryption(async () => {
+  let now = Date.parse('2026-10-05T08:00:05+02:00');
+  t.mock.method(Date, 'now', () => now);
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAndSelect(context);
+  const currentSlot = Date.parse('2026-10-05T08:00:00+02:00');
+  for (const value of [null, NaN, Infinity, String(currentSlot), currentSlot + 1,
+    Date.parse('2026-10-05T08:10:00+02:00'), Date.parse('2026-10-05T07:50:00+02:00')]) {
+    await assert.rejects(acquireSyncLease('family', { ...context, scheduledSyncIntervalMs: 10 * 60000,
+      scheduledSchoolSlotStartMs: value }), { code: 'EDU_INVALID_REQUEST' });
+  }
+  for (const interval of [undefined, 60 * 60000]) {
+    await assert.rejects(acquireSyncLease('family', { ...context, scheduledSyncIntervalMs: interval,
+      scheduledSchoolSlotStartMs: currentSlot }), { code: 'EDU_INVALID_REQUEST' });
+  }
+  now = Date.parse('2026-10-05T15:00:01+02:00');
+  await assert.rejects(acquireSyncLease('family', { ...context, scheduledSyncIntervalMs: 10 * 60000,
+    scheduledSchoolSlotStartMs: currentSlot }), { code: 'EDU_INVALID_REQUEST' });
+  assert.equal(fixture.records.get('_eduConnections/family').lease, undefined);
+  assert.equal(fixture.records.get('_eduConnections/family').lastScheduledSchoolSlotAt, undefined);
+}));
+
+test('changing the selected pupil clears only the previous pupil school-slot marker together with sync timestamps', async t => withEncryption(async () => {
+  const now = Date.parse('2026-10-05T08:00:05+02:00');
+  t.mock.method(Date, 'now', () => now);
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAndSelect(context, [pupil, sibling]);
+  const scheduledContext = { ...context, scheduledSyncIntervalMs: 10 * 60000,
+    scheduledSchoolSlotStartMs: Date.parse('2026-10-05T08:00:00+02:00') };
+  const lease = await acquireSyncLease('family', scheduledContext);
+  await releaseSyncLease('family', lease.leaseId, { success: true }, context);
+  await selectConnectionStudent('family', { profileId: pupil.id, personKey: 'Nikodem' }, context);
+  assert.ok(fixture.records.get('_eduConnections/family').lastScheduledSchoolSlotAt);
+  await selectConnectionStudent('family', { profileId: sibling.id, personKey: 'Paweł' }, context);
+  const stored = fixture.records.get('_eduConnections/family');
+  assert.equal(stored.lastScheduledSchoolSlotAt, undefined);
+  assert.equal(stored.lastSyncAttemptAt, undefined);
+  assert.equal(stored.lastSuccessfulSyncAt, undefined);
+  assert.ok(stored.envelope);
+  assert.ok((await acquireSyncLease('family', scheduledContext)).leaseId);
+}));

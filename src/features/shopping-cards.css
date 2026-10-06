@@ -1,0 +1,85 @@
+/* Product thumbnails fill their square; other shopping functions keep their layout. */
+html:root .shopping-v130 .quick-products-grid {
+  /* A height-limited scrolling grid must retain each square's intrinsic row
+     height. Automatic rows otherwise collapse in Safari and overlap targets. */
+  grid-auto-rows: max-content;
+  align-content: start;
+  align-items: start;
+}
+
+html:root .shopping-v130 .quick-product-tile {
+  aspect-ratio: 1;
+  width: 100%;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  display: block;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff7e8;
+  box-shadow: 0 3px 12px rgb(23 27 75 / 4%);
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+html:root .shopping-v130 .quick-product-visual {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  font-size: clamp(56px, 6vw, 90px);
+  line-height: 1;
+  pointer-events: none;
+}
+
+html:root .shopping-v130 .quick-product-visual img {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: cover !important;
+  display: block;
+}
+
+html:root .shopping-v130 .quick-product-tile > strong {
+  position: absolute;
+  right: 6px;
+  bottom: 9px;
+  left: 6px;
+  z-index: 1;
+  max-width: none;
+  color: #111;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  text-shadow: 0 0 3px #fff, 0 0 6px #fff, 0 1px 2px #fff;
+  background: transparent;
+  pointer-events: none;
+}
+
+html:root .shopping-v130 .quick-product-tile > i {
+  top: 4px;
+  right: 5px;
+  z-index: 2;
+  display: grid;
+  width: 28px;
+  height: 24px;
+  place-items: center;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 85%);
+  color: #171b4b;
+  line-height: 1;
+}
+
+html:root .shopping-v130 .quick-product-tile:focus-visible {
+  outline: 3px solid #d92a8a;
+  outline-offset: 3px;
+}

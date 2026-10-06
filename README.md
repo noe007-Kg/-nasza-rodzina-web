@@ -1,3 +1,24 @@
+# Nasza Rodzina 1.6.0 — harmonogram eduVULCAN i powiadomienia IN-APP
+
+To kolejny etap istniejącej aplikacji produkcyjnej **1.5.1**. Kod 1.6.0 przygotowano do przeglądu; nie wykonano push, wdrożenia Vercel ani publikacji Firebase.
+
+- [Aktualny raport: harmonogram Firebase Functions, konfiguracja i wyniki testów](docs/EDUVULCAN_FUNCTIONS_HARMONOGRAM.md).
+- [Poprzedni raport pakietu IN-APP — dokumentacja historyczna](docs/PAKIET_1.6.0_RAPORT.md).
+- [17 podglądów aplikacji](preview/index.html) — galerię otwórz lokalnie po rozpakowaniu ZIP.
+- [Google i konta](docs/ACCOUNT_GOOGLE.md), [powiadomienia IN-APP](docs/POWIADOMIENIA_IN_APP_1.6.0.md), [kalendarz](docs/KALENDARZ_PAKIET.md).
+
+**Nowy harmonogram eduVULCAN wymaga Firebase Functions 2. generacji, Cloud Scheduler oraz planu Blaze.** Kod i konfigurację przygotowano lokalnie, ale niczego nie wdrożono. W `Europe/Warsaw` dwa zadania synchronizują wspólne połączenie rodziców: od 08:00 do 14:50 co 10 minut oraz od 15:00 do 07:00 o pełnej godzinie, z atomową blokadą i limitem odpowiednio 10/60 minut. Po przyszłym, osobno zaakceptowanym wdrożeniu mogą działać także przy zamkniętej aplikacji. Sesja pozostaje zaszyfrowana istniejącym kluczem; nie zapisuje się ani nie wymaga hasła do pracy harmonogramu.
+
+**Dostarczanie powiadomień pozostaje IN-APP. FCM i systemowe Web Push nie są włączane.** Dzwonek, centrum, gwiazdki oraz krótki dźwięk w widocznej aplikacji pozostają. Functions zapisują własny inbox użytkowników po rzeczywistych zmianach, w tym natychmiast po nowej wiadomości rodzinnej. Zamknięta aplikacja nie pokazuje alertów systemowych ani nie odtwarza dźwięku; nowe wpisy można zobaczyć po jej otwarciu. `VITE_FIREBASE_VAPID_KEY` pozostaje opcjonalne i niewykorzystywane w tym trybie.
+
+Dotychczasowe sprawdzenie eduVULCAN przy zalogowaniu/uruchomieniu oraz powrocie do foreground po 60 minutach pozostaje, podobnie jak „Synchronizuj teraz”. Vercel i Functions wywołują tę samą logikę synchronizacji oraz korzystają z tego samego lease w Firestore, więc nie pobierają tego samego połączenia równolegle. Baseline, deduplikacja i prywatność szkolna pozostają wspólne; klient nadal nie może tworzyć dowolnej treści inbox. Przypomnienia leków Functions zachowują harmonogram co 5 minut.
+
+**Aktualizując działającą produkcję 1.5.1, nie uruchamiaj bootstrapu ani migracji 1.3.3 (`family:setup`, `family:migrate`).** Zachowaj istniejące UID, dane, konfigurację Firebase i `EDUVULCAN_ENCRYPTION_KEY_BASE64`. Google Auth pozostaje z dotychczasowym łączeniem providerów i dwoma zmiennymi `VITE_GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_ID`. Kieruj się aktualnym raportem powyżej; ewentualna publikacja przygotowanych reguł i wdrożenie Vercel są osobnymi krokami dopiero po akceptacji.
+
+Poniżej zachowano wcześniejsze instrukcje 1.5.1/1.3.3 jako dokumentację historyczną. Opisy pierwszego uruchomienia i migracji nie są instrukcją aktualizacji działającej rodziny do 1.6.0.
+
+---
+
 # Nasza Rodzina
 
 Prywatna aplikacja rodzinna działająca w przeglądarce. Jeden adres dla telefonu, tabletu i komputera, w pionie i w poziomie. Zawiera kalendarz, zadania, zakupy, wiadomości, sprawy szkolne i zdrowotne.

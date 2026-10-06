@@ -30,12 +30,15 @@ const profiles: Profile[] = [
 ];
 const disconnected: ConnectionStatus = { configured: true, state: 'disconnected', profiles: [] };
 const needsProfile: ConnectionStatus = { configured: true, state: 'needs_profile', profiles };
+// These tests exercise explicit connection controls. Activation-based refresh
+// has its own cases; a recent successful sync keeps it out of this fixture.
+const recentSyncAt = new Date(Date.now() - 10 * 60_000).toISOString();
 const connected: ConnectionStatus = {
   configured: true, state: 'connected', profiles,
   selectedStudent: { profileId: 'nikodem-sp4', personKey: 'Nikodem' },
   expiresAt: '2026-12-31T23:59:59.000Z',
-  lastSyncAt: '2026-09-30T10:00:00.000Z',
-  lastSuccessAt: '2026-09-30T10:00:00.000Z',
+  lastSyncAt: recentSyncAt,
+  lastSuccessAt: recentSyncAt,
 };
 
 async function containsStoredCredential(page: Page) {
@@ -221,7 +224,7 @@ test('eduVULCAN: jedno połączenie Dominiki jest dostępne Sebastianowi z pełn
     createdBy: accounts.mother.uid, createdAt: Timestamp.now(), syncedAt: Timestamp.now(),
   });
   await seedParentMessage();
-  const sharedStatus = { ...connected, lastSyncAt: '2026-10-01T10:00:00.000Z', lastSuccessAt: '2026-10-01T10:00:00.000Z' };
+  const sharedStatus = { ...connected, lastSyncAt: recentSyncAt, lastSuccessAt: recentSyncAt };
   // One route state survives changing application identity. The eduVULCAN
   // fixture password belongs to the shared provider account, not both parents.
   const calls = await mockApi(page, disconnected, {
@@ -243,7 +246,8 @@ test('eduVULCAN: jedno połączenie Dominiki jest dostępne Sebastianowi z pełn
   await expect(page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.school-record-list')).toContainText('Ocena wspólnego dziennika E2E');
   await expect(page.locator('.school-record-list')).toContainText(parentMessageTitle);
-  await page.locator('.top-header').getByRole('button', { name: 'Wyloguj', exact: true }).click();
+  await page.evaluate(() => { location.hash = encodeURIComponent('Ustawienia'); });
+  await page.getByRole('button', { name: 'Wyloguj', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Zaloguj się', exact: true })).toBeVisible();
 
   await loginSchool(page, accounts.parent);
@@ -251,7 +255,7 @@ test('eduVULCAN: jedno połączenie Dominiki jest dostępne Sebastianowi z pełn
   await expect(panel.locator('.edu-vulcan-state')).toHaveText('Połączono');
   await expect(panel.locator('.edu-vulcan-summary')).toContainText('Nikodem');
   await expect(panel.locator('.edu-vulcan-summary')).toContainText('Szkoła Podstawowa nr 4');
-  await expect(panel.locator('.edu-vulcan-summary')).toContainText('1 października 2026');
+  await expect(panel.locator('.edu-vulcan-summary')).toContainText(new Date(recentSyncAt).toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Warsaw' }));
   await expect(panel.getByLabel('Hasło eduVULCAN', { exact: true })).toHaveCount(0);
   await expect(page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.school-record-list')).toContainText('Ocena wspólnego dziennika E2E');

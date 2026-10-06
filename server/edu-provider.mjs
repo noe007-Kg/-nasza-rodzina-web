@@ -397,7 +397,7 @@ export function createEduProvider({ fetchImpl = (...args) => globalThis.fetch(..
       return results;
     }
 
-    let assignmentsSucceeded = false;
+    let assignmentsSucceeded = false; let assignmentsNotificationReady = false;
     if (assignmentsResult) {
       const supportedAssignments = assignmentsResult.filter((row) => [1, 2, 3, 4].includes(Number(row.typ)));
       if (supportedAssignments.length !== assignmentsResult.length) report('Zadania i sprawdziany: pominięto nieznany rodzaj wpisu z dziennika.');
@@ -418,10 +418,15 @@ export function createEduProvider({ fetchImpl = (...args) => globalThis.fetch(..
         if (normalized.length > capacity) report('Zadania i sprawdziany: część wpisów przekracza limit tej synchronizacji.');
         items.push(...normalized.slice(0, capacity));
         assignmentsSucceeded = assignmentsResult.length === 0 || normalized.length > 0;
+        // Notification history is initialized only after the selected section
+        // has real, successfully read details. A partial import must not make
+        // recovered older homework/tests look like newly created records.
+        assignmentsNotificationReady = supportedAssignments.length === assignmentsResult.length
+          && detailed.every((value) => value !== null) && normalized.length <= capacity;
       }
     }
 
-    let messagesApp; let messagesSucceeded = false;
+    let messagesApp; let messagesSucceeded = false; let messagesNotificationReady = false;
     // A pupil's school identity does not prove ownership of a parent mailbox.
     // Personal student scopes omit mail until provider role verification exists.
     if (!includeMessages) report('Wiadomości z osobistego konta ucznia nie są jeszcze obsługiwane.');
@@ -452,13 +457,20 @@ export function createEduProvider({ fetchImpl = (...args) => globalThis.fetch(..
       if (normalized.length > capacity) report('Wiadomości: część wpisów przekracza limit tej synchronizacji.');
       items.push(...normalized.slice(0, capacity));
       messagesSucceeded = inbox.length === 0 || normalized.length > 0;
+      messagesNotificationReady = details.size === Math.min(inbox.length, DETAIL_LIMIT) && normalized.length <= capacity;
     }, 'Wiadomości');
 
     if (!gradeResult && !timetableResult && !assignmentsSucceeded && !messagesSucceeded) throw failure('EDU_SYNC_FAILED');
     const countTypes = { grades: 'grade', lessons: 'lesson', homework: 'homework', tests: 'test', messages: 'message' };
     const counts = Object.fromEntries(Object.entries(countTypes).map(([name, type]) => [name, items.filter((item) => item.type === type).length]));
+    // Internal metadata for the server notification baseline only; these flags
+    // never change portal requests, session handling, public counts or leases.
+    const notificationReadyTypes = [
+      ...(gradeResult ? ['grade'] : []), ...(timetableResult !== null ? ['lesson'] : []),
+      ...(assignmentsNotificationReady ? ['homework', 'test'] : []), ...(messagesNotificationReady ? ['message'] : []),
+    ];
     return { session: { ...session, cookieJar: jar.toJSON(), currentProfileId: profileId, journal }, items, counts, warnings,
-      reconcileScopes, range: { dateFrom, dateTo, assignmentsTo } };
+      reconcileScopes, notificationReadyTypes, range: { dateFrom, dateTo, assignmentsTo } };
   }
 
   return { connectProvider, readProviderData };

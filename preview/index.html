@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Nasza Rodzina 1.6.0 — podglądy do akceptacji</title>
+  <style>
+    :root { color-scheme:light; --ink:#171B4B; --pink:#D92A8A; --border:#EEE5F5; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:linear-gradient(135deg,#FFF9FC,#F6F4FF); color:var(--ink); font:15px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    main { width:min(1320px,100%); margin:0 auto; padding:36px 24px 56px; }
+    header { margin-bottom:26px; }
+    .release { display:inline-flex; padding:5px 11px; border-radius:99px; color:#7044BE; background:#EFE7FF; font-size:12px; font-weight:700; }
+    h1 { margin:12px 0 8px; font-size:clamp(25px,4vw,37px); line-height:1.2; }
+    header p { max-width:850px; margin:0 0 9px; color:#606380; }
+    a { color:var(--pink); text-underline-offset:3px; }
+    .filters { display:flex; gap:8px; flex-wrap:wrap; margin:22px 0; }
+    .filters button { padding:8px 14px; border:1px solid var(--border); background:#FFF; color:var(--ink); border-radius:99px; cursor:pointer; font:inherit; font-size:13px; }
+    .filters button[aria-pressed="true"] { background:#FCE7F3; border-color:#F3A9D2; color:#AB1A6B; }
+    .previews { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr)); gap:22px; align-items:start; }
+    .preview-card { min-width:0; overflow:hidden; border:1px solid var(--border); border-radius:23px; background:#FFF; box-shadow:0 6px 22px #44307707; }
+    .preview-image { position:relative; display:grid; place-items:center; width:100%; height:235px; padding:12px; border:0; background:#F8F6FC; cursor:zoom-in; }
+    .preview-image img { display:block; max-width:100%; max-height:100%; object-fit:contain; filter:drop-shadow(0 2px 8px #30204412); }
+    .missing { max-width:210px; font-size:13px; color:#6F6083; text-align:center; }
+    .preview-copy { padding:19px 21px 22px; }
+    .preview-meta { display:flex; justify-content:space-between; gap:10px; color:#817790; font-size:11px; }
+    h2 { margin:8px 0; font-size:18px; line-height:1.3; }
+    .preview-copy p { margin:0 0 13px; min-height:42px; color:#686981; font-size:13px; }
+    .preview-copy a { font-size:12px; font-weight:650; }
+    button:focus-visible,a:focus-visible { outline:3px solid #BE9DF8; outline-offset:4px; }
+    article[hidden],.missing[hidden] { display:none; }
+    dialog { max-width:min(1250px,96vw); width:fit-content; max-height:94dvh; padding:0; border:1px solid var(--border); border-radius:18px; color:var(--ink); background:#FFF; box-shadow:0 18px 70px #171B4B40; }
+    dialog::backdrop { background:#171B4B9E; }
+    .dialog-header { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:12px 18px; border-bottom:1px solid var(--border); }
+    .dialog-header h2 { margin:0; font-size:16px; }
+    .dialog-header button { display:grid; place-items:center; width:35px; height:35px; padding:0; border:0; border-radius:50%; color:var(--pink); background:#FFF0F7; font:26px/1 system-ui; cursor:pointer; }
+    .dialog-image { padding:12px; overflow:auto; max-height:calc(94dvh - 65px); text-align:center; }
+    .dialog-image img { display:block; max-width:100%; height:auto; margin:0 auto; }
+    footer { margin-top:28px; color:#7B7288; font-size:12px; }
+    @media(max-width:600px) { main { padding:25px 16px 36px; } .previews { gap:16px; } .preview-image { height:220px; } }
+    @media(prefers-reduced-motion:no-preference) { .preview-card { transition:box-shadow .18s; } .preview-card:hover { box-shadow:0 9px 25px #44307713; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="release">Wersja 1.6.0 · do akceptacji</span>
+      <h1>Nasza Rodzina — podglądy zmian</h1>
+      <p>17 podglądów istniejącej aplikacji. Obrazy pokazują lokalne dane testowe i dotychczasowe grafiki projektu; nie przedstawiają zmienionych danych produkcyjnych rodziny.</p>
+      <p>Kliknij obraz, aby go powiększyć. <a href="../docs/PAKIET_1.6.0_RAPORT.md">Otwórz pełny raport techniczny</a>.</p>
+    </header>
+    <nav class="filters" aria-label="Filtr podglądów">
+      <button type="button" data-filter="all" aria-pressed="true">Wszystkie · 17</button>
+      <button type="button" data-filter="start" aria-pressed="false">Start · 5</button>
+      <button type="button" data-filter="konto" aria-pressed="false">Konto · 3</button>
+      <button type="button" data-filter="powiadomienia" aria-pressed="false">Powiadomienia · 2</button>
+      <button type="button" data-filter="moduly" aria-pressed="false">Moduły · 7</button>
+    </nav>
+    <section class="previews" aria-label="Podglądy aplikacji">
+      <article class="preview-card" data-category="start">
+        <button class="preview-image" type="button" data-image="start-desktop.png" data-title="Start — komputer" aria-label="Powiększ: Start — komputer">
+          <img src="start-desktop.png" alt="Start — komputer: Powitanie i pogoda w jednym bannerze oraz siedem kafli z danych emulatora." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>01</span><span>1440 × 900</span></div>
+          <h2>Start — komputer</h2>
+          <p>Powitanie i pogoda w jednym bannerze oraz siedem kafli z danych emulatora.</p>
+          <a href="start-desktop.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="start">
+        <button class="preview-image" type="button" data-image="start-tablet-portrait.png" data-title="Start — tablet pionowo" aria-label="Powiększ: Start — tablet pionowo">
+          <img src="start-tablet-portrait.png" alt="Start — tablet pionowo: Stały pasek profili i siatka dopasowana do szerokości." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>02</span><span>900 × 1440</span></div>
+          <h2>Start — tablet pionowo</h2>
+          <p>Stały pasek profili i siatka dopasowana do szerokości.</p>
+          <a href="start-tablet-portrait.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="start">
+        <button class="preview-image" type="button" data-image="start-tablet-landscape.png" data-title="Start — tablet poziomo" aria-label="Powiększ: Start — tablet poziomo">
+          <img src="start-tablet-landscape.png" alt="Start — tablet poziomo: Boczne menu, profile i kompaktowy rodzinny dashboard." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>03</span><span>1024 × 768</span></div>
+          <h2>Start — tablet poziomo</h2>
+          <p>Boczne menu, profile i kompaktowy rodzinny dashboard.</p>
+          <a href="start-tablet-landscape.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="start">
+        <button class="preview-image" type="button" data-image="start-phone-portrait.png" data-title="Start — telefon pionowo" aria-label="Powiększ: Start — telefon pionowo">
+          <img src="start-phone-portrait.png" alt="Start — telefon pionowo: Profile przewijają się wewnątrz paska; na dole pięć pozycji nawigacji." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>04</span><span>390 × 844</span></div>
+          <h2>Start — telefon pionowo</h2>
+          <p>Profile przewijają się wewnątrz paska; na dole pięć pozycji nawigacji.</p>
+          <a href="start-phone-portrait.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="start">
+        <button class="preview-image" type="button" data-image="start-phone-landscape.png" data-title="Start — telefon poziomo" aria-label="Powiększ: Start — telefon poziomo">
+          <img src="start-phone-landscape.png" alt="Start — telefon poziomo: Kompaktowa wysokość bannera i układ na niewysokim ekranie." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>05</span><span>844 × 390</span></div>
+          <h2>Start — telefon poziomo</h2>
+          <p>Kompaktowa wysokość bannera i układ na niewysokim ekranie.</p>
+          <a href="start-phone-landscape.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="konto">
+        <button class="preview-image" type="button" data-image="account-login.png" data-title="Logowanie" aria-label="Powiększ: Logowanie">
+          <img src="account-login.png" alt="Logowanie: Wspólne ikony SVG oraz dodatkowa metoda Google dla połączonego UID." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>06</span><span>1440 × 900</span></div>
+          <h2>Logowanie</h2>
+          <p>Wspólne ikony SVG oraz dodatkowa metoda Google dla połączonego UID.</p>
+          <a href="account-login.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="konto">
+        <button class="preview-image" type="button" data-image="account-password-reset.png" data-title="Przypomnienie hasła" aria-label="Powiększ: Przypomnienie hasła">
+          <img src="account-password-reset.png" alt="Przypomnienie hasła: Jeden subtelny wiersz pod hasłem, z dotychczasowym resetem Firebase." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>07</span><span>Fragment ekranu</span></div>
+          <h2>Przypomnienie hasła</h2>
+          <p>Jeden subtelny wiersz pod hasłem, z dotychczasowym resetem Firebase.</p>
+          <a href="account-password-reset.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="konto">
+        <button class="preview-image" type="button" data-image="account-settings.png" data-title="Konto i logowanie" aria-label="Powiększ: Konto i logowanie">
+          <img src="account-settings.png" alt="Konto i logowanie: Zmiana e-maila i hasła oraz metody logowania tego samego konta." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>08</span><span>Panel ustawień</span></div>
+          <h2>Konto i logowanie</h2>
+          <p>Zmiana e-maila i hasła oraz metody logowania tego samego konta.</p>
+          <a href="account-settings.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="powiadomienia">
+        <button class="preview-image" type="button" data-image="notifications-settings.png" data-title="Ustawienia powiadomień" aria-label="Powiększ: Ustawienia powiadomień">
+          <img src="notifications-settings.png" alt="Ustawienia powiadomień IN-APP: Dźwięk i kategorie, bez wymagania zgody systemowej." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>09</span><span>Panel ustawień</span></div>
+          <h2>Ustawienia powiadomień</h2>
+          <p>Powiadomienia IN-APP, dźwięk i kategorie, bez wymagania zgody systemowej.</p>
+          <a href="notifications-settings.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="powiadomienia">
+        <button class="preview-image" type="button" data-image="notifications-center.png" data-title="Centrum powiadomień" aria-label="Powiększ: Centrum powiadomień">
+          <img src="notifications-center.png" alt="Centrum powiadomień: Nieprzeczytane wpisy, gwiazdki oraz przejście do właściwego modułu." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>10</span><span>Dzwonek i lista</span></div>
+          <h2>Centrum powiadomień</h2>
+          <p>Nieprzeczytane wpisy, gwiazdki oraz przejście do właściwego modułu.</p>
+          <a href="notifications-center.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="moduly">
+        <button class="preview-image" type="button" data-image="calendar-recurring-event.png" data-title="Wydarzenie cykliczne" aria-label="Powiększ: Wydarzenie cykliczne">
+          <img src="calendar-recurring-event.png" alt="Wydarzenie cykliczne: Interwał, dni tygodnia i zakończenie serii." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>11</span><span>Kalendarz</span></div>
+          <h2>Wydarzenie cykliczne</h2>
+          <p>Interwał, dni tygodnia i zakończenie serii.</p>
+          <a href="calendar-recurring-event.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="moduly">
+        <button class="preview-image" type="button" data-image="calendar-edit-series.png" data-title="Edycja serii" aria-label="Powiększ: Edycja serii">
+          <img src="calendar-edit-series.png" alt="Edycja serii: Zmiany jednego wystąpienia, tego i kolejnych albo całej serii." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>12</span><span>Kalendarz</span></div>
+          <h2>Edycja serii</h2>
+          <p>Zmiany jednego wystąpienia, tego i kolejnych albo całej serii.</p>
+          <a href="calendar-edit-series.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="moduly">
+        <button class="preview-image" type="button" data-image="shopping-products.png" data-title="Zakupy" aria-label="Powiększ: Zakupy">
+          <img src="shopping-products.png" alt="Zakupy: Kwadratowe zdjęcia z nazwą produktu oraz zachowana edycja przytrzymaniem." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>13</span><span>Szybkie produkty</span></div>
+          <h2>Zakupy</h2>
+          <p>Kwadratowe zdjęcia z nazwą produktu oraz zachowana edycja przytrzymaniem.</p>
+          <a href="shopping-products.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="moduly">
+        <button class="preview-image" type="button" data-image="private-chat.png" data-title="Prywatny czat" aria-label="Powiększ: Prywatny czat">
+          <img src="private-chat.png" alt="Prywatny czat: Przewijalne wiadomości i dostępne pole wysyłania." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>14</span><span>Rozmowa 1:1</span></div>
+          <h2>Prywatny czat</h2>
+          <p>Przewijalne wiadomości i dostępne pole wysyłania.</p>
+          <a href="private-chat.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="moduly">
+        <button class="preview-image" type="button" data-image="health-upload-50.png" data-title="Zdrowie — przesyłanie pliku" aria-label="Powiększ: Zdrowie — przesyłanie pliku">
+          <img src="health-upload-50.png" alt="Zdrowie — przesyłanie pliku: Rzeczywisty postęp kontrolowanego uploadu do lokalnego emulatora Storage." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>15</span><span>Około 50%</span></div>
+          <h2>Zdrowie — przesyłanie pliku</h2>
+          <p>Rzeczywisty postęp kontrolowanego uploadu do lokalnego emulatora Storage.</p>
+          <a href="health-upload-50.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="moduly">
+        <button class="preview-image" type="button" data-image="school-desktop-landscape.png" data-title="Szkoła — Paweł i Nikodem" aria-label="Powiększ: Szkoła — Paweł i Nikodem">
+          <img src="school-desktop-landscape.png" alt="Szkoła — Paweł i Nikodem: Zaakceptowany design i wybór wyłącznie dzieci szkolnych; Layla jest pominięta." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>16</span><span>1440 × 900</span></div>
+          <h2>Szkoła — Paweł i Nikodem</h2>
+          <p>Zaakceptowany design i wybór wyłącznie dzieci szkolnych; Layla jest pominięta.</p>
+          <a href="school-desktop-landscape.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+      <article class="preview-card" data-category="moduly">
+        <button class="preview-image" type="button" data-image="important-family-messages.png" data-title="Ważne wiadomości ★" aria-label="Powiększ: Ważne wiadomości ★">
+          <img src="important-family-messages.png" alt="Ważne wiadomości ★: Indywidualne gwiazdki i ważne informacje na górze." loading="lazy" decoding="async">
+          <span class="missing" hidden>Podgląd oczekuje na końcowy test przeglądarkowy.</span>
+        </button>
+        <div class="preview-copy">
+          <div class="preview-meta"><span>17</span><span>Czat rodzinny</span></div>
+          <h2>Ważne wiadomości ★</h2>
+          <p>Indywidualne gwiazdki i ważne informacje na górze.</p>
+          <a href="important-family-messages.png" target="_blank" rel="noopener">Otwórz pełny obraz <span aria-hidden="true">↗</span></a>
+        </div>
+      </article>
+    </section>
+    <footer>Galeria działa lokalnie i nie łączy się z Firebase ani z kontami rodziny. Nie wykonano push, wdrożenia Vercel ani publikacji Firebase.</footer>
+  </main>
+  <dialog aria-labelledby="preview-dialog-title">
+    <div class="dialog-header">
+      <h2 id="preview-dialog-title"></h2>
+      <button type="button" aria-label="Zamknij powiększenie">×</button>
+    </div>
+    <div class="dialog-image"><img alt=""></div>
+  </dialog>
+  <script>
+    const cards = document.querySelectorAll('.preview-card');
+    document.querySelectorAll('[data-filter]').forEach(button => {
+      button.addEventListener('click', () => {
+        document.querySelectorAll('[data-filter]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+        cards.forEach(card => { card.hidden = button.dataset.filter !== 'all' && card.dataset.category !== button.dataset.filter; });
+      });
+    });
+    const dialog = document.querySelector('dialog');
+    const preview = dialog.querySelector('img');
+    const title = dialog.querySelector('h2');
+    document.querySelectorAll('[data-image]').forEach(button => {
+      const thumbnail = button.querySelector('img');
+      thumbnail.addEventListener('error', () => { thumbnail.hidden = true; button.querySelector('.missing').hidden = false; button.disabled = true; });
+      button.addEventListener('click', () => {
+        if (typeof dialog.showModal !== 'function') { window.open(button.dataset.image, '_blank', 'noopener'); return; }
+        preview.src = button.dataset.image;
+        preview.alt = button.dataset.title;
+        title.textContent = button.dataset.title;
+        dialog.showModal();
+      });
+    });
+    dialog.querySelector('button').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  </script>
+</body>
+</html>

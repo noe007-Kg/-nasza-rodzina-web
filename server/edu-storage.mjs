@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { EduServerError, getServerFirebase } from './edu-auth.mjs';
 import { decryptSession, encryptSession } from './edu-secrets.mjs';
+import { persistSchoolNotificationChanges, schoolNotificationBaselineRef } from './school-notifications.mjs';
+import { schoolSyncSlotStart, schoolSyncSlotConsumed } from './edu-school-slots.mjs';
 
 const CONNECTIONS = '_eduConnections';
 const SCHOOL_PEOPLE = new Set(['Paweł', 'Nikodem', 'Layla']);
@@ -80,11 +82,33 @@ function timestampMillis(value) {
 }
 
 async function removeExpiredConnection(ref, observed, services) {
-  await services.db.runTransaction(async (transaction) => {
+  await markConnectionNeedsReconnect(ref.id || ref.path.split('/').at(-1), { sessionVersion: observed.sessionVersion }, services);
+}
+
+/** Preserve a safe reconnect state without retaining an unusable session.
+ * An old request must never invalidate a newer parent reconnect. A provider
+ * rejection may invalidate a live session only while its matching lease owns it.
+ */
+export async function markConnectionNeedsReconnect(uid, { sessionVersion, leaseId, errorCode = 'EDU_SESSION_EXPIRED' } = {}, services = getServerFirebase()) {
+  if (typeof sessionVersion !== 'string' || !sessionVersion) return false;
+  if (!['EDU_SESSION_EXPIRED', 'EDU_SESSION_INVALID'].includes(errorCode)) throw new EduServerError('EDU_INVALID_REQUEST', 400, 'Nieprawidłowy stan sesji dziennika.');
+  const ref = connectionRef(uid, services);
+  const scope = scopeContext(uid, services);
+  return services.db.runTransaction(async (transaction) => {
     const current = await transaction.get(ref);
-    // A reconnect in another tab must not be deleted by an older status request.
-    if (current.exists && current.data().sessionVersion === observed.sessionVersion
-      && timestampMillis(current.data().expiresAt) <= Date.now()) transaction.delete(ref);
+    const data = current.exists ? current.data() : null;
+    if (!data || data.sessionVersion !== sessionVersion) return false;
+    assertStoredScope(data, scope);
+    const expired = !Number.isFinite(timestampMillis(data.expiresAt)) || timestampMillis(data.expiresAt) <= Date.now();
+    const ownsLease = leaseId && data.lease?.id === leaseId && timestampMillis(data.lease?.expiresAt) > Date.now();
+    // A misconfigured Functions key must not erase a valid Vercel session.
+    if (!expired && !ownsLease) return false;
+    transaction.update(ref, {
+      reconnectRequired: true, lastErrorCode: errorCode,
+      expiresAt: Timestamp.fromMillis(0), envelope: FieldValue.delete(), lease: FieldValue.delete(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return true;
   });
 }
 
@@ -207,7 +231,9 @@ export async function getConnectionStatus(uid, services = getServerFirebase()) {
   assertStoredScope(data, scope);
   if (!Number.isFinite(timestampMillis(data.expiresAt)) || timestampMillis(data.expiresAt) <= Date.now()) {
     await removeExpiredConnection(ref, data, services);
-    return { connected: false, state: 'expired', expired: true, profiles: [], students: [], selectedStudent: null };
+    return { connected: false, state: 'expired', expired: true, reconnectRequired: true,
+      lastErrorCode: ['EDU_SESSION_EXPIRED', 'EDU_SESSION_INVALID'].includes(data.lastErrorCode) ? data.lastErrorCode : 'EDU_SESSION_EXPIRED',
+      profiles: [], students: [], selectedStudent: null };
   }
   return publicStatus(data, scope);
 }
@@ -227,7 +253,7 @@ export async function selectConnectionStudent(uid, selection, services = getServ
     const changed = data.selectedStudent?.profileId !== selectedStudent.profileId || data.selectedStudent?.personKey !== selectedStudent.personKey;
     transaction.update(ref, {
       selectedStudent, updatedAt: FieldValue.serverTimestamp(),
-      ...(changed ? { lastSuccessfulSyncAt: FieldValue.delete(), lastSyncAttemptAt: FieldValue.delete(), lastErrorCode: FieldValue.delete(), counts: FieldValue.delete(), warnings: FieldValue.delete() } : {}),
+      ...(changed ? { lastSuccessfulSyncAt: FieldValue.delete(), lastSyncAttemptAt: FieldValue.delete(), lastScheduledSchoolSlotAt: FieldValue.delete(), lastErrorCode: FieldValue.delete(), counts: FieldValue.delete(), warnings: FieldValue.delete() } : {}),
     });
     if (!scope.legacy && scope.scope === 'family') {
       const student = students.find((profile) => profile.id === selectedStudent.profileId);
@@ -315,22 +341,47 @@ export async function acquireSyncLease(uid, services = getServerFirebase()) {
   const scope = scopeContext(uid, services);
   const leaseId = randomUUID();
   const expiresAt = Date.now() + LEASE_MS;
+  const scheduledInterval = services.scheduledSyncIntervalMs;
+  const schoolSlotStart = services.scheduledSchoolSlotStartMs;
+  if (scheduledInterval !== undefined && ![10 * 60000, 60 * 60000].includes(scheduledInterval)) {
+    throw new EduServerError('EDU_INVALID_REQUEST', 400, 'Nieprawidłowy odstęp zaplanowanej synchronizacji.');
+  }
+  if (schoolSlotStart !== undefined && (!Number.isSafeInteger(schoolSlotStart) || scheduledInterval !== 10 * 60000
+    || schoolSyncSlotStart(schoolSlotStart) !== schoolSlotStart || schoolSlotStart > Date.now()
+    || schoolSyncSlotStart(Date.now()) === null)) {
+    throw new EduServerError('EDU_INVALID_REQUEST', 400, 'Nieprawidłowy termin zaplanowanej synchronizacji.');
+  }
   await services.db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     const data = snapshot.exists ? snapshot.data() : null;
     if (!data || timestampMillis(data.expiresAt) <= Date.now()) throw new EduServerError('EDU_NOT_CONNECTED', 409, 'Najpierw połącz konto eduVULCAN.');
     assertStoredScope(data, scope);
     await assertStudentBinding(transaction, services, scope);
+    if (schoolSlotStart !== undefined && (schoolSlotStart > Date.now() || schoolSyncSlotStart(Date.now()) === null)) {
+      throw new EduServerError('EDU_INVALID_REQUEST', 400, 'Termin dziennej synchronizacji nie należy do godzin szkolnych.');
+    }
     if (!data.selectedStudent) throw new EduServerError('EDU_SELECT_STUDENT', 409, 'Najpierw wybierz ucznia.');
     normalizeSelection(data.selectedStudent, scopedStudents(data.students, scope), scope);
     if (timestampMillis(data.lease?.expiresAt) > Date.now()) throw new EduServerError('EDU_SYNC_BUSY', 409, 'Synchronizacja jest już uruchomiona.');
     const lastSuccessfulSync = timestampMillis(data.lastSuccessfulSyncAt);
     const lastAttempt = timestampMillis(data.lastSyncAttemptAt);
+    // The preliminary scheduler check is only an optimization. Claim the
+    // daytime slot atomically with the shared lease; preserve the hourly gate.
+    const scheduledClock = Number.isFinite(lastAttempt) ? lastAttempt : lastSuccessfulSync;
+    const scheduledCooldown = schoolSlotStart !== undefined
+      ? schoolSyncSlotConsumed(schoolSlotStart, timestampMillis(data.lastScheduledSchoolSlotAt), scheduledClock)
+      : scheduledInterval !== undefined && Number.isFinite(scheduledClock) && Date.now() - scheduledClock < scheduledInterval;
+    if (scheduledCooldown) {
+      throw new EduServerError('EDU_SYNC_COOLDOWN', 429, 'Zaplanowana synchronizacja była wykonana niedawno.');
+    }
     if ((Number.isFinite(lastSuccessfulSync) && Date.now() - lastSuccessfulSync < COOLDOWN_MS)
       || (Number.isFinite(lastAttempt) && Date.now() - lastAttempt < 30000)) {
       throw new EduServerError('EDU_SYNC_COOLDOWN', 429, 'Odczekaj przed kolejną synchronizacją. Dane odświeżamy najwyżej co 5 minut.');
     }
-    transaction.update(ref, { lease: { id: leaseId, expiresAt: Timestamp.fromMillis(expiresAt) }, lastSyncAttemptAt: FieldValue.serverTimestamp() });
+    transaction.update(ref, { lease: { id: leaseId, expiresAt: Timestamp.fromMillis(expiresAt) },
+      lastSyncAttemptAt: FieldValue.serverTimestamp(),
+      ...(schoolSlotStart !== undefined ? { lastScheduledSchoolSlotAt: Timestamp.fromMillis(schoolSlotStart) } : {}),
+    });
   });
   return { leaseId, expiresAt: new Date(expiresAt).toISOString() };
 }
@@ -468,8 +519,10 @@ export async function upsertSchoolItems(uid, input, services = getServerFirebase
     assertStoredScope(connection.data(), scope);
     await assertStudentBinding(transaction, services, scope);
     normalizeSelection(selected, scopedStudents(connection.data().students, scope), scope);
+    const baseline = await transaction.get(schoolNotificationBaselineRef(services.db, uid, selected.profileId, selected.personKey));
     const allRefs = [...refs, ...deleteCandidates];
     const existing = allRefs.length ? await transaction.getAll(...allRefs) : [];
+    const changes = [];
     added = 0;
     updated = 0;
     deleted = 0;
@@ -481,6 +534,7 @@ export async function upsertSchoolItems(uid, input, services = getServerFirebase
         throw new EduServerError('EDU_IMPORT_CONFLICT', 409, 'Istniejący wpis lokalny blokuje import. Nie został nadpisany.');
       }
       if (previous) updated += 1; else added += 1;
+      changes.push({ collection: entry.collection, id: entry.id, before: previous, after: entry.data });
       transaction.set(refs[index], {
         ...entry.data, createdBy: previous?.createdBy || scope.actorUid,
         createdAt: previous?.createdAt || FieldValue.serverTimestamp(),
@@ -491,10 +545,14 @@ export async function upsertSchoolItems(uid, input, services = getServerFirebase
       const snapshot = existing[refs.length + index];
       // Re-read provenance and range inside the guarded transaction.
       if (snapshot.exists && matchesReconcileScope(snapshot.data(), input, scopes, scope)) {
+        changes.push({ collection: 'schoolItems', id: ref.id || ref.path.split('/').at(-1), before: snapshot.data(), after: null });
         transaction.delete(ref);
         deleted += 1;
       }
     });
+    persistSchoolNotificationChanges(transaction, services.db, { connectionId: uid, profileId: selected.profileId,
+      personKey: selected.personKey, leaseId: input.leaseId, baseline, changes, notificationReadyTypes: input.notificationReadyTypes,
+      timetableRange: scopes.find((reconcile) => reconcile.type === 'lesson') });
   });
   return { added, updated, deleted, total: entries.length, messages: entries.filter((entry) => ['schoolParentMessages', 'schoolStudentMessages'].includes(entry.collection)).length };
 }

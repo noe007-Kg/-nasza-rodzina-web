@@ -29,6 +29,11 @@ async function goTo(page: Page, module: Module) {
   else if (module !== 'Start') await expect(page.locator('.page-header h1')).toHaveText(module);
 }
 
+async function logout(page: Page) {
+  await goTo(page, 'Ustawienia');
+  await page.getByRole('button', { name: 'Wyloguj', exact: true }).click();
+}
+
 function modal(page: Page) { return page.locator('.modal-card'); }
 function taskRow(page: Page, title: string) { return page.locator('.task-row').filter({ hasText: title }); }
 function shoppingRow(page: Page, title: string) { return page.locator('.shopping-row').filter({ hasText: title }); }
@@ -57,8 +62,8 @@ test('logowanie, błędne hasło i wylogowanie', async ({ page }) => {
   await page.getByRole('button', { name: 'Zaloguj się', exact: true }).click();
   await expect(page.locator('.app-shell')).toBeVisible();
   await goTo(page, 'Ustawienia');
-  await expect(page.locator('.settings-profile')).toContainText('Sebastian');
-  await page.getByRole('button', { name: 'Wyloguj', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Konto i logowanie', exact: true })).toBeVisible();
+  await logout(page);
   await expect(page.getByRole('button', { name: 'Zaloguj się', exact: true })).toBeVisible();
 });
 
@@ -125,7 +130,7 @@ test('zadanie: dziecko zgłasza wykonanie, rodzic zatwierdza i punkty są trwał
   await expect(childTask).toHaveClass(/pending/);
   expect((await fixtureDatabase().doc('tasks/child-approval').get()).data()?.done).toBe(false);
 
-  await page.getByRole('button', { name: 'Wyloguj', exact: true }).click();
+  await logout(page);
   await login(page);
   await goTo(page, 'Zadania');
   await taskRow(page, 'Wynieść śmieci — test zatwierdzania').getByRole('button', { name: /Zatwierdź/ }).click();
@@ -206,7 +211,7 @@ test('szkoła: dodanie oceny przez rodzica i dziecko widzi własny plan', async 
   await schoolDialog.getByRole('button', { name: 'Zapisz wpis', exact: true }).click();
   await expect(schoolDialog).toHaveCount(0);
   await expect(page.locator('.school-record-list')).toContainText('Przyroda E2E');
-  await page.getByRole('button', { name: 'Wyloguj', exact: true }).click();
+  await logout(page);
   await login(page, accounts.child);
   await goTo(page, 'Szkoła');
   await expect(page.locator('.school-record-list')).toContainText('Przyroda Nikodema');
@@ -238,7 +243,7 @@ test('zdrowie: dokument PDF zapisuje się w Storage i poufne dokumenty są niewi
   const fileResponse = page.waitForResponse((response) => response.url().includes(':9199/') && response.request().method() === 'GET');
   await page.locator('.document-row').filter({ hasText: 'Wynik Nikodema E2E' }).getByRole('button', { name: 'Otwórz', exact: true }).click();
   expect((await fileResponse).ok()).toBe(true);
-  await page.getByRole('button', { name: 'Wyloguj', exact: true }).click();
+  await logout(page);
   await expect(page.getByRole('button', { name: 'Zaloguj się', exact: true })).toBeVisible();
   await login(page, accounts.child);
   await goTo(page, 'Zdrowie');

@@ -183,6 +183,7 @@ test('explicit SP4 sync reads current detailed/descriptive grades, dated plan, c
   const { data, requests, profile } = await connectAndRead();
   assert.deepEqual(data.counts, { grades: 3, lessons: 2, homework: 1, tests: 1, messages: 1 });
   assert.deepEqual(data.warnings, []);
+  assert.deepEqual(data.notificationReadyTypes, ['grade', 'lesson', 'homework', 'test', 'message']);
   assert.deepEqual(data.range, { dateFrom: '2026-09-24', dateTo: '2026-10-22', assignmentsTo: '2026-10-31' });
   assert.equal(data.session.currentProfileId, profile.id);
   assert.equal(data.session.journal.key, SCHOOL_KEY);
@@ -220,6 +221,7 @@ test('a failed timetable or malformed grade section warns and cannot reconcile a
   assert.deepEqual(data.reconcileScopes, []);
   assert.ok(data.warnings.some((warning) => warning.startsWith('Plan lekcji:')));
   assert.ok(data.warnings.some((warning) => warning.startsWith('Oceny:')));
+  assert.deepEqual(data.notificationReadyTypes, ['homework', 'test', 'message']);
 });
 
 test('one failed detail is skipped rather than overwriting cached homework/message with an empty body', async () => {
@@ -234,6 +236,16 @@ test('one failed detail is skipped rather than overwriting cached homework/messa
   assert.ok(data.warnings.some((warning) => warning.startsWith('Zadania i sprawdziany:')));
   assert.ok(data.warnings.some((warning) => warning.startsWith('Treść wiadomości:')));
   assert.ok(data.reconcileScopes.every((scope) => ['grade', 'lesson'].includes(scope.type)));
+  assert.deepEqual(data.notificationReadyTypes, ['grade', 'lesson']);
+});
+
+test('valid empty grade and mailbox snapshots mark those notification baselines ready', async () => {
+  const { data } = await connectAndRead({ override: (url) => {
+    if (url.pathname.endsWith('/Oceny')) return json({ ocenyPrzedmioty: [] });
+    if (url.pathname.endsWith('/OdebraneSkrzynka')) return json([]);
+  } });
+  assert.equal(data.counts.grades, 0); assert.equal(data.counts.messages, 0);
+  assert.ok(data.notificationReadyTypes.includes('grade')); assert.ok(data.notificationReadyTypes.includes('message'));
 });
 
 test('missing message body field fails that detail, while an explicit empty attachment-only body is accepted', async () => {

@@ -1,0 +1,19 @@
+{
+  "name": "nasza-rodzina-notifications",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "engines": { "node": "22" },
+  "scripts": {
+    "build": "node ../scripts/prepare-functions.mjs",
+    "check": "node ../scripts/prepare-functions.mjs --check",
+    "test": "node --test ../tests/edu-functions-package.test.mjs ../tests/notification-*.test.mjs"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "firebase-admin": "^13.5.0",
+    "firebase-functions": "^6.6.0",
+    "google-auth-library": "^11.1.0",
+    "tough-cookie": "^6.0.2"
+  }
+}

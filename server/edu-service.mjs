@@ -3,9 +3,10 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { EduServerError } from './edu-auth.mjs';
 import { resolveConnectionAccess } from './edu-access.mjs';
 import { encryptionConfigured } from './edu-secrets.mjs';
-import { acquireSyncLease, disconnectConnection, getConnectionStatus, loadConnection, releaseSyncLease, retireLegacyParentConnections, saveConnection, selectConnectionStudent, updateConnectionSession, upsertSchoolItems } from './edu-storage.mjs';
+import { acquireSyncLease, disconnectConnection, getConnectionStatus, loadConnection, markConnectionNeedsReconnect, releaseSyncLease, retireLegacyParentConnections, saveConnection, selectConnectionStudent, updateConnectionSession, upsertSchoolItems } from './edu-storage.mjs';
 import { connectProvider, readProviderData } from './edu-provider.mjs';
 import { expectFields } from './edu-http.mjs';
+import { safelyFlushSchoolNotifications } from './school-notifications.mjs';
 
 function requireConfigured() {
   if (!encryptionConfigured()) throw new EduServerError('EDU_NOT_CONFIGURED', 503, 'Administrator musi skonfigurować szyfrowanie integracji na serwerze.');
@@ -39,7 +40,11 @@ async function loginLease({ uid, connection, db }) {
 export async function statusAction(context) {
   context = await accessContext(context);
   requireConfigured();
-  return { status: { configured: true, scope: context.connection.scope, accountRole: context.connection.accountRole, ...await getConnectionStatus(context.connection.id, context) } };
+  const status = { configured: true, scope: context.connection.scope, accountRole: context.connection.accountRole, ...await getConnectionStatus(context.connection.id, context) };
+  // Foreground status checks also retry any already saved school notification
+  // batch. This does not call the provider or change the successful sync time.
+  const notifications = await safelyFlushSchoolNotifications(context);
+  return { status, notifications };
 }
 
 export async function connectAction(context, body) {
@@ -64,23 +69,33 @@ export async function selectAction(context, body) {
   return statusAction(context);
 }
 
-export async function syncAction(context, body) {
+export async function syncAction(context, body, { readData = readProviderData } = {}) {
   context = await accessContext(context);
   requireConfigured(); expectFields(body, []);
   const id = context.connection.id;
   const lease = await acquireSyncLease(id, context);
-  let success = false; let errorCode;
+  let success = false; let errorCode; let sessionVersion;
   try {
     const connection = await loadConnection(id, context);
+    sessionVersion = connection.sessionVersion;
     const { profileId, personKey } = connection.selectedStudent;
-    const data = await readProviderData(connection.session, profileId, { includeMessages: context.connection.scope === 'family' });
+    const data = await readData(connection.session, profileId, { includeMessages: context.connection.scope === 'family' });
     await updateConnectionSession(id, data.session, { sessionVersion: connection.sessionVersion, leaseId: lease.leaseId }, context);
     const saved = await upsertSchoolItems(id, { profileId, personKey, items: data.items,
-      sessionVersion: connection.sessionVersion, leaseId: lease.leaseId, reconcileScopes: data.reconcileScopes || [] }, context);
+      sessionVersion: connection.sessionVersion, leaseId: lease.leaseId, reconcileScopes: data.reconcileScopes || [],
+      notificationReadyTypes: data.notificationReadyTypes || [] }, context);
     success = true;
     await releaseSyncLease(id, lease.leaseId, { success, counts: data.counts, warnings: data.warnings }, context);
-    return { ...await statusAction(context), sync: { ...saved, counts: data.counts, warnings: data.warnings } };
-  } catch (error) { errorCode = error instanceof EduServerError ? error.code : 'EDU_SYNC_FAILED'; throw error; }
+    const result = await statusAction(context);
+    const warnings = [...(data.warnings || []), ...(result.notifications.warning ? [result.notifications.warning] : [])];
+    return { ...result, sync: { ...saved, counts: data.counts, warnings, notifications: result.notifications } };
+  } catch (error) {
+    errorCode = error instanceof EduServerError ? error.code : 'EDU_SYNC_FAILED';
+    if (sessionVersion && ['EDU_SESSION_EXPIRED', 'EDU_SESSION_INVALID'].includes(errorCode)) {
+      await markConnectionNeedsReconnect(id, { sessionVersion, leaseId: lease.leaseId, errorCode }, context);
+    }
+    throw error;
+  }
   finally { if (!success) await releaseSyncLease(id, lease.leaseId, { success, errorCode }, context); }
 }
 

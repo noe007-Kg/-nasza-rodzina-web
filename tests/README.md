@@ -1,5 +1,7 @@
 # Testy lokalne
 
+**Bieżąca wersja: 1.6.0 z harmonogramem Functions i dostarczaniem IN-APP.** Produkcyjny harmonogram wymaga Firebase Functions/Cloud Scheduler i Blaze, ale lokalne testy ich nie wdrażają ani nie wymagają planu rozliczeniowego. FCM i VAPID nadal nie są wymagane; E2E sprawdza start bez żądania zgody systemowej i rejestracji tokenu FCM. Testy dawnych helperów push są regresją nieaktywnego kodu. Aktualny raport: [EDUVULCAN_FUNCTIONS_HARMONOGRAM.md](../docs/EDUVULCAN_FUNCTIONS_HARMONOGRAM.md).
+
 Testy korzystające z Firebase używają wyłącznie projektu `demo-nasza-rodzina` i lokalnych emulatorów. Testy jednostkowe i backendu pracują na danych syntetycznych. Nie używaj identyfikatora produkcyjnego projektu ani kont rodziny podczas testów.
 
 ```sh
@@ -44,3 +46,38 @@ Scenariusze organizera zastępują pogodę Open-Meteo. Logowanie, Firestore, Sto
 Konta testowe: `sebastian@example.test`, `dominika@example.test`, `nikodem@example.test`, `pawel@example.test`. Wspólne hasło fixture: `FamilyTest!2026`. Konto `inactive@example.test` ma wyłączony dostęp rodzinny. Te konta są tworzone tylko w emulatorze i nie powinny być tworzone na produkcji.
 
 Po niepowodzeniu Playwright zapisuje zrzut ekranu i trace w `test-results/`. Raport HTML znajduje się w `playwright-report/`; otworzysz go poleceniem `npx playwright show-report`.
+
+## Powiadomienia IN-APP i aktywacja eduVULCAN
+
+Nowe scenariusze sprawdzają próg co najmniej 60 minut od ostatniej **udanej** synchronizacji przy uruchomieniu/logowaniu i powrocie do foreground. Zmiana modułu nie pobiera dziennika. Ręczna synchronizacja pozostaje z istniejącym rate-limitem serwera; brak ważnej sesji nie uruchamia obejścia logowania.
+
+Testy serwera sprawdzają inicjalizację baseline bez starej historii, nowe i zmienione oceny, wiadomości, zadania, sprawdziany, semantyczne zmiany planu, pomijanie metadanych, stabilne ID i deduplikację. Zapis inbox jest admin-only; dziecko nie dostaje prywatnych alertów wiadomości rodzica. Browser sprawdza dzwonek, centrum, ★, preferencje dźwięku oraz działanie bez VAPID, Functions i `Notification.requestPermission`.
+
+Baseline szkolny jest sprawdzany także po częściowym pobraniu: sekcja z błędem nie inicjalizuje swojej historii, późniejsza pierwsza poprawna historia jest cicha, a poprawna pusta lista inicjalizuje baseline i pozwala rozpoznać następny nowy wpis. To różnica między brakiem danych a nieudanym odczytem.
+
+Testy planu odróżniają przesunięcie zakresu pobrania od rzeczywistej zmiany we wcześniej potwierdzonym oknie. Nowy zakres historii nie powoduje serii starych alertów; nowy lub zmieniony wpis w znanym zakresie jest rozpoznawany.
+
+Testy nie używają produkcyjnej sesji eduVULCAN ani danych rodziny. Zastąpienie odpowiedzi portalu lub API w przeglądarce jest jawne i nie stanowi dowodu rzeczywistego pobrania konta SP4. Wyniki poprzedniego wariantu IN-APP pozostają w [raporcie historycznym](../docs/PAKIET_1.6.0_RAPORT.md); aktualny etap harmonogramu ma [osobny raport](../docs/EDUVULCAN_FUNCTIONS_HARMONOGRAM.md).
+
+## Harmonogram Firebase Functions i natychmiastowy czat
+
+Lokalne przygotowanie kanonicznego serwera dla Functions i testy tego etapu, bez deploymentu:
+
+```sh
+npm ci --prefix functions
+npm run test:functions
+```
+
+`npm run test:server` ma `pretest:server`, który uruchamia ten sam generator `scripts/prepare-functions.mjs`. Powstaje kontrolowany artefakt `functions/server/`, zgodny bajtowo z `server/*.mjs`; testy pakowania sprawdzają importy, zależności, manifest, brak symlinków/kluczy prywatnych oraz zachowanie istniejących reguł i emulatorów. Nie edytuj wygenerowanych modułów ręcznie.
+
+`tests/edu-scheduler.test.mjs` sprawdza dwa crony, `Europe/Warsaw` i DST, 10/60 minut od startu próby, fallback dla starego rekordu bez czasu próby, timeout/budżet, opóźnione wywołania, lease, wygaśnięcie i ograniczony scope. Czas zakończenia udanego pobrania nie może podwoić kadencji; dotychczasowy frontendowy próg 60 minut od sukcesu pozostaje osobnym testem. Ręczny pięciominutowy rate-limit nadal obowiązuje.
+
+`tests/notification-functions.test.mjs` sprawdza zdarzeniowy trigger czatu, deduplikację także z Vercel refresh, prywatne rozmowy, uprawnienia uczniów/rodziców, semantyczne zmiany szkolne, baseline i wspólny dziennik importu. `tests/functions-runtime.test.mjs` sprawdza kontrakty rzeczywistych eksportów Firebase SDK: dwa crony, Secret Manager binding istniejącego klucza, timeout krótszy od lease, utworzenie `familyMessages`, zachowane `medicineReminders` co 5 minut i brak aktywnego `deliverPush`.
+
+Rzeczywista lokalna integracja Firestore, zaszyfrowanych sesji, lease, wspólnego sync i eksportowanego handlera `notifyChat.run`:
+
+```sh
+npx firebase emulators:exec --only auth,firestore,storage --project demo-nasza-rodzina "node --test --test-concurrency=1 tests/edu-storage.integration.mjs tests/notification-inapp.integration.mjs tests/edu-scheduler.integration.mjs"
+```
+
+Ta komenda korzysta tylko z emulatorów i syntetycznej sesji. Nowy `edu-scheduler.integration.mjs` sprawdza konkurencję w prawdziwych transakcjach, wygaśnięcie/odrzucenie sesji bez logowania hasłem, baseline/deduplikację oraz natychmiastowy wpis po wywołaniu rzeczywistego eksportu `notifyChat`. Nie uruchamia Cloud Scheduler/Eventarc w chmurze, nie loguje się do konta rodziny i nie tworzy sekretów produkcyjnych. Uruchamiaj ją kolejno względem Rules i E2E, które także resetują bazę emulatora.

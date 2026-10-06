@@ -41,11 +41,45 @@
           "value": "nosniff"
         }
       ]
+    },
+    {
+      "source": "/api/account/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, private, max-age=0"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
+    },
+    {
+      "source": "/api/notifications/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, private, max-age=0"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
     }
   ],
   "functions": {
     "api/eduvulcan/*.mjs": {
       "maxDuration": 60,
+      "includeFiles": "server/**"
+    },
+    "api/account/*.mjs": {
+      "maxDuration": 30,
+      "includeFiles": "server/**"
+    },
+    "api/notifications/*.mjs": {
+      "maxDuration": 30,
       "includeFiles": "server/**"
     }
   }

@@ -1,0 +1,28 @@
+html:root .top-header.family-top-header { position:sticky; top:0; z-index:90; display:flex; align-items:center; gap:10px; min-height:70px; height:auto; padding:7px 20px; background:var(--brand-card,#fff); box-shadow:0 3px 16px rgb(124 92 252 / 5%); border-bottom:1px solid #eee5f3; }
+.family-top-profiles { display:flex; align-items:center; gap:8px; flex:1; min-width:0; max-width:100%; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:thin; }
+.family-top-profile { display:flex; align-items:center; gap:9px; flex:0 0 auto; min-width:0; min-height:52px; padding:5px 13px 5px 7px; border:1px solid transparent; border-radius:16px; background:transparent; color:#171b4b; text-align:left; }
+.family-top-profile.is-current { border-color:#f3c3df; background:#fff1f7; }
+.family-top-avatar { position:relative; display:grid; place-items:center; flex:0 0 40px; width:40px; height:40px; border:2px solid #f1e6ff; border-radius:50%; background:#f6f1ff; font-size:25px; overflow:hidden; }
+.is-current .family-top-avatar { border-color:#e83e9f; }
+.family-top-avatar img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+.family-top-avatar img[hidden] { display:none; }
+.family-top-copy { display:grid; gap:4px; min-width:0; }
+.family-top-profile .family-top-copy strong { font-size:12px; font-weight:800; white-space:nowrap; }
+.family-top-copy small { font-size:10px; line-height:1.2; color:#766987; white-space:nowrap; }
+.family-top-profile:focus-visible { outline:2px solid #7c5cfc; outline-offset:1px; }
+html:root .family-menu .sidebar-brand { display:flex; flex-direction:column; align-items:center; gap:8px; padding:4px 0 17px; margin-bottom:12px; min-height:unset; text-align:center; }
+html:root .family-menu .menu-brand-logo { width:84px; height:84px; flex:none; }
+html:root .family-menu .brand-copy strong { display:block; font-size:26px; line-height:.98; }
+html:root .family-menu .brand-copy small { display:block; margin-top:9px; font-size:10px; font-style:italic; line-height:1.4; }
+.family-menu .brand-heart { display:block; margin-top:2px; color:#d92a8a; font-size:19px; line-height:1; }
+.family-sidebar-footer { margin-top:auto; padding:13px 7px 3px; border-top:1px solid #eee5f3; color:#766987; font-size:10px; }
+.settings-logout { display:flex; align-items:center; justify-content:center; gap:9px; min-height:48px; margin-top:24px; padding:12px 20px; border:1px solid #edb6bd; border-radius:16px; background:#fff1f3; color:#b12b45; font:inherit; font-weight:750; }
+.settings-logout svg { width:21px; height:21px; }
+@media(max-width:1024px) { html:root .family-menu .menu-brand-logo { width:70px; height:70px; } html:root .family-menu .brand-copy strong { font-size:23px; } }
+@media(max-width:700px), (max-width:1024px) and (max-height:500px) { html:root .top-header.family-top-header { padding:5px 9px; min-height:62px; gap:5px; } .family-top-profile { min-height:46px; gap:6px; padding:4px 9px 4px 4px; border-radius:13px; } .family-top-avatar { width:35px; height:35px; flex-basis:35px; font-size:22px; } .family-top-profile .family-top-copy strong { font-size:11px; } .family-top-copy small { font-size:9px; } }
+html[data-theme="dark"] .family-top-profile { color:var(--brand-ink); }
+html[data-theme="dark"] .family-top-profile.is-current { background:var(--brand-primary-soft); }
+
+.menu-app-version { display:flex; justify-content:space-between; gap:8px; margin-top:auto; padding:12px 4px 0; border-top:1px solid #eee5f3; color:#766987; font-size:10px; }
+.family-selection-note { display:flex; flex-wrap:wrap; gap:12px; align-items:center; font-size:13px; color:#766987; }
+.settings-dashboard > .family-ui { min-width:0; }
