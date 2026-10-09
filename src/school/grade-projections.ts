@@ -26,6 +26,15 @@ export interface GradeMetadata {
 
 export interface GradeDistributionEntry { label: string; count: number }
 
+const POLISH_CARDINAL = new Intl.PluralRules('pl');
+
+/** Distribution size is the number of distinct literal marks, not grade rows. */
+export function gradeDistributionCountLabel(count: number): string {
+  const category = POLISH_CARDINAL.select(count);
+  const label = category === 'one' ? 'rodzaj' : category === 'few' ? 'rodzaje' : 'rodzajów';
+  return `${count} ${label} oznaczeń`;
+}
+
 export interface SchoolGradeContext<T extends SchoolGradeRecord = SchoolGradeRecord> {
   key: string;
   subject: string;

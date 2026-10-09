@@ -61,6 +61,70 @@ test('Oceny pokazują prawdziwe liczby, ostatnie pięć cząstkowych i osobne po
   await expect(dashboard).not.toContainText('Średnia klasy');
 });
 
+test('Ostatnie oceny rozwijają wszystkie i zwijają do pięciu bez ponownego zapytania do dziennika', async ({ page }) => {
+  await school(page); await page.getByTestId('school-stat-grades').click();
+  const latest = page.getByTestId('school-latest-grades');
+  await expect(latest.locator('[data-testid="school-grade-entry"]')).toHaveCount(5);
+  await expect(latest.locator('[data-testid="school-grade-entry"]').first()).toHaveAttribute('data-grade-id', 'grade-ui-6');
+  const diaryRequests: string[] = [];
+  page.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/eduvulcan/')) diaryRequests.push(request.url()); });
+  const expand = latest.getByRole('button', { name: 'Pokaż wszystkie: Ostatnie oceny', exact: true });
+  await expect(expand).toHaveText('Pokaż wszystkie (9)');
+  await expect(expand).toHaveAttribute('aria-expanded', 'false');
+  await expand.click();
+  await expect(latest.locator('[data-testid="school-grade-entry"]')).toHaveCount(9);
+  const collapse = latest.getByRole('button', { name: 'Zwiń listę: Ostatnie oceny', exact: true });
+  await expect(collapse).toHaveText('Zwiń listę');
+  await expect(collapse).toHaveAttribute('aria-expanded', 'true');
+  await expect(latest).not.toContainText('Ocena okresowa: 5');
+  await expect(latest.locator('[data-testid="school-grade-entry"]').last()).toHaveAttribute('data-grade-id', 'grade-ui-0');
+  await collapse.click();
+  await expect(latest.locator('[data-testid="school-grade-entry"]')).toHaveCount(5);
+  expect(diaryRequests).toEqual([]);
+  await expand.click();
+  await page.locator('.school-students').getByRole('button', { name: 'Paweł', exact: true }).click();
+  await expect(page.getByTestId('school-latest-grades').locator('[data-testid="school-grade-entry"]')).toHaveCount(5);
+  await page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true }).click();
+  await expect(page.getByTestId('school-latest-grades').locator('[data-testid="school-grade-entry"]')).toHaveCount(5);
+});
+
+test('Ostatnie oceny z pięcioma wpisami nie pokazują zbędnego rozwijania ani domyślnej wagi', async ({ page }) => {
+  const db = fixtureDatabase(); const batch = db.batch();
+  for (let index = 0; index < 4; index++) batch.delete(db.doc(`schoolItems/grade-ui-${index}`));
+  await batch.commit();
+  await school(page); await page.getByTestId('school-stat-grades').click();
+  const latest = page.getByTestId('school-latest-grades');
+  await expect(latest.locator('[data-testid="school-grade-entry"]')).toHaveCount(5);
+  await expect(latest.getByRole('button', { name: /Pokaż wszystkie|Zwiń listę/ })).toHaveCount(0);
+  const noWeight = latest.locator('[data-grade-id="grade-ui-points"]');
+  await expect(noWeight).not.toContainText('Waga w dzienniku');
+  await noWeight.click();
+  const dialog = page.getByRole('dialog', { name: 'Szczegóły oceny', exact: true });
+  await expect(dialog).toContainText('Muzyka');
+  await expect(dialog).toContainText('8/10 pkt');
+  await expect(dialog).toContainText('Drugi nauczyciel');
+  await expect(dialog).not.toContainText('Waga w dzienniku');
+});
+
+test('Statystyki rozróżniają czternaście ocen od pięciu rodzajów, zachowując oryginalne 5+ i +', async ({ page }) => {
+  const db = fixtureDatabase(); const original = (await db.doc('schoolItems/grade-ui-0').get()).data()!;
+  const batch = db.batch();
+  for (const record of (await db.collection('schoolItems').where('person', '==', 'Nikodem').where('type', '==', 'grade').get()).docs) batch.delete(record.ref);
+  const labels = ['5', '5+', '+', '4', 'Samodzielnie pracuje'];
+  for (let index = 0; index < 14; index++) batch.set(db.doc(`schoolItems/grade-ui-count-${index}`), {
+    ...original, title: labels[index % labels.length], date: movedDay(index - 13), sourceRecordId: sourceId('grade', 1_000 + index), note: '',
+  });
+  await batch.commit();
+  await school(page); await page.getByTestId('school-stat-grades').click();
+  await expect(page.locator('.school-grade-summary')).toContainText('14');
+  const distribution = page.getByTestId('school-grade-distribution');
+  await expect(distribution.locator('.school-list-section-heading > span')).toHaveText('5 rodzajów oznaczeń');
+  await expect(distribution.locator('li')).toHaveCount(5);
+  await expect(distribution.locator('li > span')).toHaveText(['+', '4', '5', '5+', 'Samodzielnie pracuje']);
+  await expect(distribution).not.toContainText('5 wpisów');
+  await expect(page.getByTestId('school-grades-dashboard')).not.toContainText('Średnia z dziennika');
+});
+
 test('Przedmiot: pięć najnowszych, rozwiń/zwiń oraz szczegóły oceny z prawdziwą wagą zero', async ({ page }) => {
   await school(page); await page.getByTestId('school-stat-grades').click();
   await page.getByTestId('school-grade-subject-card').filter({ hasText: 'Matematyka' }).click();
@@ -74,6 +138,9 @@ test('Przedmiot: pięć najnowszych, rozwiń/zwiń oraz szczegóły oceny z praw
   const latest = grades.locator('[data-grade-id="grade-ui-6"]'); await latest.click();
   const dialog = page.getByRole('dialog', { name: 'Szczegóły oceny', exact: true });
   await expect(dialog).toContainText('6'); await expect(dialog).toContainText('Nauczyciel testowy');
+  await expect(dialog).toContainText('Matematyka');
+  await expect(dialog).toContainText('Sprawdzian — dostępna notatka');
+  await expect(dialog.locator('.school-detail > div').filter({ hasText: 'Data' }).first().locator('dd')).not.toBeEmpty();
   await expect(dialog.locator('.school-detail > div').filter({ hasText: 'Waga w dzienniku' }).first().locator('dd')).toHaveText('0');
   await expect(dialog.getByRole('button', { name: /Edytuj|Usuń/ })).toHaveCount(0);
   await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0); await expect(latest).toBeFocused();

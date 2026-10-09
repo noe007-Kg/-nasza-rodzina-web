@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { gradeDistribution, groupSchoolGrades, isPeriodGrade, latestPartialGrades,
+import { gradeDistribution, gradeDistributionCountLabel, groupSchoolGrades, isPeriodGrade, latestPartialGrades,
   parseGradeMetadata, sortGradesNewest, type SchoolGradeRecord } from '../src/school/grade-projections.ts';
 
 const hash = 'a'.repeat(64);
@@ -81,6 +81,14 @@ test('literal metadata preserves zero weight and does not infer values from pros
   assert.equal(prose.teacher, undefined);
   assert.equal(prose.weight, undefined);
   assert.equal(prose.portalAverage, undefined);
+});
+
+test('missing and ambiguous weights are absent while an explicit source zero remains a literal value', () => {
+  for (const note of ['', 'Nauczyciel: Anna', 'Waga w dzienniku:', 'Waga w dzienniku: 0\nWaga w dzienniku: 1']) {
+    assert.equal(parseGradeMetadata(note).weight, undefined);
+  }
+  assert.equal(parseGradeMetadata('Waga w dzienniku: 0').weight, '0');
+  assert.equal(parseGradeMetadata('Waga w dzienniku: 0\nWaga w dzienniku: 0').weight, '0');
 });
 
 test('identical source averages with different decimal notation remain unambiguous', () => {
@@ -210,6 +218,27 @@ test('distribution counts original textual grades without plus/minus, points or 
     grade('period', { sourceRecordId: `grade-period:sha256:${hash}`, title: 'Ocena okresowa: 5' })]);
   assert.deepEqual(Object.fromEntries(distribution.map(({ label, count }) => [label, count])),
     { '4+': 2, '4': 1, '5-': 1, '8/10 pkt': 1, 'Samodzielnie wykonuje zadania': 1 });
+});
+
+test('fourteen marks with five literal kinds report distinct kinds separately from grade count', () => {
+  const labels = ['5', '5+', '+', '4', 'Samodzielnie pracuje'];
+  const rows = Array.from({ length: 14 }, (_, index) => grade(`kind-${index}`, { title: labels[index % labels.length] }));
+  const distribution = gradeDistribution(rows);
+  assert.equal(distribution.reduce((count, entry) => count + entry.count, 0), 14);
+  assert.equal(distribution.length, 5);
+  assert.equal(gradeDistributionCountLabel(distribution.length), '5 rodzajów oznaczeń');
+  assert.deepEqual(new Set(distribution.map(entry => entry.label)), new Set(labels));
+  assert.equal(groupSchoolGrades(rows)[0].portalAverage, null);
+});
+
+test('distinct mark-kind count uses Polish singular, few and many forms', () => {
+  const expected = new Map([
+    [0, '0 rodzajów oznaczeń'], [1, '1 rodzaj oznaczeń'], [2, '2 rodzaje oznaczeń'],
+    [4, '4 rodzaje oznaczeń'], [5, '5 rodzajów oznaczeń'], [12, '12 rodzajów oznaczeń'],
+    [21, '21 rodzajów oznaczeń'], [22, '22 rodzaje oznaczeń'], [24, '24 rodzaje oznaczeń'],
+    [25, '25 rodzajów oznaczeń'], [101, '101 rodzajów oznaczeń'], [112, '112 rodzajów oznaczeń'],
+  ]);
+  for (const [count, label] of expected) assert.equal(gradeDistributionCountLabel(count), label);
 });
 
 test('statistics count the complete list beyond one hundred records without fabricating a mean', () => {

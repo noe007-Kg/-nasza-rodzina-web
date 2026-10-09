@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Icon, SecondaryButton, StatusPill } from '../ui';
 import { SchoolExpandableList } from './SchoolExpandableList';
-import { gradeDistribution, groupSchoolGrades, isPeriodGrade, latestPartialGrades, parseGradeMetadata, sortGradesNewest, type SchoolGradeRecord } from './grade-projections';
+import { gradeDistribution, gradeDistributionCountLabel, groupSchoolGrades, isPeriodGrade, parseGradeMetadata, sortGradesNewest, type SchoolGradeRecord } from './grade-projections';
 import { validSchoolDate } from '../school-import';
 import './grades.css';
 
@@ -25,6 +25,7 @@ function GradeRow<T extends SchoolGradeRecord>({ record, onOpen }: { record: T; 
 export function SchoolGrades<T extends SchoolGradeRecord>({ records, resetKey, onOpen }: { records: readonly T[]; resetKey: string; onOpen: (record: T) => void }) {
   const subjects = useMemo(() => groupSchoolGrades(records), [records]);
   const partials = useMemo(() => records.filter(record => !isPeriodGrade(record)), [records]);
+  const newestPartials = useMemo(() => sortGradesNewest(partials), [partials]);
   const periods = useMemo(() => sortGradesNewest(records.filter(isPeriodGrade)), [records]);
   const distribution = useMemo(() => gradeDistribution(partials), [partials]);
   const [selection, setSelection] = useState<{ key: string; subject: string | null }>({ key: resetKey, subject: null });
@@ -46,8 +47,8 @@ export function SchoolGrades<T extends SchoolGradeRecord>({ records, resetKey, o
       <span className="school-grade-subject-title"><strong>{subject.subject || 'Bez przedmiotu'}</strong><Icon name="chevron-right" /></span><span className="school-grade-subject-values">{subject.partial.slice(0, 5).map(record => <span key={record.id}>{record.title || 'Bez oznaczenia'}</span>)}</span>
       <span className="school-grade-subject-caption">{subject.partial.length} ocen / wyników{subject.period.length ? ` · ${subject.period.length} okresowych` : ''}</span>{subject.portalAverage !== null && <small>Średnia z dziennika: {subject.portalAverage}</small>}
     </button>)}</div></section>
-    {partials.length > 0 && <section className="school-latest-grades" aria-labelledby="school-latest-grades-title"><div className="school-list-section-heading"><h3 id="school-latest-grades-title">Ostatnie oceny</h3><span>5 najnowszych</span></div><div className="school-expandable-items">{latestPartialGrades(partials).map(renderGrade)}</div></section>}
+    <SchoolExpandableList key={`${resetKey}:latest`} items={newestPartials} title="Ostatnie oceny" resetKey={`${resetKey}:latest`} renderItem={renderGrade} className="school-latest-grades" testId="school-latest-grades" countLabel={`${partials.length} ocen / wyników`} collapseLabel="Zwiń listę" />
     <SchoolExpandableList key={`${resetKey}:period`} items={periods} title="Oceny okresowe" resetKey={`${resetKey}:period`} renderItem={renderGrade} testId="school-grade-periods" />
-    <section className="school-grade-statistics" aria-labelledby="school-grade-statistics-title"><div className="school-list-section-heading"><h3 id="school-grade-statistics-title">Statystyki</h3><span>{partials.length} ocen / wyników</span></div><p>Rozkład zapisanych oznaczeń, bez przeliczania plusów, minusów i wyników opisowych.</p><SchoolExpandableList key={`${resetKey}:distribution`} asList items={distribution} title="Rozkład oznaczeń" resetKey={`${resetKey}:distribution`} className="school-statistics-distribution" testId="school-grade-distribution" renderItem={item => <li key={item.label}><span>{item.label || 'Bez oznaczenia'}</span><strong>{item.count}</strong></li>} /><p className="school-grades-footnote">Średnią pokazujemy tylko wtedy, gdy dziennik podał ją jednoznacznie dla jednego przedmiotu i okresu.</p></section>
+    <section className="school-grade-statistics" aria-labelledby="school-grade-statistics-title"><div className="school-list-section-heading"><h3 id="school-grade-statistics-title">Statystyki</h3><span>{partials.length} ocen / wyników</span></div><p>Rozkład zapisanych oznaczeń, bez przeliczania plusów, minusów i wyników opisowych.</p><SchoolExpandableList key={`${resetKey}:distribution`} asList items={distribution} title="Rozkład oznaczeń" resetKey={`${resetKey}:distribution`} className="school-statistics-distribution" testId="school-grade-distribution" countLabel={gradeDistributionCountLabel(distribution.length)} renderItem={item => <li key={item.label}><span>{item.label || 'Bez oznaczenia'}</span><strong>{item.count}</strong></li>} /><p className="school-grades-footnote">Średnią pokazujemy tylko wtedy, gdy dziennik podał ją jednoznacznie dla jednego przedmiotu i okresu.</p></section>
   </div>;
 }
