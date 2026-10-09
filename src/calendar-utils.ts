@@ -203,6 +203,9 @@ export function occurrenceIndex(event: RecurringEvent, date: Date): number {
 }
 
 function occurrenceEnd(event: RecurringEvent, date: Date) {
+  // A single event already has exact start/end instants. Reconstructing its
+  // wall clock through the device zone can change duration at a device DST gap.
+  if (event.repeat === 'none') return new Date(date.getTime() + event.endDate.getTime() - event.date.getTime());
   const originalStart = civilDate(event.date, event.timeZone), originalEnd = civilDate(event.endDate, event.timeZone);
   const local = civilDate(date, event.timeZone);
   const result = addDays(local, calendarDayNumber(originalEnd) - calendarDayNumber(originalStart));

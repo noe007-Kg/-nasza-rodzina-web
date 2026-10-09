@@ -52,7 +52,7 @@ const grades = () => ({ ustawienia: { isOcenaOpisowa: true, isSrednia: false }, 
 const plan = () => [{ data: '2026-10-01T00:00:00', godzinaOd: '2026-10-01T08:00:00', godzinaDo: '2026-10-01T08:45:00', przedmiot: 'Matematyka', prowadzacy: 'Anna', sala: '4', adnotacja: 1 },
   { data: '2026-10-01T00:00:00', godzinaOd: '2026-10-01T08:00:00', godzinaDo: '2026-10-01T08:45:00', przedmiot: 'Język polski', prowadzacy: 'Jan', sala: '5', adnotacja: 2 }];
 
-function recordedPortal({ override = () => undefined, showCaptcha = false, nonce = 'one' } = {}) {
+function recordedPortal({ override = () => undefined, showCaptcha = false, nonce = 'one', clock = () => NOW } = {}) {
   const requests = [];
   const fetchImpl = async (input, init) => {
     const url = new URL(input); const headers = new Headers(init.headers);
@@ -152,7 +152,7 @@ function recordedPortal({ override = () => undefined, showCaptcha = false, nonce
     if (url.hostname === 'dziennik-logowanie.vulcan.net.pl') return html(federation('https://wiadomosci.eduvulcan.pl/kolobrzeg/AccountLogin'));
     throw new Error(`Unexpected synthetic route: ${request.method} ${url.href}`);
   };
-  return { provider: createEduProvider({ fetchImpl, clock: () => NOW }), requests };
+  return { provider: createEduProvider({ fetchImpl, clock }), requests };
 }
 
 async function connectAndRead(options) {
@@ -365,4 +365,73 @@ test('student school synchronization never visits a parent mailbox even when par
   assert.ok(result.warnings.some((warning) => warning.includes('osobistego konta ucznia')));
   assert.equal(requests.some((request) => request.host === 'wiadomosci.eduvulcan.pl'
     || /Skrzynki|OdebraneSkrzynka|WiadomoscSzczegoly/.test(request.path)), false);
+});
+
+test('the provider exposes the actual validated Context time and persists rotated Set-Cookie state for the next read', async () => {
+  let now = NOW; let contexts = 0;
+  const fixture = recordedPortal({ clock: () => now, override: (url, request) => {
+    if (url.pathname.endsWith('/Context')) {
+      contexts += 1;
+      if (contexts === 2) assert.match(request.headers.get('cookie'), /renewed_school=synthetic-rotation-1/);
+      now += 1000;
+      return json(context(), { cookies: [`renewed_school=synthetic-rotation-${contexts}; Path=/; Secure; HttpOnly`] });
+    }
+    if (url.pathname.endsWith('/PlanZajec')) {
+      assert.match(request.headers.get('cookie'), new RegExp(`renewed_school=synthetic-rotation-${contexts}`));
+      now += 20000;
+    }
+    return undefined;
+  } });
+  const connected = await fixture.provider.connectProvider({ login: LOGIN, password: PASSWORD });
+  const profile = connected.profiles.find(entry => entry.schoolName === 'SP 4 Kołobrzeg');
+  assert.equal(connected.sessionConfirmedAt, undefined, 'Profile discovery alone must not confirm a school read');
+  const afterLogin = fixture.requests.length;
+  const first = await fixture.provider.readProviderData(connected.session, profile.id);
+  assert.equal(first.sessionConfirmedAt, NOW + 1000);
+  assert.ok(first.sessionConfirmedAt < now, 'Confirmation records the real Context read, not import/completion time');
+  assert.equal(first.session.cookieJar.cookies.find(cookie => cookie.key === 'renewed_school').value, 'synthetic-rotation-1');
+  const beforeSecond = now;
+  const second = await fixture.provider.readProviderData(first.session, profile.id);
+  assert.equal(second.sessionConfirmedAt, beforeSecond + 1000);
+  assert.equal(second.session.cookieJar.cookies.find(cookie => cookie.key === 'renewed_school').value, 'synthetic-rotation-2');
+  assert.equal(fixture.requests.slice(afterLogin).some(request => request.body.includes(PASSWORD) || request.fields.has('UserName')), false);
+  assert.equal(Object.hasOwn(second, 'expiresAt'), false, 'Opaque cookies do not prove any invented provider deadline');
+});
+
+test('401, 403, rate limiting and a 200 login page after Context cannot return a confirmed read or submit credentials', async () => {
+  for (const variant of [401, 403, 429, 'login-html']) {
+    const fixture = recordedPortal({ override: url => {
+      if (!url.pathname.endsWith('/PlanZajec')) return undefined;
+      return variant === 'login-html' ? html(loginPage()) : html('Synthetic denied response', { status: variant });
+    } });
+    const connected = await fixture.provider.connectProvider({ login: LOGIN, password: PASSWORD });
+    const profile = connected.profiles.find(entry => entry.schoolName === 'SP 4 Kołobrzeg');
+    const afterLogin = fixture.requests.length;
+    await assert.rejects(fixture.provider.readProviderData(connected.session, profile.id), error => {
+      assert.equal(Object.hasOwn(error, 'sessionConfirmedAt'), false);
+      assert.equal(Object.hasOwn(error, 'session'), false);
+      return error.code === (variant === 429 ? 'EDU_RATE_LIMITED' : 'EDU_SESSION_EXPIRED');
+    });
+    assert.equal(fixture.requests.slice(afterLogin).some(request => request.body.includes(PASSWORD) || request.fields.has('UserName')), false);
+  }
+});
+
+test('an expired provider operation budget cannot turn an earlier Context response into session renewal', async () => {
+  let now = NOW;
+  const fixture = recordedPortal({ clock: () => now, override: url => {
+    if (url.pathname.endsWith('/Context')) {
+      now += 60000;
+      return json(context(), { cookies: ['late_cookie=synthetic-late-rotation; Path=/; Secure; HttpOnly'] });
+    }
+    return undefined;
+  } });
+  const connected = await fixture.provider.connectProvider({ login: LOGIN, password: PASSWORD });
+  const profile = connected.profiles.find(entry => entry.schoolName === 'SP 4 Kołobrzeg');
+  const afterLogin = fixture.requests.length;
+  await assert.rejects(fixture.provider.readProviderData(connected.session, profile.id), error => {
+    assert.equal(Object.hasOwn(error, 'session'), false);
+    assert.equal(Object.hasOwn(error, 'sessionConfirmedAt'), false);
+    return error.code === 'EDU_UPSTREAM_TIMEOUT';
+  });
+  assert.equal(fixture.requests.slice(afterLogin).some(request => request.body.includes(PASSWORD) || request.fields.has('UserName')), false);
 });

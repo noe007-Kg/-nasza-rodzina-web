@@ -1,0 +1,51 @@
+.school-record-list { gap: 20px; }
+.school-expandable-section, .school-latest-grades, .school-grade-subjects, .school-grade-statistics { min-width: 0; display: grid; gap: 11px; }
+.school-list-section-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.school-list-section-heading h3 { margin: 0; color: var(--family-text); font-size: 14px; line-height: 1.5; }
+.school-list-section-heading > span { font-size: 11px; color: var(--family-muted); }
+.school-expandable-items { display: grid; gap: 9px; min-width: 0; }
+.school-expand-toggle { justify-self: start; margin-top: 2px; }
+.school-grades { display: grid; gap: 23px; min-width: 0; }
+.school-grades-heading { display: flex; align-items: flex-start; gap: 13px; justify-content: space-between; }
+.school-grades-heading > div { flex: 1; min-width: 0; }
+.school-grades-heading h3 { font-size: 24px; line-height: 1.25; color: var(--family-text); margin: 0; overflow-wrap: anywhere; }
+.school-grades-heading p { margin: 5px 0 0; color: var(--family-muted); font-size: 12px; line-height: 1.6; }
+.school-grades-total { display: grid; justify-items: center; min-width: 68px; flex: 0 0 auto; padding: 9px 13px; border: 1px solid #eee1f0; border-radius: 17px; color: var(--family-ink-rose); background: var(--family-soft-rose); }
+.school-grades-total strong { font-size: 30px; line-height: 1; }
+.school-grades-total small { font-size: 10px; margin-top: 5px; }
+.school-grade-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.school-grade-summary > span { display: grid; gap: 5px; padding: 13px 10px; border: 1px solid var(--family-line); border-radius: 15px; background: var(--family-soft-violet); color: var(--family-muted); font-size: 11px; line-height: 1.4; }
+.school-grade-summary b { color: var(--family-text); font-size: 20px; line-height: 1; }
+.school-grade-entry { align-items: flex-start; }
+.school-grade-value { display: grid; place-items: center; min-width: 48px; max-width: 45%; padding: 9px; flex: 0 1 auto; border-radius: 13px; background: var(--family-soft-gold); color: var(--family-ink-gold); font-size: 20px; line-height: 1.3; font-weight: 800; overflow-wrap: anywhere; }
+.school-grade-entry .school-entry-copy { align-self: center; }
+.school-grade-entry .school-entry-copy > small:not(.school-source-badge) { font-size: 10px; color: var(--family-muted); }
+.school-grade-entry .school-entry-arrow { align-self: center; }
+.school-grade-subject-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; min-width: 0; }
+.school-grade-subject-card { display: grid; gap: 12px; width: 100%; min-width: 0; padding: 16px; border: 1px solid var(--family-line); border-radius: 19px; background: var(--family-soft-violet); color: var(--family-text); text-align: left; font: inherit; }
+.school-grade-subject-card.grade-tone-1 { background: var(--family-soft-blue); }
+.school-grade-subject-card.grade-tone-2 { background: var(--family-soft-mint); }
+.school-grade-subject-card.grade-tone-3 { background: var(--family-soft-gold); }
+.school-grade-subject-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.school-grade-subject-title strong { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.school-grade-subject-title .family-icon { flex: 0 0 15px; width: 15px; height: 15px; color: var(--family-muted); }
+.school-grade-subject-values { display: flex; gap: 5px; flex-wrap: wrap; min-width: 0; }
+.school-grade-subject-values > span { padding: 6px 7px; border: 1px solid #ffffffc0; border-radius: 9px; background: #ffffffb3; color: var(--family-text); font-size: 16px; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+.school-grade-subject-caption, .school-grade-subject-card > small { color: var(--family-muted); font-size: 10px; line-height: 1.5; }
+.school-grade-statistics { padding: 16px; border: 1px solid var(--family-line); border-radius: 18px; background: var(--family-background); }
+.school-grade-statistics > p { margin: 0; color: var(--family-muted); font-size: 11px; line-height: 1.6; }
+.school-grade-statistics ul { display: flex; align-items: stretch; flex-wrap: wrap; gap: 7px; padding: 0; margin: 0; list-style: none; }
+.school-grade-statistics li { display: flex; align-items: center; gap: 10px; max-width: 100%; min-width: 0; padding: 7px 10px; border-radius: 11px; border: 1px solid var(--family-line); background: var(--family-surface); color: var(--family-text); font-size: 12px; }
+.school-grade-statistics li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.school-grade-statistics li > strong { flex: 0 0 auto; color: var(--family-ink-violet); }
+.school-grades-footnote { color: var(--family-muted); font-size: 11px; line-height: 1.6; margin: 0; }
+.school-subject-detail > .family-button { justify-self: start; }
+@container school (max-width: 520px) {
+  .school-grade-subject-card { padding: 12px; border-radius: 16px; gap: 9px; }
+  .school-grade-subject-title strong { font-size: 12px; }
+  .school-grade-subject-values > span { font-size: 14px; padding: 5px; }
+  .school-grade-summary { gap: 6px; }
+  .school-grade-summary > span { padding: 10px 7px; font-size: 10px; }
+  .school-grade-value { max-width: 42%; min-width: 40px; font-size: 18px; padding: 7px; }
+  .school-grades-heading h3 { font-size: 21px; }
+}

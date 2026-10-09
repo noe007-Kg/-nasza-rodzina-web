@@ -205,3 +205,38 @@ test('a private chat participant removed after the query gets no alert from the 
   } });
   assert.equal(result.created, 0); assert.equal(data.inbox().length, 0);
 });
+
+test('adult refresh retains own/private membership boundaries and creates general family notifications', async () => {
+  const adult = { role: 'adult', name: 'Dorosły', personKey: 'member-0123456789abcdef01234567', active: true, canLogin: true };
+  const data = database({}, 'own', adult);
+  assert.equal((await refresh(data, 10000)).baselines, 6);
+  data.values.set('tasks/new', task);
+  data.values.set('familyMessages/family', { ...message, createdAt: 11000 });
+  data.values.set('familyMessages/own-private', { ...message, createdAt: 11001, channel: 'private:own:other', participants: ['own', 'other'] });
+  data.values.set('familyMessages/parent-private', { ...message, createdAt: 11002, channel: 'private:a:b', participants: ['a', 'b'] });
+  data.values.set('healthRecords/own', { title: 'Własny lek', person: adult.personKey, privateToParents: false, createdBy: 'other' });
+  data.values.set('healthRecords/parents', { title: 'Tylko rodzice', person: adult.personKey, privateToParents: true, createdBy: 'other' });
+  data.values.set('healthRecords/child', { title: 'Zdrowie dziecka', person: 'Nikodem', privateToParents: false, createdBy: 'other' });
+  data.values.set('privateCalendarEvents/own', { title: 'Własny wpis', ownerUid: 'own', createdBy: 'other', private: true });
+  data.values.set('privateCalendarEvents/other', { title: 'Cudzy wpis', ownerUid: 'other', createdBy: 'other', private: true });
+  data.values.set('schoolParentMessages/school', { title: 'Skrzynka rodziców', person: adult.personKey });
+  data.values.set('schoolStudentMessages/school', { title: 'Skrzynka ucznia', sourceOwnerUid: 'own', person: adult.personKey });
+  assert.equal((await refresh(data, 12000)).created, 5);
+  assert.deepEqual(data.inbox().map(value => value.category).sort(), ['calendar', 'familyChat', 'health', 'privateChat', 'tasks']);
+  assert.equal((await refresh(data, 14000)).created, 0);
+  assert.ok(data.reads.filter(value => value.path === 'healthRecords').every(value => value.clauses.some(([field, , value]) => field === 'privateToParents' && value === false)));
+  assert.ok(!data.reads.some(value => value.path.startsWith('school')));
+});
+
+test('fresh archived profiles cannot refresh or receive an already queued notification', async () => {
+  const data = database();
+  await refresh(data, 10000);
+  data.values.set('tasks/new', task);
+  const result = await refresh(data, 12000, { enqueue: async (context, events, options) => {
+    data.values.set('members/own', { ...parent, active: true, canLogin: true, archived: true });
+    return enqueueInAppEvents(context, events, options);
+  } });
+  assert.equal(result.created, 0);
+  assert.equal(data.inbox().length, 0);
+  await assert.rejects(refresh(data, 14000), { code: 'EDU_MEMBER_REQUIRED' });
+});

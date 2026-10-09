@@ -25,7 +25,7 @@ const archivedUid = 'inapp-integration-archived';
 const profile = { id: 'inapp-integration-sp4', studentName: 'Testowy uczeń', schoolName: 'Szkoła testowa', schoolSymbol: 'SP4' };
 const context = {
   ...services, uid: parentUid, profile: { role: 'parent', active: true, canLogin: true },
-  connection: { id: 'family', scope: 'family', accountRole: 'parent', actorUid: parentUid, allowedPersonKeys: ['Paweł', 'Nikodem'] },
+  connection: { id: 'family', scope: 'family', accountRole: 'parent', actorUid: parentUid, allowedPersonKeys: ['Nikodem'], personProfileIds: { Nikodem: childUid } },
 };
 const session = { v: 1, cookieJar: { cookies: [] }, profiles: [profile] };
 const row = (type, externalId, title) => ({ type, externalId, title, date: '2026-10-03', subject: 'Przedmiot testowy' });

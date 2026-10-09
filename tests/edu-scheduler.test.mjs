@@ -10,7 +10,9 @@ import { EduServerError } from '../server/edu-auth.mjs';
 const NOW = Date.parse('2026-10-05T08:00:00Z'); // 10:00 Warsaw, CEST
 const identity = { studentName: 'Synthetic student', schoolName: 'Synthetic school', schoolSymbol: 'TEST' };
 const parent = { role: 'parent', active: true, canLogin: true };
-const child = { role: 'child', active: true, canLogin: true, personKey: 'Nikodem' };
+const child = { role: 'child', active: true, canLogin: true, personKey: 'Nikodem', schoolEnabled: true };
+const passiveChild = { ...child, canLogin: false };
+const dynamicPerson = 'member-0123456789abcdef01234567';
 
 function storedConnection(changes = {}) {
   return {
@@ -22,7 +24,7 @@ function storedConnection(changes = {}) {
   };
 }
 
-function fakeDatabase({ members = { 'parent-a': parent, 'parent-b': parent }, connections = { family: storedConnection() },
+function fakeDatabase({ members = { 'parent-a': parent, 'parent-b': parent, 'school-nikodem': passiveChild }, connections = { family: storedConnection() },
   bindings = { Nikodem: { identity } } } = {}) {
   const data = { members, _eduConnections: connections, _eduStudentBindings: bindings };
   const reads = [];
@@ -38,6 +40,7 @@ function fakeDatabase({ members = { 'parent-a': parent, 'parent-b': parent }, co
         where(field, operator, value) {
           assert.equal(operator, '==');
           return { limit(limit) { return { get: async () => {
+            reads.push(`${collection}?${field}=${value}&limit=${limit}`);
             const docs = Object.keys(data[collection] || {}).filter((id) => data[collection][id][field] === value)
               .slice(0, limit).map((id) => document(collection, id));
             return { docs, size: docs.length };
@@ -115,6 +118,7 @@ test('daytime run calls the existing syncAction entry point once with its canoni
   assert.equal(result.calls[0].context.profile.role, 'parent');
   assert.equal(result.calls[0].context.scheduledSyncIntervalMs, EDU_DAY_INTERVAL_MS);
   assert.equal(result.calls[0].context.scheduledSchoolSlotStartMs, NOW);
+  assert.deepEqual({ ...result.calls[0].context.connection.personProfileIds }, { Nikodem: 'school-nikodem' });
   assert.deepEqual(result.calls[0].body, {});
   assert.doesNotMatch(JSON.stringify({ connection: result.calls[0].context.connection, body: result.calls[0].body }),
     /password|login|ciphertext|synthetic-encrypted-envelope/);
@@ -279,17 +283,116 @@ test('a slow connection leaves provider budget for the next cron instead of over
 test('canonical family and parent-approved student scopes are used; legacy UID sessions are never inspected', async () => {
   const studentId = studentConnectionId('child-a');
   const db = fakeDatabase({ members: { 'parent-a': parent, 'parent-b': { ...parent, active: false }, 'child-a': child,
-    'child-unbound': { ...child, personKey: 'Paweł' }, 'child-baby': { ...child, personKey: 'Unknown' } },
+    'child-unbound': { ...child, personKey: 'Paweł' }, 'child-baby': { ...child, personKey: 'Unknown', schoolEnabled: false } },
   connections: { family: storedConnection(), 'parent-a': storedConnection(),
     [studentId]: storedConnection({ scope: 'student', accountRole: 'student', connectedByUid: 'child-a' }) } });
   const result = await run(db);
   assert.equal(result.calls.length, 2); assert.equal(result.calls[0].context.uid, 'parent-a');
   assert.equal(result.calls[1].context.connection.id, studentId);
   assert.equal(result.calls[1].context.connection.scope, 'student');
+  assert.deepEqual(result.calls[1].context.connection.personProfileIds, { Nikodem: 'child-a' });
   assert.deepEqual(result.calls[1].context.connection.allowedStudentIdentity, identity);
   assert.equal(db.reads.includes('_eduConnections/parent-a'), false);
   assert.equal(db.reads.includes(`_eduConnections/${studentConnectionId('child-unbound')}`), false);
   assert.doesNotMatch(JSON.stringify(result.summary), /parent-a|child-a|Nikodem|profile-school|Synthetic/);
+});
+
+test('a passive dynamic child is a valid family Scheduler target without login or an individual student session', async () => {
+  const profileUid = 'profile-new-school-child';
+  const db = fakeDatabase({ members: {
+    'parent-a': parent, [profileUid]: { ...passiveChild, name: 'Nowe dziecko bez konta', personKey: dynamicPerson },
+  }, connections: { family: storedConnection({ selectedStudent: { profileId: 'profile-school', personKey: dynamicPerson } }) }, bindings: {} });
+  const first = await run(db);
+  assert.equal(first.summary.synced, 1);
+  assert.equal(first.calls.length, 1);
+  assert.deepEqual(first.calls[0].context.connection.allowedPersonKeys, [dynamicPerson]);
+  assert.deepEqual({ ...first.calls[0].context.connection.personProfileIds }, { [dynamicPerson]: profileUid });
+  assert.equal(first.calls[0].context.uid, 'parent-a');
+  assert.equal(db.reads.includes(`_eduConnections/${studentConnectionId(profileUid)}`), false);
+  assert.equal(db.reads.includes(`_eduStudentBindings/${dynamicPerson}`), false);
+  const repeated = await run(db);
+  assert.equal(repeated.calls.length, 0);
+  assert.equal(repeated.summary.codes.EDU_SYNC_COOLDOWN, 1);
+  assert.doesNotMatch(JSON.stringify(first.summary), /Nowe dziecko|profile-new-school-child|member-012345/);
+});
+
+test('family Scheduler does not infer eligible pupils from names after their profiles are removed or school is disabled', async () => {
+  for (const members of [
+    { 'parent-a': parent },
+    { 'parent-a': parent, 'school-child': { ...passiveChild, schoolEnabled: false } },
+    { 'parent-a': parent, 'school-child': { ...passiveChild, archived: true } },
+    { 'parent-a': parent, 'school-child': { ...passiveChild, active: false } },
+    { 'parent-a': parent, 'school-child': { ...passiveChild, disabled: true } },
+  ]) {
+    const db = fakeDatabase({ members });
+    const result = await run(db);
+    assert.equal(result.calls.length, 0);
+    assert.equal(result.summary.codes.EDU_SELECT_STUDENT, 1);
+    assert.equal(result.marks.length, 0);
+    assert.equal(db.data._eduConnections.family.envelope.ciphertext, 'synthetic-encrypted-envelope');
+    assert.equal(db.reads.some(path => path.startsWith('_eduConnections/student_')), false);
+  }
+});
+
+test('the Scheduler preserves a dynamic student own scope and refuses a client-independent binding for another key', async () => {
+  const uid = 'profile-dynamic-student', id = studentConnectionId(uid);
+  const db = fakeDatabase({ members: { [uid]: { ...child, personKey: dynamicPerson } },
+    connections: { [id]: storedConnection({ scope: 'student', accountRole: 'student', connectedByUid: uid,
+      selectedStudent: { profileId: 'profile-school', personKey: dynamicPerson } }) }, bindings: { [dynamicPerson]: { identity } } });
+  const result = await run(db);
+  assert.equal(result.calls.length, 1); assert.equal(result.summary.synced, 1);
+  assert.equal(result.calls[0].context.connection.id, id);
+  assert.deepEqual(result.calls[0].context.connection.allowedPersonKeys, [dynamicPerson]);
+  assert.deepEqual(result.calls[0].context.connection.personProfileIds, { [dynamicPerson]: uid });
+  assert.deepEqual(result.calls[0].context.connection.allowedStudentIdentity, identity);
+  const unbound = fakeDatabase({ members: { [uid]: { ...child, personKey: dynamicPerson } },
+    connections: { [id]: storedConnection({ scope: 'student', accountRole: 'student', connectedByUid: uid }) },
+    bindings: { Nikodem: { identity } } });
+  const denied = await run(unbound);
+  assert.equal(denied.calls.length, 0);
+  assert.equal(unbound.reads.includes(`_eduConnections/${id}`), false);
+});
+
+test('malformed or duplicate active school identities make family scheduling fail closed without provider reads', async () => {
+  for (const roster of [
+    { 'invalid-child': { ...passiveChild, personKey: 'profile-invalid' } },
+    { 'first-child': { ...passiveChild, personKey: dynamicPerson }, 'second-child': { ...passiveChild, personKey: dynamicPerson } },
+  ]) {
+    const db = fakeDatabase({ members: { 'parent-a': parent, ...roster } });
+    let calls = 0;
+    const execute = () => run(db, { syncFn: async () => { calls += 1; } });
+    const result = await execute();
+    assert.equal(result.summary.failed, 1);
+    assert.equal(result.summary.codes.EDU_STUDENT_LINK_REQUIRED, 1);
+    assert.equal(result.summary.synced, 0);
+    assert.equal(result.marks.length, 0);
+    assert.equal(calls, 0);
+  }
+});
+
+test('Scheduler accepts 64 real child profiles and refuses the 65th instead of silently truncating authority', async () => {
+  const firstPerson = 'member-000000000000000000000000';
+  for (const count of [64, 65]) {
+    const children = Object.fromEntries(Array.from({ length: count }, (_, index) => [`profile-school-${index}`, {
+      ...passiveChild, personKey: `member-${index.toString(16).padStart(24, '0')}`,
+    }]));
+    const db = fakeDatabase({ members: { 'parent-a': parent, ...children }, connections: {
+      family: storedConnection({ selectedStudent: { profileId: 'profile-school', personKey: firstPerson } }),
+    } });
+    const result = await run(db);
+    if (count === 64) {
+      assert.equal(result.summary.synced, 1);
+      assert.equal(result.calls.length, 1);
+      assert.equal(result.calls[0].context.connection.allowedPersonKeys.length, 64);
+      assert.equal(Object.keys(result.calls[0].context.connection.personProfileIds).length, 64);
+    } else {
+      assert.equal(result.calls.length, 0);
+      assert.equal(result.summary.synced, 0);
+      assert.equal(result.summary.failed, 1);
+      assert.equal(result.summary.codes.EDU_MEMBER_LIMIT, 1);
+      assert.equal(result.marks.length, 0);
+    }
+  }
 });
 
 test('missing authorization, forged scope and forged selected student fail closed before reading provider data', async () => {

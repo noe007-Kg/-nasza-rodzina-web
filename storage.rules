@@ -6,7 +6,8 @@ service firebase.storage {
     function member() {
       return signedIn() && firestore.exists(/databases/(default)/documents/members/$(request.auth.uid))
         && profile().active == true && profile().canLogin == true
-        && profile().role in ['parent', 'child'];
+        && profile().get('archived', false) == false
+        && profile().role in ['parent', 'adult', 'child'];
     }
     function parent() { return member() && profile().role == 'parent'; }
     function ownPerson() { return profile().personKey; }
@@ -17,6 +18,32 @@ service firebase.storage {
         || person.matches('member-[a-f0-9]{24}'))
         && (visibility == 'parents' && parent()
           || visibility == 'shared' && (parent() || person == ownPerson() || person == 'family'));
+    }
+    function avatarTarget(uid) {
+      return firestore.get(/databases/(default)/documents/members/$(uid)).data;
+    }
+    function avatarEditor(uid) {
+      return member()
+        && firestore.exists(/databases/(default)/documents/members/$(uid))
+        && avatarTarget(uid).get('active', false) == true
+        && avatarTarget(uid).get('archived', false) == false
+        && (uid == request.auth.uid || (parent()
+          && (avatarTarget(uid).get('role', '') == 'child' || avatarTarget(uid).get('canLogin', true) == false)));
+    }
+    function avatarFilename(filename) {
+      return filename.matches('[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\\.(jpg|jpeg|png|webp|gif)');
+    }
+    match /avatars/members/{targetUid}/{uploaderUid}/{filename} {
+      allow read: if member();
+      allow create, update: if uploaderUid == request.auth.uid && avatarEditor(targetUid)
+        && avatarFilename(filename) && request.resource.size <= 5 * 1024 * 1024 && image();
+      allow delete: if avatarEditor(targetUid) && avatarFilename(filename);
+    }
+    match /avatars/family/{uploaderUid}/{filename} {
+      allow read: if member();
+      allow create, update: if parent() && uploaderUid == request.auth.uid
+        && avatarFilename(filename) && request.resource.size <= 5 * 1024 * 1024 && image();
+      allow delete: if parent() && avatarFilename(filename);
     }
     match /quick-products/{uid}/{filename} {
       allow read: if member();

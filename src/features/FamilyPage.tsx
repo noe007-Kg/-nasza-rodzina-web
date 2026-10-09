@@ -1,24 +1,71 @@
-import { addDays, ageFromBirthDate, type CalendarEventData, collection, db, endOfDay, errorMessage, eventActivityIcon, FAMILY_BIRTHDAYS, formatDateInput, formatShortDate, formatTime, generateOccurrences, isPersonKey, isSchoolType, type Member, ModuleHeader, notify, onSnapshot, type Page, parseLocalDate, type PersonKey, personLabel, personRole, schoolQuery, type SchoolRecord, startOfDay, subjectIcon, type TaskItem, useEffect, useMemo, type User, useState } from "../app-shared";
+import { addDays, ageFromBirthDate, type CalendarEventData, collection, db, endOfDay, eventActivityIcon, FAMILY_BIRTHDAYS, formatDateInput, formatShortDate, formatTime, generateOccurrences, isPersonKey, isSchoolType, type Member, ModuleHeader, notify, type Page, parseLocalDate, type PersonKey, personLabel, personRole, schoolQuery, type SchoolRecord, startOfDay, subjectIcon, type TaskItem, useEffect, useMemo, useRef, type User, useState } from "../app-shared";
+import { onSnapshot } from 'firebase/firestore';
 
 import { subscribeCalendar } from '../calendar-store';
 import { useFamilyDirectory } from '../family-directory';
 import { memberPersonKey, memberSchoolEnabled } from '../family-members';
+import { familyAccessDiagnostic, familyAccessErrorMessage, type FamilyQuerySource } from '../family-access-diagnostics';
+import { schoolReadAccess, schoolReadAccessKey, SCHOOL_PROFILE_UNBOUND } from '../school/read-access';
+import { clearNotice } from '../feedback';
+import { ProfileAvatar } from '../account/ProfileSettings';
 
 export function FamilyPage({ user, member, goTo, selected, onSelect }: { user: User; member: Member | null; goTo: (page: Page) => void; selected: PersonKey; onSelect: (person: PersonKey) => void }) {
   const members = useFamilyDirectory().filter(profile => profile.active !== false && !profile.archived && !profile.disabled);
   const [events, setEvents] = useState<CalendarEventData[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [school, setSchool] = useState<SchoolRecord[]>([]);
+  const schoolAccess = schoolReadAccess(member);
+  const schoolScope = schoolReadAccessKey(user.uid, schoolAccess);
+  const [schoolData, setSchoolData] = useState<{ scope: string; rows: SchoolRecord[] }>({ scope: '', rows: [] });
+  // A changed role/person cannot expose even one render of the previous scope.
+  const school = schoolData.scope === schoolScope ? schoolData.rows : [];
+  const currentProfile = useRef(member);
+  currentProfile.current = member;
 
-  useEffect(() => subscribeCalendar(user.uid, setEvents, error => notify(errorMessage(error), 'error')), [user.uid]);
+  function reportQueryError(source: FamilyQuerySource, error: unknown) {
+    const diagnostic = familyAccessDiagnostic(source, error, currentProfile.current);
+    console.warn('[Nasza Rodzina] Data access', diagnostic);
+    notify(familyAccessErrorMessage(diagnostic), 'error', source);
+  }
 
-  useEffect(() => onSnapshot(collection(db,'tasks'), (snap) => {
+  useEffect(() => {
+    const stop = subscribeCalendar(user.uid, (rows, source) => {
+      setEvents(rows);
+      clearNotice(source === 'calendar.shared' ? 'family.calendar.shared' : 'family.calendar.private');
+    }, (error, source) => reportQueryError(source === 'calendar.shared' ? 'family.calendar.shared' : 'family.calendar.private', error));
+    return () => { stop(); clearNotice('family.calendar.shared'); clearNotice('family.calendar.private'); };
+  }, [user.uid]);
+
+  useEffect(() => {
+    const stop = onSnapshot(collection(db,'tasks'), (snap) => {
+    clearNotice('family.tasks');
     setTasks(snap.docs.map((d): TaskItem => { const x=d.data(); return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', done:x.done === true, dueDate:typeof x.dueDate === 'string' ? x.dueDate : '', priority:x.priority === 'low' || x.priority === 'high' ? x.priority : 'normal', note:typeof x.note === 'string' ? x.note : '', points:Number(x.points || 0), requireApproval:x.requireApproval === true, approvalStatus:x.approvalStatus === 'pending' || x.approvalStatus === 'approved' ? x.approvalStatus : 'none', repeat:x.repeat === 'daily' || x.repeat === 'weekly' || x.repeat === 'monthly' ? x.repeat : 'none' }; }));
-  }), []);
+    }, error => { setTasks([]); reportQueryError('family.tasks', error); });
+    return () => { stop(); clearNotice('family.tasks'); };
+  }, [user.uid]);
 
-  useEffect(() => onSnapshot(schoolQuery(member), (snap) => {
-    setSchool(snap.docs.map((d): SchoolRecord => { const x=d.data(); return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'Nikodem', type:isSchoolType(x.type) ? x.type : 'homework', subject:typeof x.subject === 'string' ? x.subject : '', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', endTime:typeof x.endTime === 'string' ? x.endTime : '', weekday:Number(x.weekday || 0), note:typeof x.note === 'string' ? x.note : '' }; }));
-  }), []);
+  useEffect(() => {
+    setSchoolData({ scope: schoolScope, rows: [] });
+    clearNotice('family.school');
+    const target = schoolQuery(member);
+    if (!target) return;
+    let active = true;
+    const stop = onSnapshot(target, (snap) => {
+      if (!active) return;
+      clearNotice('family.school');
+      const rows = snap.docs.flatMap((d): SchoolRecord[] => {
+        const x = d.data();
+        if (!isPersonKey(x.person) || !isSchoolType(x.type)
+          || (schoolAccess?.scope === 'student' && x.person !== schoolAccess.person)) return [];
+        return [{ id:d.id, title:String(x.title || ''), person:x.person, type:x.type, subject:typeof x.subject === 'string' ? x.subject : '', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', endTime:typeof x.endTime === 'string' ? x.endTime : '', weekday:Number(x.weekday || 0), note:typeof x.note === 'string' ? x.note : '' }];
+      });
+      setSchoolData({ scope: schoolScope, rows });
+    }, error => {
+      if (!active) return;
+      setSchoolData({ scope: schoolScope, rows: [] });
+      reportQueryError('family.school', error);
+    });
+    return () => { active = false; stop(); clearNotice('family.school'); };
+  }, [schoolScope]);
 
   const now=new Date(); const today=formatDateInput(now); const weekday=now.getDay() === 0 ? 7 : now.getDay();
   const todayCalendar=useMemo(()=>events.flatMap((e)=>generateOccurrences(e,startOfDay(now),endOfDay(now))).sort((a,b)=>a.date.getTime()-b.date.getTime()), [events, today]);
@@ -46,6 +93,7 @@ export function FamilyPage({ user, member, goTo, selected, onSelect }: { user: U
     <div className="page-content compact-page family-v130">
       <ModuleHeader icon="👨‍👩‍👧‍👦" title="Rodzina" text="Profile, plany i szybki dostęp do informacji każdej osoby." />
       <p className="family-selection-note">Wybierz osobę w górnym pasku, aby zobaczyć jej plan dnia. {selected !== 'family' && <button className="secondary-button" onClick={() => onSelect('family')}>Plan całej rodziny</button>}</p>
+      {member?.role === 'child' && !schoolAccess && <p className="family-selection-note" role="status">{SCHOOL_PROFILE_UNBOUND}</p>}
 
       {selected === 'family' ? <>
         <section className="family-hub-columns">
@@ -54,6 +102,7 @@ export function FamilyPage({ user, member, goTo, selected, onSelect }: { user: U
         </section>
       </> : <>
         <section className="family-profile-hero">
+          {selectedMember && <ProfileAvatar profile={selectedMember} className="profile-photo-preview" />}
           <div className="family-profile-copy"><h2>{selectedMember?.name || personLabel(selected)}</h2><p>{personRole(selected,selectedMember?.role)}{age !== null ? ` · ${age} lat` : ''}</p><span>{statusFor(selected)}</span></div>
           <div className="family-profile-actions"><button onClick={()=>goTo('Kalendarz')}>📅 Plan dnia</button>{isStudent ? <button onClick={()=>goTo('Szkoła')}>🎒 Szkoła</button> : <button onClick={()=>goTo('Kalendarz')}>💼 Praca / aktywności</button>}<button onClick={()=>goTo('Zadania')}>✅ Zadania</button><button onClick={()=>goTo('Zdrowie')}>❤️ Zdrowie</button></div>
         </section>

@@ -111,7 +111,7 @@ export async function refreshInAppNotifications(context, body = {}, options = {}
   try {
     const memberSnapshot = await context.db.collection('members').doc(context.uid).get();
     const profile = memberSnapshot.data();
-    if (!profile || profile.active !== true || profile.canLogin !== true || !['parent', 'child'].includes(profile.role)) {
+    if (!profile || profile.active !== true || profile.canLogin !== true || profile.archived === true || !['parent', 'adult', 'child'].includes(profile.role)) {
       throw new EduServerError('EDU_MEMBER_REQUIRED', 403, 'Konto nie ma już dostępu do aplikacji.');
     }
     const member = { ...profile, id: context.uid };

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useFamilyDirectory } from './family-directory';
 import { legacyFamilyProfiles, memberPersonKey, memberSchoolEnabled } from './family-members';
+import { schoolReadAccess } from './school/read-access';
 import { createRoot } from 'react-dom/client';
 import {
   onAuthStateChanged,
@@ -43,6 +44,9 @@ export type Member = {
   name?: string;
   role?: string;
   photoURL?: string;
+  emoji?: string;
+  avatarPath?: string;
+  avatarSource?: 'google' | 'custom' | 'default';
   active?: boolean;
   canLogin?: boolean;
   schoolEnabled?: boolean;
@@ -89,6 +93,19 @@ export type CalendarEventData = {
   private?: boolean;
   location?: string;
   timeZone?: string;
+  /** Local read-only views; school projections are never written as calendar documents. */
+  source?: 'manual' | 'sp4' | 'google';
+  sourceRecordId?: string;
+  sourceConnectionId?: string;
+  sourceOwnerUid?: string;
+  externalCalendarId?: string;
+  externalEventId?: string;
+  externalSeriesId?: string;
+  sourceStartDate?: string;
+  sourceEndDateExclusive?: string;
+  ownerProfileId?: string;
+  readOnly?: boolean;
+  cancelled?: boolean;
 };
 
 export type CalendarOccurrence = {
@@ -285,7 +302,9 @@ export function ownPerson(member: Member | null | undefined) {
 }
 
 export function schoolQuery(member: Member | null) {
-  return isParent(member) ? collection(db, 'schoolItems') : query(collection(db, 'schoolItems'), where('person', '==', ownPerson(member)));
+  const access = schoolReadAccess(member);
+  if (!access) return null;
+  return access.scope === 'parent' ? collection(db, 'schoolItems') : query(collection(db, 'schoolItems'), where('person', '==', access.person));
 }
 
 function normalizeProduct(value: string) {
@@ -304,12 +323,13 @@ export function ageFromBirthDate(value?: string) {
 }
 
 export function isAdultMember(member: Member | null | undefined) {
-  if (isParent(member) || member?.adult === true) return true;
+  if (isParent(member) || member?.role === 'adult' || member?.adult === true) return true;
   const age = ageFromBirthDate(member?.birthDate);
   return age !== null && age >= 18;
 }
 
 export function personRole(name: string, role?: string) {
+  if (role === 'adult') return 'Dorosły';
   if (role && role !== 'parent' && role !== 'child') return role;
   if (name === 'Sebastian') return 'Tata';
   if (name === 'Dominika') return 'Mama';

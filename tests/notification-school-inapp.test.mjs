@@ -74,7 +74,8 @@ function fixture() {
     lease: { id: 'initial', expiresAt: Timestamp.fromMillis(Date.now() + 120000) },
   });
   const context = { db, uid: 'dominika', profile: records.get('members/dominika'), connection: {
-    id: 'family', scope: 'family', accountRole: 'parent', actorUid: 'dominika', allowedPersonKeys: ['Paweł', 'Nikodem', 'Layla'],
+    id: 'family', scope: 'family', accountRole: 'parent', actorUid: 'dominika', allowedPersonKeys: ['Paweł', 'Nikodem'],
+    personProfileIds: { Nikodem: 'nikodem', Paweł: 'pawel' },
   } };
   let syncNumber = 0;
   async function sync(items, reconcileScopes = [], notificationReadyTypes) {

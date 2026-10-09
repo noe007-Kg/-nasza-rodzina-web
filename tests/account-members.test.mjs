@@ -270,3 +270,39 @@ test('offline activation does not automatically re-enable a disabled existing Au
   assert.equal(context.rows.get('offline').canLogin, false);
   assert.equal(context.calls.some(([kind]) => ['auth-create', 'auth-update', 'profile-update'].includes(kind)), false);
 });
+
+test('an adult profile can exist without an Authentication account but has no parental administration rights', async () => {
+  const context = services();
+  const result = await manageMemberAction(context, { ...definition, role: 'adult' });
+  const profile = context.rows.get(result.memberUid);
+  assert.equal(profile.role, 'adult');
+  assert.equal(profile.adult, true);
+  assert.equal(profile.canLogin, false);
+  assert.equal(context.calls.some(([kind]) => kind.startsWith('auth-')), false);
+  await assert.rejects(manageMemberAction({ ...context, profile: { ...profile, canLogin: true } }, definition), { code: 'ACCOUNT_PARENT_REQUIRED' });
+});
+
+test('role updates keep adult metadata coherent without changing identity, photos or historic metadata', async () => {
+  const context = services({ actor: parent, sibling: { ...child, adult: false, photoURL: '/kept.jpg' } });
+  for (const [role, expected] of [['adult', true], ['parent', true], ['child', false]]) {
+    await manageMemberAction(context, { action: 'update', uid: 'sibling', role, canLogin: true, schoolEnabled: false, active: true });
+    const profile = context.rows.get('sibling');
+    assert.equal(profile.role, role);
+    assert.equal(profile.adult, expected);
+    assert.equal(profile.personKey, child.personKey);
+    assert.equal(profile.photoURL, '/kept.jpg');
+  }
+});
+
+test('archiving an adult preserves its profile and revokes login without deleting Authentication', async () => {
+  const context = services({ actor: parent, sibling: { ...child, role: 'adult', adult: true, photoURL: '/kept.jpg' } });
+  await manageMemberAction(context, { action: 'archive', uid: 'sibling', confirmed: true });
+  const profile = context.rows.get('sibling');
+  assert.equal(profile.archived, true);
+  assert.equal(profile.canLogin, false);
+  assert.equal(profile.active, false);
+  assert.equal(profile.role, 'adult');
+  assert.equal(profile.adult, true);
+  assert.equal(profile.photoURL, '/kept.jpg');
+  assert.deepEqual(context.calls.filter(([kind]) => kind === 'revoke'), [['revoke', 'sibling']]);
+});

@@ -2,14 +2,16 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { test } from 'node:test';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { studentConnectionId } from '../server/edu-access.mjs';
+import { CookieJar } from 'tough-cookie';
+import { resolveConnectionAccess, studentConnectionId } from '../server/edu-access.mjs';
 import { decryptSession } from '../server/edu-secrets.mjs';
 import {
   acquireSyncLease, disconnectConnection, getConnectionStatus, loadConnection,
   prepareImportedSchoolItems, releaseSyncLease, retireLegacyParentConnections,
   saveConnection, selectConnectionStudent, updateConnectionSession, upsertSchoolItems, markConnectionNeedsReconnect,
+  validateConnectionSessionRefresh,
 } from '../server/edu-storage.mjs';
-import { syncAction } from '../server/edu-service.mjs';
+import { statusAction, syncAction } from '../server/edu-service.mjs';
 import { EduServerError } from '../server/edu-auth.mjs';
 
 const pupil = { id: 'nikodem-school', studentName: 'Nikodem Testowy', schoolName: 'Szkoła Podstawowa 4', schoolSymbol: 'SP4' };
@@ -28,7 +30,13 @@ async function withEncryption(action) {
 }
 
 function databaseFixture(initial = {}) {
-  const records = new Map(Object.entries(initial));
+  const records = new Map(Object.entries({
+    'members/parent-dominika': { role: 'parent', active: true, canLogin: true },
+    'members/parent-sebastian': { role: 'parent', active: true, canLogin: true },
+    'members/student-nikodem': { role: 'child', active: true, canLogin: true, personKey: 'Nikodem', schoolEnabled: true },
+    'members/profile-pawel': { role: 'child', active: true, canLogin: false, personKey: 'Paweł', schoolEnabled: true },
+    ...initial,
+  }));
   let writes = 0;
   const snapshot = (ref) => ({ exists: records.has(ref.path), id: ref.path.split('/').at(-1), ref, data: () => records.get(ref.path) });
   const reference = (path) => ({ path, get: async () => snapshot(reference(path)) });
@@ -76,15 +84,16 @@ function databaseFixture(initial = {}) {
 }
 
 function family(fixture, uid = 'parent-dominika') {
-  return { db: fixture.db, uid, profile: { role: 'parent' }, connection: {
-    id: 'family', scope: 'family', accountRole: 'parent', actorUid: uid, allowedPersonKeys: ['Paweł', 'Nikodem', 'Layla'],
+  return { db: fixture.db, uid, profile: { role: 'parent', active: true, canLogin: true }, connection: {
+    id: 'family', scope: 'family', accountRole: 'parent', actorUid: uid, allowedPersonKeys: ['Paweł', 'Nikodem'],
+    personProfileIds: { Nikodem: 'student-nikodem', Paweł: 'profile-pawel' },
   } };
 }
 
 function student(fixture, uid = 'student-nikodem') {
-  return { db: fixture.db, uid, profile: { role: 'child', personKey: 'Nikodem' }, connection: {
+  return { db: fixture.db, uid, profile: { role: 'child', personKey: 'Nikodem', active: true, canLogin: true, schoolEnabled: true }, connection: {
     id: studentConnectionId(uid), scope: 'student', accountRole: 'student', actorUid: uid,
-    allowedPersonKeys: ['Nikodem'], allowedStudentIdentity: identity,
+    allowedPersonKeys: ['Nikodem'], personProfileIds: { Nikodem: uid }, allowedStudentIdentity: identity,
   } };
 }
 
@@ -103,6 +112,26 @@ async function guardedInput(context, items, reconcileScopes = []) {
   const lease = await acquireSyncLease(context.connection.id, context);
   const connection = await loadConnection(context.connection.id, context);
   return { personKey: 'Nikodem', profileId: pupil.id, leaseId: lease.leaseId, sessionVersion: connection.sessionVersion, items, reconcileScopes };
+}
+
+// These states model the existing provider contract, not credentials. All
+// cookies, profile IDs and school records below are synthetic/offline fixtures.
+function authenticatedSession(value = 'synthetic-cookie-before-read') {
+  const jar = new CookieJar();
+  jar.setCookieSync(`edu_auth=${value}; Domain=.eduvulcan.pl; Path=/; Secure; HttpOnly`, 'https://eduvulcan.pl/');
+  return { v: 1, cookieJar: jar.toJSON(), profiles: [pupil], currentProfileId: pupil.id,
+    journal: { profileId: pupil.id, key: 'synthetic-authenticated-student-key', idDziennik: 4009 } };
+}
+
+async function connectAuthenticated(context, options = {}) {
+  await saveConnection(context.connection.id, { session: authenticatedSession(), profiles: [pupil], ...options }, context);
+  await selectConnectionStudent(context.connection.id, { profileId: pupil.id, personKey: 'Nikodem' }, context);
+  return context.db.collection('_eduConnections').doc(context.connection.id).get();
+}
+
+function confirmedReadResult(session, sessionConfirmedAt, extra = {}) {
+  return { session, sessionConfirmedAt, items: [{ externalId: 'synthetic-grade-1', type: 'grade', title: '5' }],
+    counts: { grades: 1 }, warnings: [], reconcileScopes: [], notificationReadyTypes: ['grade'], ...extra };
 }
 
 test('both parent actors share one encrypted family connection, student and status', async () => withEncryption(async () => {
@@ -478,3 +507,452 @@ test('changing the selected pupil clears only the previous pupil school-slot mar
   assert.ok(stored.envelope);
   assert.ok((await acquireSyncLease('family', scheduledContext)).leaseId);
 }));
+
+test('a confirmed successful sync rolls encrypted-session inactivity retention from the authorized read, not status or completion time', async t => withEncryption(async () => {
+  const connectedAt = Date.parse('2026-10-05T05:00:00Z');
+  let now = connectedAt;
+  t.mock.method(Date, 'now', () => now);
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAuthenticated(context);
+  const original = fixture.records.get('_eduConnections/family');
+  const version = original.sessionVersion;
+  const initialExpiry = original.expiresAt.toMillis();
+  assert.equal(initialExpiry, connectedAt + 24 * 3600000);
+  now += 20 * 3600000;
+  await statusAction(context);
+  assert.equal(fixture.records.get('_eduConnections/family').expiresAt.toMillis(), initialExpiry);
+  const confirmedAt = now + 5000;
+  const rotated = authenticatedSession('synthetic-cookie-after-read');
+  const result = await syncAction(context, {}, { readData: async () => {
+    now = confirmedAt + 15000;
+    return confirmedReadResult(rotated, confirmedAt);
+  } });
+  const saved = fixture.records.get('_eduConnections/family');
+  assert.equal(saved.expiresAt.toMillis(), confirmedAt + 24 * 3600000);
+  assert.equal(saved.sessionConfirmedAt.toMillis(), confirmedAt);
+  assert.equal(saved.sessionVersion, version);
+  assert.equal(saved.lastSuccessfulSyncAt.toMillis(), now);
+  assert.equal(saved.lease, undefined);
+  assert.deepEqual(decryptSession(saved.envelope, { uid: 'family' }), rotated);
+  assert.equal(result.status.expiresAt, new Date(confirmedAt + 24 * 3600000).toISOString());
+  now += 3600000;
+  await statusAction(context);
+  assert.equal(fixture.records.get('_eduConnections/family').sessionConfirmedAt.toMillis(), confirmedAt);
+  assert.equal(fixture.records.get('_eduConnections/family').expiresAt.toMillis(), confirmedAt + 24 * 3600000);
+}));
+
+test('the same guarded renewal works for both scheduled contexts and an approved student without importing parent mail', async t => withEncryption(async () => {
+  const initial = Date.parse('2026-10-05T05:00:00Z');
+  let now = initial;
+  t.mock.method(Date, 'now', () => now);
+  for (const kind of ['school', 'off-hours', 'student']) {
+    now = initial;
+    const fixture = kind === 'student' ? bindingFixture() : databaseFixture();
+    const base = kind === 'student' ? student(fixture) : family(fixture);
+    await connectAuthenticated(base);
+    now = Date.parse(kind === 'off-hours' ? '2026-10-05T18:00:01+02:00' : '2026-10-05T08:00:05+02:00');
+    const context = kind === 'school' ? { ...base, scheduledSyncIntervalMs: 10 * 60000,
+      scheduledSchoolSlotStartMs: Date.parse('2026-10-05T08:00:00+02:00') }
+      : kind === 'off-hours' ? { ...base, scheduledSyncIntervalMs: 60 * 60000 } : base;
+    const confirmedAt = now;
+    await syncAction(context, {}, { readData: async (_session, profileId, options) => {
+      assert.equal(profileId, pupil.id);
+      assert.equal(options.includeMessages, kind !== 'student');
+      return confirmedReadResult(authenticatedSession(`synthetic-${kind}`), confirmedAt);
+    } });
+    const saved = fixture.records.get(`_eduConnections/${base.connection.id}`);
+    assert.equal(saved.expiresAt.toMillis(), confirmedAt + 24 * 3600000);
+    assert.equal(saved.sessionConfirmedAt.toMillis(), confirmedAt);
+    assert.equal(saved.lease, undefined);
+    assert.equal([...fixture.records.keys()].some(key => key.startsWith('schoolParentMessages/')), false);
+  }
+}));
+
+test('a refreshed cookie jar without current provider confirmation is saved without extending the old deadline', async t => withEncryption(async () => {
+  let now = Date.parse('2026-10-05T05:00:00Z');
+  t.mock.method(Date, 'now', () => now);
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAuthenticated(context);
+  const initialExpiry = fixture.records.get('_eduConnections/family').expiresAt.toMillis();
+  now += 12 * 3600000;
+  const refreshed = authenticatedSession('synthetic-unconfirmed-cookie');
+  await syncAction(context, {}, { readData: async () => {
+    const result = confirmedReadResult(refreshed, now);
+    delete result.sessionConfirmedAt;
+    return result;
+  } });
+  const saved = fixture.records.get('_eduConnections/family');
+  assert.equal(saved.expiresAt.toMillis(), initialExpiry);
+  assert.equal(saved.sessionConfirmedAt, undefined);
+  assert.deepEqual(decryptSession(saved.envelope, { uid: 'family' }), refreshed);
+  assert.ok(saved.lastSuccessfulSyncAt);
+}));
+
+test('a failed import preserves rotated cookies but does not renew retention or claim successful synchronization', async t => withEncryption(async () => {
+  let now = Date.parse('2026-10-05T05:00:00Z');
+  t.mock.method(Date, 'now', () => now);
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAuthenticated(context);
+  const initialExpiry = fixture.records.get('_eduConnections/family').expiresAt.toMillis();
+  const priorSuccess = Timestamp.fromMillis(now + 3600000);
+  fixture.records.get('_eduConnections/family').lastSuccessfulSyncAt = priorSuccess;
+  now += 12 * 3600000;
+  const refreshed = authenticatedSession('synthetic-cookie-rotated-before-import');
+  const badItems = [{ externalId: 'synthetic-bad-grade', type: 'grade', title: '' }];
+  await assert.rejects(syncAction(context, {}, { readData: async () => confirmedReadResult(refreshed, now, { items: badItems }) }), { code: 'EDU_INVALID_DATA' });
+  const saved = fixture.records.get('_eduConnections/family');
+  assert.deepEqual(decryptSession(saved.envelope, { uid: 'family' }), refreshed);
+  assert.equal(saved.expiresAt.toMillis(), initialExpiry);
+  assert.equal(saved.sessionConfirmedAt, undefined);
+  assert.equal(saved.lastSuccessfulSyncAt.toMillis(), priorSuccess.toMillis());
+  assert.equal(saved.lastErrorCode, 'EDU_INVALID_DATA');
+  assert.equal(saved.lease, undefined);
+  assert.equal([...fixture.records.keys()].some(key => key.startsWith('schoolItems/')), false);
+}));
+
+test('missing, malformed, empty or mismatched confirmed sessions never overwrite the valid encrypted state or import data', async t => withEncryption(async () => {
+  let now = Date.parse('2026-10-05T05:00:00Z');
+  t.mock.method(Date, 'now', () => now);
+  const invalid = [undefined, null, {}, { ...authenticatedSession(), cookieJar: { cookies: [] } },
+    { ...authenticatedSession(), currentProfileId: sibling.id },
+    { ...authenticatedSession(), journal: { key: 'synthetic-key', profileId: sibling.id, idDziennik: 4009 } },
+    { ...authenticatedSession(), cookieJar: { cookies: [{ key: 'synthetic-cookie', value: 123 }] } }];
+  for (const session of invalid) {
+    const fixture = databaseFixture(); const context = family(fixture);
+    await connectAuthenticated(context);
+    const original = fixture.records.get('_eduConnections/family');
+    const expiry = original.expiresAt.toMillis(); const envelope = original.envelope;
+    now += 3600000;
+    await assert.rejects(syncAction(context, {}, { readData: async () => confirmedReadResult(session, now) }), { code: 'EDU_SCHEMA_CHANGED' });
+    const saved = fixture.records.get('_eduConnections/family');
+    assert.deepEqual(saved.envelope, envelope);
+    assert.equal(saved.expiresAt.toMillis(), expiry);
+    assert.equal(saved.sessionConfirmedAt, undefined);
+    assert.equal(saved.reconnectRequired, undefined);
+    assert.equal(saved.lastSuccessfulSyncAt, undefined);
+    assert.equal([...fixture.records.keys()].some(key => key.startsWith('schoolItems/')), false);
+  }
+}));
+
+test('renewal rejects a future, previous-attempt or missing confirmation clock under the same lease', async t => withEncryption(async () => {
+  let now = Date.parse('2026-10-05T05:00:00Z');
+  t.mock.method(Date, 'now', () => now);
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAuthenticated(context);
+  now += 2 * 3600000;
+  const lease = await acquireSyncLease('family', context);
+  const saved = fixture.records.get('_eduConnections/family');
+  const envelope = saved.envelope; const expiry = saved.expiresAt.toMillis();
+  const guarded = { sessionVersion: saved.sessionVersion, leaseId: lease.leaseId };
+  const invalid = [
+    { sessionConfirmedAt: now + 1, readStartedAt: now },
+    { sessionConfirmedAt: now - 1, readStartedAt: now },
+    { sessionConfirmedAt: now, readStartedAt: now - 1 },
+    { sessionConfirmedAt: now },
+    { sessionConfirmedAt: NaN, readStartedAt: now },
+  ];
+  for (const clocks of invalid) {
+    await assert.rejects(updateConnectionSession('family', authenticatedSession('synthetic-invalid-confirmation'), { ...guarded, ...clocks }, context), { code: 'EDU_SCHEMA_CHANGED' });
+    assert.deepEqual(fixture.records.get('_eduConnections/family').envelope, envelope);
+    assert.equal(fixture.records.get('_eduConnections/family').expiresAt.toMillis(), expiry);
+    assert.equal(fixture.records.get('_eduConnections/family').sessionConfirmedAt, undefined);
+  }
+}));
+
+test('a shorter provider deadline is respected, retained on later reads and changed only by an explicit later provider deadline', async t => withEncryption(async () => {
+  const initial = Date.parse('2026-10-05T05:00:00Z');
+  let now = initial;
+  t.mock.method(Date, 'now', () => now);
+  const fixture = databaseFixture(); const context = family(fixture);
+  const providerDeadline = initial + 8 * 3600000;
+  await connectAuthenticated(context, { expiresAt: providerDeadline });
+  assert.equal(fixture.records.get('_eduConnections/family').expiresAt.toMillis(), providerDeadline);
+  now += 2 * 3600000;
+  await syncAction(context, {}, { readData: async () => confirmedReadResult(authenticatedSession('synthetic-cap-one'), now) });
+  assert.equal(fixture.records.get('_eduConnections/family').expiresAt.toMillis(), providerDeadline);
+  assert.equal(fixture.records.get('_eduConnections/family').providerExpiresAt.toMillis(), providerDeadline);
+  now += 3600000;
+  const renewedProviderDeadline = now + 10 * 3600000;
+  await syncAction(context, {}, { readData: async () => confirmedReadResult(authenticatedSession('synthetic-cap-two'), now, { expiresAt: renewedProviderDeadline }) });
+  assert.equal(fixture.records.get('_eduConnections/family').expiresAt.toMillis(), renewedProviderDeadline);
+  assert.equal(fixture.records.get('_eduConnections/family').providerExpiresAt.toMillis(), renewedProviderDeadline);
+}));
+
+test('configured shorter retention remains bounded to its existing TTL and never silently exceeds twenty-four hours', async t => withEncryption(async () => {
+  const previousTTL = process.env.EDUVULCAN_SESSION_TTL_HOURS;
+  let now = Date.parse('2026-10-05T05:00:00Z');
+  t.mock.method(Date, 'now', () => now);
+  try {
+    process.env.EDUVULCAN_SESSION_TTL_HOURS = '6';
+    const fixture = databaseFixture(); const context = family(fixture);
+    await connectAuthenticated(context);
+    now += 3600000;
+    await syncAction(context, {}, { readData: async () => confirmedReadResult(authenticatedSession(), now) });
+    assert.equal(fixture.records.get('_eduConnections/family').expiresAt.toMillis(), now + 6 * 3600000);
+    process.env.EDUVULCAN_SESSION_TTL_HOURS = '25';
+    const secondFixture = databaseFixture();
+    await assert.rejects(connectAuthenticated(family(secondFixture)), { code: 'EDU_NOT_CONFIGURED' });
+    assert.equal(secondFixture.writes, 0);
+  } finally {
+    if (previousTTL === undefined) delete process.env.EDUVULCAN_SESSION_TTL_HOURS;
+    else process.env.EDUVULCAN_SESSION_TTL_HOURS = previousTTL;
+  }
+}));
+
+test('provider timeout and rate limiting leave the retention clock and encrypted state untouched', async t => withEncryption(async () => {
+  let now = Date.parse('2026-10-05T05:00:00Z');
+  t.mock.method(Date, 'now', () => now);
+  for (const code of ['EDU_UPSTREAM_TIMEOUT', 'EDU_RATE_LIMITED', 'EDU_SYNC_FAILED']) {
+    const fixture = databaseFixture(); const context = family(fixture);
+    await connectAuthenticated(context);
+    const original = fixture.records.get('_eduConnections/family');
+    const envelope = original.envelope; const expiry = original.expiresAt.toMillis();
+    now += 3600000;
+    let reads = 0;
+    await assert.rejects(syncAction(context, {}, { readData: async () => {
+      reads += 1;
+      throw new EduServerError(code, code === 'EDU_RATE_LIMITED' ? 429 : 502, 'Synthetic safe failure');
+    } }), { code });
+    const saved = fixture.records.get('_eduConnections/family');
+    assert.equal(reads, 1);
+    assert.deepEqual(saved.envelope, envelope);
+    assert.equal(saved.expiresAt.toMillis(), expiry);
+    assert.equal(saved.sessionConfirmedAt, undefined);
+    assert.equal(saved.reconnectRequired, undefined);
+    assert.equal(saved.lastSuccessfulSyncAt, undefined);
+    assert.equal(saved.lease, undefined);
+  }
+}));
+
+test('reconnect or disconnect during a confirmed provider read prevents old cookies and retention from resurrecting', async t => withEncryption(async () => {
+  let now = Date.parse('2026-10-05T05:00:00Z');
+  t.mock.method(Date, 'now', () => now);
+  for (const action of ['reconnect', 'disconnect']) {
+    const fixture = databaseFixture(); const context = family(fixture);
+    await connectAuthenticated(context);
+    now += 3600000;
+    const replacement = authenticatedSession('synthetic-new-parent-connection');
+    let newVersion;
+    await assert.rejects(syncAction(context, {}, { readData: async () => {
+      if (action === 'disconnect') await disconnectConnection('family', context);
+      else {
+        await saveConnection('family', { session: replacement, profiles: [pupil], selectedStudent: { profileId: pupil.id, personKey: 'Nikodem' } }, context);
+        newVersion = fixture.records.get('_eduConnections/family').sessionVersion;
+      }
+      return confirmedReadResult(authenticatedSession('synthetic-old-attempt-cookie'), now);
+    } }), { code: 'EDU_CONNECTION_CHANGED' });
+    if (action === 'disconnect') assert.equal(fixture.records.has('_eduConnections/family'), false);
+    else {
+      const saved = fixture.records.get('_eduConnections/family');
+      assert.equal(saved.sessionVersion, newVersion);
+      assert.deepEqual(decryptSession(saved.envelope, { uid: 'family' }), replacement);
+      assert.equal(saved.sessionConfirmedAt, undefined);
+      assert.equal(saved.lease, undefined);
+    }
+    assert.equal([...fixture.records.keys()].some(key => key.startsWith('schoolItems/')), false);
+  }
+}));
+
+test('an expired old deadline at read completion or during a transactional student-binding read cannot be renewed', async t => withEncryption(async () => {
+  const initial = Date.parse('2026-10-05T05:00:00Z');
+  let now = initial;
+  t.mock.method(Date, 'now', () => now);
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAuthenticated(context);
+  const expiry = fixture.records.get('_eduConnections/family').expiresAt.toMillis();
+  const envelope = fixture.records.get('_eduConnections/family').envelope;
+  now = expiry - 1000;
+  await assert.rejects(syncAction(context, {}, { readData: async () => {
+    const confirmation = now;
+    now = expiry;
+    return confirmedReadResult(authenticatedSession('synthetic-too-late-cookie'), confirmation);
+  } }), { code: 'EDU_CONNECTION_CHANGED' });
+  assert.deepEqual(fixture.records.get('_eduConnections/family').envelope, envelope);
+  assert.equal(fixture.records.get('_eduConnections/family').expiresAt.toMillis(), expiry);
+  assert.equal(fixture.records.get('_eduConnections/family').sessionConfirmedAt, undefined);
+
+  now = initial;
+  const studentFixture = bindingFixture(); const studentContext = student(studentFixture);
+  await connectAuthenticated(studentContext);
+  const studentSaved = studentFixture.records.get(`_eduConnections/${studentContext.connection.id}`);
+  const studentExpiry = studentSaved.expiresAt.toMillis();
+  now = studentExpiry - 1000;
+  const lease = await acquireSyncLease(studentContext.connection.id, studentContext);
+  const started = now;
+  const originalTransaction = studentFixture.db.runTransaction;
+  studentFixture.db.runTransaction = action => originalTransaction(transaction => action({ ...transaction, get: async ref => {
+    const snapshot = await transaction.get(ref);
+    if (ref.path === '_eduStudentBindings/Nikodem') now = studentExpiry;
+    return snapshot;
+  } }));
+  await assert.rejects(updateConnectionSession(studentContext.connection.id, authenticatedSession('synthetic-binding-race'), {
+    sessionVersion: studentSaved.sessionVersion, leaseId: lease.leaseId, readStartedAt: started, sessionConfirmedAt: started,
+  }, studentContext), { code: 'EDU_CONNECTION_CHANGED' });
+  const unchanged = studentFixture.records.get(`_eduConnections/${studentContext.connection.id}`);
+  assert.equal(unchanged.expiresAt.toMillis(), studentExpiry);
+  assert.equal(unchanged.sessionConfirmedAt, undefined);
+  assert.deepEqual(unchanged.envelope, studentSaved.envelope);
+}));
+
+test('manual and scheduled calls share the existing lease throughout both renewal phases', async t => withEncryption(async () => {
+  let now = Date.parse('2026-10-05T05:00:00Z');
+  t.mock.method(Date, 'now', () => now);
+  const fixture = databaseFixture(); const parent = family(fixture);
+  await connectAuthenticated(parent);
+  now = Date.parse('2026-10-05T08:00:05+02:00');
+  const scheduled = { ...family(fixture, 'parent-sebastian'), scheduledSyncIntervalMs: 10 * 60000,
+    scheduledSchoolSlotStartMs: Date.parse('2026-10-05T08:00:00+02:00') };
+  let concurrentReads = 0;
+  await syncAction(parent, {}, { readData: async () => {
+    await assert.rejects(syncAction(scheduled, {}, { readData: async () => { concurrentReads += 1; } }), { code: 'EDU_SYNC_BUSY' });
+    return confirmedReadResult(authenticatedSession('synthetic-single-shared-read'), now);
+  } });
+  assert.equal(concurrentReads, 0);
+  assert.equal(fixture.records.get('_eduConnections/family').expiresAt.toMillis(), now + 24 * 3600000);
+  assert.equal([...fixture.records.keys()].filter(key => key.startsWith('schoolItems/')).length, 1);
+}));
+
+test('strict confirmation validation preserves the approved student identity while rejecting a connect-only state', () => {
+  const valid = authenticatedSession();
+  assert.equal(validateConnectionSessionRefresh(valid, pupil.id, { confirmed: true }), valid);
+  const connectOnly = { ...valid, currentProfileId: null };
+  delete connectOnly.journal;
+  assert.equal(validateConnectionSessionRefresh(connectOnly, pupil.id), connectOnly);
+  assert.throws(() => validateConnectionSessionRefresh(connectOnly, pupil.id, { confirmed: true }), { code: 'EDU_SCHEMA_CHANGED' });
+  assert.throws(() => validateConnectionSessionRefresh(valid, sibling.id, { confirmed: true }), { code: 'EDU_SCHEMA_CHANGED' });
+});
+
+const dynamicPerson = 'member-0123456789abcdef01234567';
+const dynamicProfileId = 'profile-11111111-2222-4333-8444-555555555555';
+async function dynamicFamily(fixture, canLogin = false) {
+  fixture.records.set(`members/${dynamicProfileId}`, {
+    name: 'Nowy uczeń testowy', personKey: dynamicPerson, role: 'child', active: true, canLogin, schoolEnabled: true,
+  });
+  const context = await resolveConnectionAccess(family(fixture));
+  await saveConnection('family', { session: { v: 1, cookieJar: { cookies: [] }, profiles: [pupil] }, profiles: [pupil] }, context);
+  await selectConnectionStudent('family', { profileId: pupil.id, personKey: dynamicPerson }, context);
+  return context;
+}
+
+for (const canLogin of [false, true]) {
+  test(`dynamic family target with canLogin=${canLogin} imports stable data and creates a quiet baseline`, async () => withEncryption(async () => {
+    const fixture = databaseFixture(); const context = await dynamicFamily(fixture, canLogin);
+    const status = await getConnectionStatus('family', context);
+    assert.equal(status.state, 'connected'); assert.equal(status.selectedStudent.personKey, dynamicPerson);
+    assert.deepEqual(fixture.records.get(`_eduStudentBindings/${dynamicPerson}`).identity, identity);
+    const lease = await acquireSyncLease('family', context);
+    const stored = await loadConnection('family', context);
+    const input = { personKey: dynamicPerson, profileId: pupil.id, sessionVersion: stored.sessionVersion,
+      leaseId: lease.leaseId, items: [{ externalId: 'dynamic-grade', type: 'grade', title: '5', subject: 'Matematyka' }] };
+    await upsertSchoolItems('family', input, context);
+    const first = [...fixture.records.entries()].filter(([path]) => path.startsWith('schoolItems/'));
+    assert.equal(first.length, 1); assert.equal(first[0][1].person, dynamicPerson);
+    assert.equal(first[0][1].sourceConnectionId, 'family');
+    assert.equal([...fixture.records.keys()].filter(path => path.startsWith('_notificationBaselines/')).length, 1);
+    assert.equal([...fixture.records.keys()].some(path => path.startsWith('_notificationEvents/')), false);
+    await upsertSchoolItems('family', input, context);
+    assert.deepEqual([...fixture.records.keys()].filter(path => path.startsWith('schoolItems/')), [first[0][0]]);
+    assert.equal([...fixture.records.keys()].some(path => path.startsWith('_notificationEvents/')), false);
+  }));
+}
+
+test('archiving or disabling the family school target during provider read blocks all imports without losing session/history', async () => withEncryption(async () => {
+  for (const change of [{ archived: true }, { active: false }, { disabled: true }, { schoolEnabled: false }]) {
+    const fixture = databaseFixture(); const context = await dynamicFamily(fixture);
+    fixture.records.set('schoolItems/preserved-history', { title: 'Historyczna ocena', person: dynamicPerson });
+    fixture.records.set('_notificationBaselines/preserved-baseline', { initializedTypes: ['grade'] });
+    const envelope = fixture.records.get('_eduConnections/family').envelope;
+    let reads = 0;
+    await assert.rejects(syncAction(context, {}, { readData: async session => {
+      reads += 1;
+      Object.assign(fixture.records.get(`members/${dynamicProfileId}`), change);
+      return { session, items: [{ externalId: 'blocked-grade', type: 'grade', title: '6' }] };
+    } }), { code: 'EDU_STUDENT_LINK_REQUIRED' });
+    assert.equal(reads, 1);
+    assert.deepEqual(fixture.records.get('_eduConnections/family').envelope, envelope);
+    assert.equal(fixture.records.get('_eduConnections/family').reconnectRequired, undefined);
+    assert.equal(fixture.records.has('schoolItems/preserved-history'), true);
+    assert.equal(fixture.records.has('_notificationBaselines/preserved-baseline'), true);
+    assert.equal([...fixture.records.keys()].filter(path => path.startsWith('schoolItems/')).length, 1);
+  }
+}));
+
+test('a changed family roster returns needs_profile without deleting the active encrypted connection', async () => withEncryption(async () => {
+  const fixture = databaseFixture(); const context = await dynamicFamily(fixture);
+  const envelope = fixture.records.get('_eduConnections/family').envelope;
+  fixture.records.get(`members/${dynamicProfileId}`).schoolEnabled = false;
+  const refreshed = await resolveConnectionAccess(family(fixture));
+  const status = await getConnectionStatus('family', refreshed);
+  assert.equal(status.connected, true); assert.equal(status.state, 'needs_profile'); assert.equal(status.selectedStudent, null);
+  assert.deepEqual(fixture.records.get('_eduConnections/family').envelope, envelope);
+  assert.equal(fixture.records.get('_eduConnections/family').selectedStudent.personKey, dynamicPerson);
+}));
+
+test('a revoked parent actor during provider read cannot import data or remove the shared session', async () => withEncryption(async () => {
+  for (const change of [{ archived: true }, { disabled: true }, { canLogin: false }, { active: false }, { role: 'adult' }]) {
+    const fixture = databaseFixture(); const context = await dynamicFamily(fixture);
+    const envelope = fixture.records.get('_eduConnections/family').envelope;
+    fixture.records.set('_notificationBaselines/preserved-baseline', { initializedTypes: ['grade'] });
+    await assert.rejects(syncAction(context, {}, { readData: async session => {
+      Object.assign(fixture.records.get(`members/${context.uid}`), change);
+      return { session, items: [{ externalId: 'blocked-parent-grade', type: 'grade', title: '6' }] };
+    } }), { code: 'EDU_MEMBER_REQUIRED' });
+    assert.deepEqual(fixture.records.get('_eduConnections/family').envelope, envelope);
+    assert.equal(fixture.records.get('_eduConnections/family').reconnectRequired, undefined);
+    assert.equal(fixture.records.has('_notificationBaselines/preserved-baseline'), true);
+    assert.equal([...fixture.records.keys()].some(path => path.startsWith('schoolItems/')), false);
+  }
+}));
+
+test('an empty family roster permits status and disconnect, without alias fallback authorization', async () => withEncryption(async () => {
+  const fixture = databaseFixture();
+  fixture.records.get('members/student-nikodem').schoolEnabled = false;
+  fixture.records.get('members/profile-pawel').schoolEnabled = false;
+  const context = await resolveConnectionAccess(family(fixture));
+  assert.deepEqual(context.connection.allowedPersonKeys, []);
+  await saveConnection('family', { session: {}, profiles: [pupil] }, context);
+  assert.equal((await getConnectionStatus('family', context)).state, 'needs_profile');
+  await assert.rejects(selectConnectionStudent('family', { profileId: pupil.id, personKey: 'Nikodem' }, context), { code: 'EDU_INVALID_STUDENT' });
+  await disconnectConnection('family', context);
+  assert.equal((await getConnectionStatus('family', context)).state, 'disconnected');
+}));
+
+test('explicit connection context and genuine mapped profile are required for every import', async () => withEncryption(async () => {
+  const input = { personKey: dynamicPerson, profileId: pupil.id, items: [{ externalId: 'grade-forged', type: 'grade', title: '6' }] };
+  assert.throws(() => prepareImportedSchoolItems('family', input), { code: 'EDU_CONNECTION_FORBIDDEN' });
+  const fixture = databaseFixture(); const context = await dynamicFamily(fixture);
+  const ownStudent = student(fixture);
+  const substituted = { ...ownStudent, connection: { ...ownStudent.connection,
+    allowedPersonKeys: ['Paweł'], personProfileIds: { Paweł: ownStudent.uid },
+  } };
+  assert.throws(() => prepareImportedSchoolItems(ownStudent.connection.id, { ...input, personKey: 'Paweł' }, substituted), { code: 'EDU_STUDENT_ACCESS_REQUIRED' });
+  const lease = await acquireSyncLease('family', context); const stored = await loadConnection('family', context);
+  const forged = { ...context, connection: { ...context.connection, personProfileIds: { ...context.connection.personProfileIds, [dynamicPerson]: 'missing-child' } } };
+  const writesBefore = fixture.writes;
+  await assert.rejects(upsertSchoolItems('family', { ...input, leaseId: lease.leaseId, sessionVersion: stored.sessionVersion }, forged), { code: 'EDU_STUDENT_LINK_REQUIRED' });
+  assert.equal(fixture.writes, writesBefore);
+  assert.equal([...fixture.records.keys()].some(path => path.startsWith('schoolItems/')), false);
+}));
+
+test('student eligibility changes during provider read preserve the approved binding and private session', async () => withEncryption(async () => {
+  for (const [change, code] of [[{ archived: true }, 'EDU_MEMBER_REQUIRED'], [{ canLogin: false }, 'EDU_MEMBER_REQUIRED'],
+    [{ disabled: true }, 'EDU_MEMBER_REQUIRED'], [{ schoolEnabled: false }, 'EDU_STUDENT_LINK_REQUIRED']]) {
+    const fixture = bindingFixture(); const context = student(fixture);
+    await connectAndSelect(context);
+    const envelope = fixture.records.get(`_eduConnections/${context.connection.id}`).envelope;
+    await assert.rejects(syncAction(context, {}, { readData: async session => {
+      Object.assign(fixture.records.get('members/student-nikodem'), change);
+      return { session: { v: 1, cookieJar: { cookies: [] }, profiles: [pupil] }, items: [{ externalId: 'blocked-student-grade', type: 'grade', title: '6' }] };
+    } }), { code });
+    assert.deepEqual(fixture.records.get(`_eduConnections/${context.connection.id}`).envelope, envelope);
+    assert.deepEqual(fixture.records.get('_eduStudentBindings/Nikodem').identity, identity);
+    assert.equal([...fixture.records.keys()].some(path => path.startsWith('school')), false);
+  }
+}));
+
+test('the existing SP4 alias retains its pre-extension import ID exactly', () => {
+  const fixture = databaseFixture(); const context = family(fixture);
+  const result = prepareImportedSchoolItems('family', { personKey: 'Nikodem', profileId: 'nikodem-school',
+    items: [{ externalId: 'grade-fixed', type: 'grade', title: '5' }] }, context);
+  assert.equal(result[0].id, 'edu_c1b748f643aa0c6487612f5e696db3d3fcaa8a1e328f19accff1aa66fb06bbca');
+});

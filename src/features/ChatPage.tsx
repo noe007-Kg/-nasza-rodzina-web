@@ -1,8 +1,11 @@
-import { addDoc, type ChatMessage, collection, db, deleteDoc, doc, EmptyState, errorMessage, FAMILY_ORDER, type FamilyMemberDoc, formatTime, isParent, type Member, memberEmoji, ModuleHeader, notify, onSnapshot, personRole, query, React, Timestamp, useEffect, type User, useRef, useState, where } from "../app-shared";
+import { addDoc, type ChatMessage, collection, db, deleteDoc, doc, EmptyState, errorMessage, formatTime, isParent, type Member, ModuleHeader, notify, onSnapshot, personRole, query, React, Timestamp, useEffect, type User, useRef, useState, where } from "../app-shared";
 
 import { useImportantItems } from '../notifications';
 import { Icon } from '../ui';
 import { ChatComposer } from './ChatComposer';
+import { useFamilyAggregate, useFamilyDirectory } from '../family-directory';
+import { ProfileAvatar } from '../account/ProfileSettings';
+import { chatEligibleProfiles } from '../account/profile-avatar';
 
 import { availableChatHeight } from './chat-layout';
 import './chat-health.css';
@@ -13,7 +16,9 @@ export function privateChannel(a: string, b: string) {
 
 export function ChatPage({ user, member }: { user: User; member: Member | null }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [members, setMembers] = useState<FamilyMemberDoc[]>([]);
+  const directory = useFamilyDirectory();
+  const members = chatEligibleProfiles(directory);
+  const aggregate = useFamilyAggregate();
   const [text, setText] = useState('');
   const [mode, setMode] = useState<'family' | 'private'>('family');
   const [selectedUid, setSelectedUid] = useState<string>('');
@@ -76,14 +81,6 @@ export function ChatPage({ user, member }: { user: User; member: Member | null }
     };
   }, []);
 
-  useEffect(() => onSnapshot(collection(db, 'members'), (snap) => {
-    const next = snap.docs.map((d) => {
-      const x = d.data();
-      return { id:d.id, name:String(x.name || 'Rodzina'), role:personRole(String(x.name || ''), typeof x.role === 'string' ? x.role : ''), photoURL:typeof x.photoURL === 'string' ? x.photoURL : undefined, active:x.active !== false };
-    }).sort((a,b) => FAMILY_ORDER.indexOf(a.name)-FAMILY_ORDER.indexOf(b.name));
-    setMembers(next);
-  }), []);
-
   useEffect(() => {
     const groups: Record<string, ChatMessage[]> = { family: [], private: [] };
     function load(group: string, snap: import('firebase/firestore').QuerySnapshot) {
@@ -143,18 +140,18 @@ export function ChatPage({ user, member }: { user: User; member: Member | null }
       <section className="chat-layout-v130">
         <aside className="chat-conversations">
           <div className="chat-mode-tabs"><button className={mode === 'family' ? 'active' : ''} onClick={() => { setMode('family'); setSelectedUid(''); }}>Rodzina</button><button className={mode === 'private' ? 'active' : ''} onClick={() => setMode('private')}>Prywatne</button></div>
-          {mode === 'family' ? <button className="conversation-row active"><span className="conversation-group-avatar">👨‍👩‍👧‍👦</span><div><strong>Czat rodzinny</strong><small>{[...messages].reverse().find((m) => m.channel === 'family')?.text || 'Wspólna rozmowa całej rodziny'}</small></div></button> : <div className="private-list">{members.filter((m) => m.id !== user.uid).map((person) => { const last=lastForChannel(person.id); return <button key={person.id} className={`conversation-row ${selectedUid === person.id ? 'active' : ''}`} onClick={() => setSelectedUid(person.id)}><span className="chat-avatar">{person.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(person.name)}</span><div><strong>{person.name}</strong><small>{last ? last.text : 'Rozpocznij rozmowę'}</small></div><time>{last?.createdAt ? formatTime(last.createdAt) : ''}</time></button>; })}</div>}
+          {mode === 'family' ? <button className="conversation-row active"><ProfileAvatar profile={{ ...aggregate, emoji: aggregate.emoji || '👨‍👩‍👧‍👦' }} className="conversation-group-avatar" /><div><strong>Czat rodzinny</strong><small>{[...messages].reverse().find((m) => m.channel === 'family')?.text || 'Wspólna rozmowa całej rodziny'}</small></div></button> : <div className="private-list">{members.filter((m) => m.id !== user.uid).map((person) => { const last=lastForChannel(person.id); return <button key={person.id} className={`conversation-row ${selectedUid === person.id ? 'active' : ''}`} onClick={() => setSelectedUid(person.id)}><ProfileAvatar profile={person} className="chat-avatar" /><div><strong>{person.name}</strong><small>{last ? last.text : 'Rozpocznij rozmowę'}</small></div><time>{last?.createdAt ? formatTime(last.createdAt) : ''}</time></button>; })}</div>}
         </aside>
 
         <section className="chat-shell">
-          <header className="chat-room-header"><span className="chat-avatar large">{mode === 'family' ? '👨‍👩‍👧‍👦' : selectedMember?.photoURL ? <img src={selectedMember.photoURL} alt="" /> : selectedMember ? memberEmoji(selectedMember.name) : '💬'}</span><div><strong>{mode === 'family' ? 'Czat rodzinny' : selectedMember?.name || 'Wybierz osobę'}</strong><small>{mode === 'family' ? members.map((m) => m.name).join(', ') : selectedMember ? `${selectedMember.role}` : 'Prywatna rozmowa 1:1'}</small></div></header>
+          <header className="chat-room-header"><ProfileAvatar profile={mode === 'family' ? { ...aggregate, emoji: aggregate.emoji || '👨‍👩‍👧‍👦' } : selectedMember || { emoji: '💬' }} className="chat-avatar large" /><div><strong>{mode === 'family' ? 'Czat rodzinny' : selectedMember?.name || 'Wybierz osobę'}</strong><small>{mode === 'family' ? members.map((m) => m.name).join(', ') : selectedMember ? personRole(selectedMember.name || '', selectedMember.role) : 'Prywatna rozmowa 1:1'}</small></div></header>
           <div ref={messagesRef} className="chat-messages" role="log" aria-label="Wiadomości" aria-live="polite" aria-relevant="additions">
             {!channel ? <EmptyState icon="👤" text="Wybierz osobę z listy prywatnych rozmów." /> : visible.length === 0 ? <EmptyState icon="💬" text="Napisz pierwszą wiadomość." /> : visible.map((message, index) => {
               const previous = visible[index - 1];
               const showIdentity = !previous || previous.uid !== message.uid;
-              const person = members.find((m) => m.id === message.uid);
+              const person = directory.find((m) => m.id === message.uid);
               return <div key={message.id} className={`chat-message-line ${message.uid === user.uid ? 'mine' : ''}`} onContextMenu={(e) => { e.preventDefault(); setMessageMenu(message); }}>
-                {message.uid !== user.uid && <span className={`chat-avatar ${showIdentity ? '' : 'ghost'}`}>{showIdentity ? (person?.photoURL ? <img src={person.photoURL} alt="" /> : memberEmoji(message.name)) : ''}</span>}
+                {message.uid !== user.uid && <ProfileAvatar profile={showIdentity ? person || { name: message.name } : { emoji: ' ' }} className={`chat-avatar ${showIdentity ? '' : 'ghost'}`} />}
                 <div className={`chat-bubble ${message.uid === user.uid ? 'mine' : ''} ${isImportant(`chat:message:${message.id}`) ? 'chat-important' : ''}`}>
                   {isImportant(`chat:message:${message.id}`) && <span className="chat-important-label">★ Ważne</span>}
                   {showIdentity && message.uid !== user.uid && <strong>{message.name}</strong>}

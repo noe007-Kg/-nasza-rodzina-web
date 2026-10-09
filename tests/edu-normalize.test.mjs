@@ -141,7 +141,7 @@ test('malformed upstream responses fail instead of masquerading as empty snapsho
 test('normalizer output is compatible with storage and keeps messages parent-only', () => {
   const items = [...normalizeGrades(gradeFixture(), gradeOptions),
     ...normalizeMessages([{ apiGlobalKey: 'mail-1', data: '2026-10-01', temat: 'Ważne', korespondenci: 'Nauczyciel' }], { 'mail-1': { tresc: 'Treść' } })];
-  const prepared = prepareImportedSchoolItems('parent-uid', { personKey: 'Nikodem', profileId: gradeOptions.profileId, items, syncId: 'sync-fixture' });
+  const prepared = prepareImportedSchoolItems('family', { personKey: 'Nikodem', profileId: gradeOptions.profileId, items, syncId: 'sync-fixture' }, { uid: 'parent-uid', profile: { role: 'parent', active: true, canLogin: true }, connection: { id: 'family', scope: 'family', accountRole: 'parent', actorUid: 'parent-uid', allowedPersonKeys: ['Nikodem'], personProfileIds: { Nikodem: 'profile-nikodem' } } });
   assert.equal(prepared.length, 6);
   assert.equal(prepared.filter((item) => item.collection === 'schoolParentMessages').length, 1);
   assert.equal(prepared.at(-1).data.note, 'Treść');

@@ -2,11 +2,14 @@ import { APP_UPDATED, APP_VERSION, collection, dateKey, db, downloadFile, errorM
 
 import { AccountSettings } from '../account/AccountSettings';
 import { FamilyMembersSettings } from '../account/FamilyMembersSettings';
+import { OwnProfileSettings } from '../account/ProfileSettings';
 import { exportCalendarIcs } from '../calendar-ics';
 import { fetchCalendarEvents } from '../calendar-store';
 import { NotificationSettings } from '../notifications';
+import { ConnectedCalendarsSettings } from '../calendars/ConnectedCalendarsSettings';
+import type { CalendarNotice } from '../calendars/model';
 
-export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout }: { user: User; member: Member | null; theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void; goTo: (page: Page) => void; onLogout: () => Promise<void> }) {
+export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout, calendarNotice }: { user: User; member: Member | null; theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void; goTo: (page: Page) => void; onLogout: () => Promise<void>; calendarNotice?: CalendarNotice }) {
   const parent=isParent(member);
   const [loggingOut, setLoggingOut] = useState(false);
   async function logout() {
@@ -42,6 +45,7 @@ export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout }: 
       <ModuleHeader icon="⚙️" title="Ustawienia" text="Konto, wygląd, powiadomienia, synchronizacja i bezpieczeństwo." />
       <section className="settings-dashboard">
         <AccountSettings user={user} />
+        <OwnProfileSettings user={user} member={member} />
 
         <article className="settings-section"><header><span>🎨</span><div><strong>Motyw aplikacji</strong><small>Wygląd zapisuje się na tym urządzeniu</small></div></header><div className="theme-choice big"><button className={theme === 'light' ? 'active' : ''} onClick={()=>setTheme('light')}>☀️ <span><b>Jasny</b><small>Kolorowy i czytelny</small></span></button><button className={theme === 'dark' ? 'active' : ''} onClick={()=>setTheme('dark')}>🌙 <span><b>Ciemny</b><small>Delikatny dla oczu</small></span></button></div></article>
 
@@ -49,7 +53,7 @@ export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout }: 
 
         {parent && <FamilyMembersSettings user={user} member={member} />}
 
-        <article className="settings-section calendars-settings"><header><span>📅</span><div><strong>Kalendarz poza aplikacją</strong><small>Plik do otwarcia w Apple Calendar, Google Calendar lub Outlook</small></div></header><div className="data-tools"><button className="secondary-button" disabled={exporting} onClick={()=>void downloadCalendar()}>Pobierz kalendarz .ics</button><button className="secondary-button" onClick={() => goTo('Kalendarz')}>Import, osoby i zakres dat</button></div><p className="settings-footnote">Plik jest kopią bieżącego kalendarza. Zmiany po imporcie nie synchronizują się automatycznie. Godziny przyjmują strefę Twojego kalendarza.</p></article>
+        <ConnectedCalendarsSettings user={user} member={member} notice={calendarNotice}><div className="data-tools"><button className="secondary-button" disabled={exporting} onClick={()=>void downloadCalendar()}>Pobierz kalendarz .ics</button><button className="secondary-button" onClick={() => goTo('Kalendarz')}>Import, osoby i zakres dat</button></div><p className="settings-footnote">Plik jest kopią bieżącego kalendarza. Zmiany po imporcie nie synchronizują się automatycznie. Godziny przyjmują strefę Twojego kalendarza.</p></ConnectedCalendarsSettings>
 
         <article className="settings-section"><header><span>👨‍👩‍👧‍👦</span><div><strong>Uprawnienia rodzinne</strong><small>Role i dostęp do danych</small></div></header><div className="permission-summary"><span className={parent ? 'parent-role' : 'child-role'}>{parent ? '👑 Rodzic — zarządzanie rodziną' : '👤 Członek rodziny — dostęp ograniczony'}</span><p>Rodzice zarządzają punktami, profilami dzieci oraz dokumentami. Prywatne wydarzenia i rozmowy są dostępne wyłącznie uprawnionym osobom.</p></div></article>
 

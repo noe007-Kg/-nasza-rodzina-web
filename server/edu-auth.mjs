@@ -106,7 +106,7 @@ export async function requireMember(request, services = getServerFirebase()) {
   const profile = snapshot.exists ? snapshot.data() : null;
   // Keep the authorization contract identical to Firestore rules and App's gate.
   // Display names and optional personKey fields do not establish a parent's role.
-  if (!profile || !['parent', 'child'].includes(profile.role) || profile.active !== true || profile.canLogin !== true) {
+  if (!profile || !['parent', 'adult', 'child'].includes(profile.role) || profile.active !== true || profile.canLogin !== true || profile.archived === true) {
     throw new EduServerError('EDU_MEMBER_REQUIRED', 403, 'Konto Naszej Rodziny wymaga aktywnego profilu z dostępem do aplikacji.');
   }
   return { uid: user.uid, user, profile, ...services };

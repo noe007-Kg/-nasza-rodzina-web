@@ -1,0 +1,15 @@
+.calendar-package .calendar-source-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 12px; margin: 0 0 12px; border: 1px solid var(--family-line, #e8dfef); border-radius: 13px; background: var(--family-soft-blue, #edf7ff); color: var(--family-text, #171b4b); font-size: 12px; line-height: 1.5; }
+.calendar-package .calendar-source-notice button { padding: 0; border: 0; background: transparent; color: var(--family-ink-violet, #7053bd); font: inherit; font-weight: 700; cursor: pointer; }
+.calendar-package .calendar-source-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.calendar-package .calendar-source-badge { display: inline-flex; align-items: center; min-height: 18px; width: fit-content; padding: 2px 5px; border-radius: 7px; background: #eee8ff; color: #58409b; font-size: 9px; font-weight: 700; line-height: 1.3; }
+.calendar-package .calendar-cancelled-badge { background: #fff0e2; color: #86551b; }
+.calendar-package .calendar-event.is-source-cancelled > strong { text-decoration: line-through; text-decoration-thickness: 1px; }
+.calendar-package .calendar-lower-card button.is-source-cancelled strong { text-decoration: line-through; }
+.calendar-source-detail { padding: 10px 12px; border: 1px solid #e8dfef; border-radius: 13px; background: #edf7ff; color: #171b4b; font-size: 13px; line-height: 1.6; }
+.calendar-package .calendar-google-badge { background: #e9f6ee; color: #277349; }
+.calendar-source-visibility { display: flex; flex-wrap: wrap; align-items: center; gap: 9px 12px; padding: 12px 0; }
+.calendar-source-visibility small { flex: 1 1 230px; color: #66637c; line-height: 1.5; }
+.calendar-source-visibility p { flex-basis: 100%; margin: 0; font-size: 13px; line-height: 1.5; }
+.calendar-source-visibility [role="alert"] { color: #a72546; }
+.calendar-source-visibility [role="status"] { color: #58409b; }
+.calendar-package .connected-calendars-footer > div > button { border: 0; background: #f2edff; border-radius: 9px; color: #58409b; font: inherit; padding: 7px 9px; cursor: pointer; }

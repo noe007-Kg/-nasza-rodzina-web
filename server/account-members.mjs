@@ -24,7 +24,7 @@ function boolean(value, label) {
   return value;
 }
 function role(value) {
-  if (!['parent', 'child'].includes(value)) failure('ACCOUNT_INVALID_REQUEST', 400, 'Wybierz rolę rodzic lub dziecko.');
+  if (!['parent', 'adult', 'child'].includes(value)) failure('ACCOUNT_INVALID_REQUEST', 400, 'Wybierz rolę rodzic, dorosły lub dziecko.');
   return value;
 }
 
@@ -100,7 +100,7 @@ async function createMember(context, body) {
       transaction.create(db.collection('members').doc(uid), {
         name: definition.name, personKey, role: definition.role,
         active: true, canLogin: createdAccount ? false : definition.canLogin,
-        schoolEnabled: definition.schoolEnabled, adult: definition.role === 'parent',
+        schoolEnabled: definition.schoolEnabled, adult: ['parent', 'adult'].includes(definition.role),
         createdBy: actorUid, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
       });
     });
@@ -122,12 +122,12 @@ async function createMember(context, body) {
 async function changeMember(context, body, archive) {
   expect(body, archive ? ['action', 'uid', 'confirmed'] : ['action', 'uid', 'role', 'canLogin', 'schoolEnabled', 'active', 'email']);
   if (!idValid(body.uid)) failure('ACCOUNT_INVALID_REQUEST', 400, 'Nieprawidłowy identyfikator członka rodziny.');
-  if (archive && body.confirmed !== true) failure('ACCOUNT_CONFIRMATION_REQUIRED', 400, 'Potwierdź usunięcie członka z aktywnej rodziny.');
+  if (archive && body.confirmed !== true) failure('ACCOUNT_CONFIRMATION_REQUIRED', 400, 'Potwierdź archiwizację profilu.');
   const targetUid = body.uid;
   const changes = archive ? { active: false, canLogin: false, archived: true } : {
     role: role(body.role), canLogin: boolean(body.canLogin, 'dostęp do logowania'),
     schoolEnabled: boolean(body.schoolEnabled, 'szkoła'), active: boolean(body.active, 'aktywność'),
-    archived: false,
+    archived: false, adult: ['parent', 'adult'].includes(body.role),
   };
   let createdAccount = false;
   let resetEmail;

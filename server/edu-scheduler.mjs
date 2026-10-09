@@ -51,14 +51,15 @@ function countCode(summary, code) {
 }
 
 async function activeMembers(db, role) {
-  const snapshot = await db.collection('members').where('role', '==', role).limit(MEMBER_LIMIT).get();
+  const snapshot = await db.collection('members').where('role', '==', role).limit(MEMBER_LIMIT + 1).get();
   // This is a one-family project. Refuse a truncated authorization list rather
   // than silently selecting a parent or losing a student's connection.
-  if (snapshot.size >= MEMBER_LIMIT) return null;
+  if (snapshot.size > MEMBER_LIMIT) return null;
   return snapshot.docs.filter((document) => {
     const profile = document.data();
     return typeof document.id === 'string' && document.id.length > 0 && document.id.length <= 128
-      && !document.id.includes('/') && profile?.active === true && profile.canLogin === true;
+      && !document.id.includes('/') && profile?.active === true && profile.canLogin === true
+      && profile.archived !== true && profile.disabled !== true;
   }).sort((a, b) => a.id.localeCompare(b.id));
 }
 
@@ -175,8 +176,10 @@ export async function runScheduledEduSync(context, event = {}, dependencies = {}
   if (familySnapshot.exists && parents.length) {
     const connectedByUid = familySnapshot.data().connectedByUid;
     const parent = parents.find((member) => member.id === connectedByUid) || parents[0];
-    const authorised = await resolveConnectionAccess({ ...context, uid: parent.id, profile: parent.data() }, 'family');
-    await synchronize(authorised, familySnapshot);
+    try {
+      const authorised = await resolveConnectionAccess({ ...context, uid: parent.id, profile: parent.data() }, 'family');
+      await synchronize(authorised, familySnapshot);
+    } catch (error) { summary.failed += 1; countCode(summary, safeCode(error)); }
   } else if (familySnapshot.exists) {
     summary.examined += 1; summary.skipped += 1; countCode(summary, 'EDU_PARENT_REQUIRED');
   }

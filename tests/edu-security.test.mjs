@@ -25,6 +25,10 @@ function services(profile, verify = async () => ({ uid: 'parent' })) {
   };
 }
 const parentProfile = { name: 'Sebastian', personKey: 'Sebastian', role: 'parent', active: true, canLogin: true };
+const schoolContext = (uid = 'parent', db) => ({ uid, profile: parentProfile, db, connection: {
+  id: 'family', scope: 'family', accountRole: 'parent', actorUid: uid,
+  allowedPersonKeys: ['Nikodem', 'Paweł'], personProfileIds: { Nikodem: 'profile-nikodem', Paweł: 'profile-pawel' },
+} });
 const request = { headers: { authorization: 'Bearer header.payload.signature', host: 'rodzina.example' } };
 
 test('backend requires a verified parent token with revocation checks', async () => {
@@ -133,18 +137,18 @@ test('student metadata strips every upstream token and unknown property', () => 
 
 test('imported identities are stable across parents and distinct across people', () => {
   const input = { personKey: 'Nikodem', profileId: 'safe-id', items: [{ externalId: 'grade-123', type: 'grade', title: '5', subject: 'Polski', person: 'Paweł', provider: 'spoof' }] };
-  const first = prepareImportedSchoolItems('parent1', input);
-  const second = prepareImportedSchoolItems('parent2', input);
+  const first = prepareImportedSchoolItems('family', input, schoolContext('parent1'));
+  const second = prepareImportedSchoolItems('family', input, schoolContext('parent2'));
   assert.equal(first[0].id, second[0].id);
   assert.equal(first[0].data.person, 'Nikodem');
   assert.equal(first[0].data.source, 'eduvulcan');
   assert.equal(first[0].data.provider, 'eduvulcan');
   assert.equal(first[0].data.sourceOwnerUid, 'parent1');
-  assert.notEqual(first[0].id, prepareImportedSchoolItems('parent1', { ...input, personKey: 'Paweł' })[0].id);
+  assert.notEqual(first[0].id, prepareImportedSchoolItems('family', { ...input, personKey: 'Paweł' }, schoolContext('parent1'))[0].id);
 });
 
 test('imported messages are isolated from children school collection', () => {
-  const result = prepareImportedSchoolItems('parent', { personKey: 'Nikodem', profileId: 'safe-id', items: [{ sourceRecordId: 'message-1', type: 'message', title: 'Od wychowawcy', body: 'Prywatna wiadomość', sender: 'Wychowawca', read: true }] });
+  const result = prepareImportedSchoolItems('family', { personKey: 'Nikodem', profileId: 'safe-id', items: [{ sourceRecordId: 'message-1', type: 'message', title: 'Od wychowawcy', body: 'Prywatna wiadomość', sender: 'Wychowawca', read: true }] }, schoolContext());
   assert.equal(result[0].collection, 'schoolParentMessages');
   assert.equal(result[0].data.note, 'Prywatna wiadomość');
   assert.equal(result[0].data.personKey, 'Nikodem');
@@ -155,13 +159,18 @@ test('malformed, repeated and oversized import batches fail before any database 
   const item = { externalId: 'same', type: 'lesson', title: 'Polski' };
   const base = { personKey: 'Nikodem', profileId: 'safe-id' };
   for (const items of [[item, item], [{ ...item, externalId: '' }], [{ ...item, type: 'other' }], Array.from({ length: 401 }, (_, i) => ({ ...item, externalId: String(i) }))]) {
-    assert.throws(() => prepareImportedSchoolItems('parent', { ...base, items }), EduServerError);
+    assert.throws(() => prepareImportedSchoolItems('family', { ...base, items }, schoolContext()), EduServerError);
   }
 });
 
 // Transactional in-memory boundary: successful writes commit together, failures commit none.
 function databaseFixture(initial) {
-  const records = new Map(Object.entries(initial));
+  const records = new Map(Object.entries({
+    'members/parent': parentProfile,
+    'members/profile-nikodem': { role: 'child', active: true, canLogin: false, personKey: 'Nikodem', schoolEnabled: true },
+    'members/profile-pawel': { role: 'child', active: true, canLogin: false, personKey: 'Paweł', schoolEnabled: true },
+    ...initial,
+  }));
   let writes = 0;
   let schoolReads = 0;
   const snapshot = (reference) => ({ exists: records.has(reference.path), data: () => records.get(reference.path) });
@@ -206,11 +215,12 @@ function databaseFixture(initial) {
       return result;
     },
   };
-  return { records, services: { db }, get writes() { return writes; }, get schoolReads() { return schoolReads; } };
+  return { records, services: schoolContext('parent', db), get writes() { return writes; }, get schoolReads() { return schoolReads; } };
 }
 
 function connectedFixture() {
   return {
+    scope: 'family', accountRole: 'parent', connectedByUid: 'parent',
     students: [{ id: 'safe-id', studentName: 'Nikodem', schoolName: 'SP4' }],
     selectedStudent: { profileId: 'safe-id', personKey: 'Nikodem' },
     expiresAt: Timestamp.fromMillis(Date.now() + 3600000), sessionVersion: 'version-new',
@@ -222,29 +232,29 @@ const guardedImport = { personKey: 'Nikodem', profileId: 'safe-id', sessionVersi
 
 test('disconnect, reconnect, changed pupil and stale leases block sync before any school read or write', async () => {
   for (const connection of [null, { ...connectedFixture(), sessionVersion: 'changed' }, { ...connectedFixture(), lease: { id: 'changed', expiresAt: Timestamp.fromMillis(Date.now() + 100000) } }, { ...connectedFixture(), selectedStudent: { profileId: 'another-profile', personKey: 'Nikodem' } }]) {
-    const fixture = databaseFixture(connection ? { '_eduConnections/parent': connection } : {});
-    await assert.rejects(upsertSchoolItems('parent', guardedImport, fixture.services), { code: 'EDU_CONNECTION_CHANGED' });
+    const fixture = databaseFixture(connection ? { '_eduConnections/family': connection } : {});
+    await assert.rejects(upsertSchoolItems('family', guardedImport, fixture.services), { code: 'EDU_CONNECTION_CHANGED' });
     assert.equal(fixture.writes, 0);
     assert.equal(fixture.schoolReads, 0);
   }
 });
 
 test('a manual row collision fails the whole import without altering existing data', async () => {
-  const generated = prepareImportedSchoolItems('parent', guardedImport)[0];
+  const generated = prepareImportedSchoolItems('family', guardedImport, schoolContext())[0];
   const manual = { person: 'Nikodem', title: 'Ręczny wpis rodziny', type: 'lesson', createdBy: 'parent' };
-  const fixture = databaseFixture({ '_eduConnections/parent': connectedFixture(), [`schoolItems/${generated.id}`]: manual });
-  await assert.rejects(upsertSchoolItems('parent', guardedImport, fixture.services), { code: 'EDU_IMPORT_CONFLICT' });
+  const fixture = databaseFixture({ '_eduConnections/family': connectedFixture(), [`schoolItems/${generated.id}`]: manual });
+  await assert.rejects(upsertSchoolItems('family', guardedImport, fixture.services), { code: 'EDU_IMPORT_CONFLICT' });
   assert.equal(fixture.writes, 0);
   assert.deepEqual(fixture.records.get(`schoolItems/${generated.id}`), manual);
 });
 
 test('valid synchronization upserts provider rows with stable identities and preserves original creation', async () => {
   const connection = connectedFixture();
-  const generated = prepareImportedSchoolItems('parent', guardedImport)[0];
+  const generated = prepareImportedSchoolItems('family', guardedImport, schoolContext())[0];
   const createdAt = Timestamp.fromMillis(1000);
   const existing = { ...generated.data, title: 'Poprzedni tytuł', createdBy: 'another-parent', createdAt };
-  const fixture = databaseFixture({ '_eduConnections/parent': connection, [`schoolItems/${generated.id}`]: existing });
-  const counts = await upsertSchoolItems('parent', guardedImport, fixture.services);
+  const fixture = databaseFixture({ '_eduConnections/family': connection, [`schoolItems/${generated.id}`]: existing });
+  const counts = await upsertSchoolItems('family', guardedImport, fixture.services);
   assert.deepEqual(counts, { added: 0, updated: 1, deleted: 0, total: 1, messages: 0 });
   const updated = fixture.records.get(`schoolItems/${generated.id}`);
   assert.equal(updated.title, 'Polski');
@@ -255,31 +265,31 @@ test('valid synchronization upserts provider rows with stable identities and pre
 test('status excludes encrypted sessions and selection cannot refer to an unlisted pupil', async () => {
   const connection = connectedFixture();
   delete connection.lease;
-  const fixture = databaseFixture({ '_eduConnections/parent': connection });
-  const status = await getConnectionStatus('parent', fixture.services);
+  const fixture = databaseFixture({ '_eduConnections/family': connection });
+  const status = await getConnectionStatus('family', fixture.services);
   assert.equal(status.state, 'connected');
   assert.equal(JSON.stringify(status).includes('never-return-this'), false);
   assert.equal('sessionVersion' in status, false);
-  await assert.rejects(selectConnectionStudent('parent', { profileId: 'foreign-profile', personKey: 'Nikodem' }, fixture.services), { code: 'EDU_INVALID_STUDENT' });
+  await assert.rejects(selectConnectionStudent('family', { profileId: 'foreign-profile', personKey: 'Nikodem' }, fixture.services), { code: 'EDU_INVALID_STUDENT' });
   assert.equal(fixture.writes, 0);
 });
 
 test('refreshed cookie jars cannot overwrite a newly reconnected session', async () => {
-  const fixture = databaseFixture({ '_eduConnections/parent': connectedFixture() });
-  await assert.rejects(updateConnectionSession('parent', { cookies: [] }, { sessionVersion: 'old-version', leaseId: 'lease-new' }, fixture.services), { code: 'EDU_CONNECTION_CHANGED' });
+  const fixture = databaseFixture({ '_eduConnections/family': connectedFixture() });
+  await assert.rejects(updateConnectionSession('family', { cookies: [] }, { sessionVersion: 'old-version', leaseId: 'lease-new' }, fixture.services), { code: 'EDU_CONNECTION_CHANGED' });
   assert.equal(fixture.writes, 0);
 });
 
 test('disconnect cancels an in-flight login without resetting brute-force attempt counters', async () => {
   const fixture = databaseFixture({
-    '_eduConnections/parent': connectedFixture(),
-    '_eduConnectLocks/parent': { id: 'login-in-flight', attempts: 4, expiresAt: Timestamp.fromMillis(Date.now() + 90000), windowStartedAt: Timestamp.now() },
+    '_eduConnections/family': connectedFixture(),
+    '_eduConnectLocks/family': { id: 'login-in-flight', attempts: 4, expiresAt: Timestamp.fromMillis(Date.now() + 90000), windowStartedAt: Timestamp.now() },
   });
-  await disconnectConnection('parent', fixture.services);
-  assert.equal(fixture.records.has('_eduConnections/parent'), false);
-  assert.equal(fixture.records.get('_eduConnectLocks/parent').attempts, 4);
-  await assert.rejects(saveConnection('parent', { session: { cookies: [] }, profiles: [{ id: 'safe-id', studentName: 'Nikodem' }], connectLeaseId: 'login-in-flight' }, fixture.services), { code: 'EDU_CONNECTION_CHANGED' });
-  assert.equal(fixture.records.has('_eduConnections/parent'), false);
+  await disconnectConnection('family', fixture.services);
+  assert.equal(fixture.records.has('_eduConnections/family'), false);
+  assert.equal(fixture.records.get('_eduConnectLocks/family').attempts, 4);
+  await assert.rejects(saveConnection('family', { session: { cookies: [] }, profiles: [{ id: 'safe-id', studentName: 'Nikodem' }], connectLeaseId: 'login-in-flight' }, fixture.services), { code: 'EDU_CONNECTION_CHANGED' });
+  assert.equal(fixture.records.has('_eduConnections/family'), false);
 });
 
 function providerRow({ type = 'grade', person = 'Nikodem', scope = 'grades:period1', date = '', externalId = 'old-1' } = {}) {
@@ -288,13 +298,13 @@ function providerRow({ type = 'grade', person = 'Nikodem', scope = 'grades:perio
 
 test('complete grade scope prunes withdrawn provider grades while retaining other periods, people and manual rows', async () => {
   const fixture = databaseFixture({
-    '_eduConnections/parent': connectedFixture(),
+    '_eduConnections/family': connectedFixture(),
     'schoolItems/old-grade': providerRow(),
     'schoolItems/another-period': providerRow({ scope: 'grades:period2' }),
     'schoolItems/another-person': providerRow({ person: 'Paweł' }),
     'schoolItems/manual': { person: 'Nikodem', sourceProfileId: 'safe-id', providerScopeId: 'grades:period1', title: 'Ręczny wpis' },
   });
-  const result = await upsertSchoolItems('parent', { ...guardedImport, items: [], reconcileScopes: [{ type: 'grade', scopeId: 'grades:period1' }] }, fixture.services);
+  const result = await upsertSchoolItems('family', { ...guardedImport, items: [], reconcileScopes: [{ type: 'grade', scopeId: 'grades:period1' }] }, fixture.services);
   assert.equal(result.deleted, 1);
   assert.equal(fixture.records.has('schoolItems/old-grade'), false);
   for (const id of ['another-period', 'another-person', 'manual']) assert.equal(fixture.records.has(`schoolItems/${id}`), true);
@@ -302,21 +312,21 @@ test('complete grade scope prunes withdrawn provider grades while retaining othe
 
 test('timetable reconciliation is bounded by date and preserves rows outside its confirmed range', async () => {
   const fixture = databaseFixture({
-    '_eduConnections/parent': connectedFixture(),
+    '_eduConnections/family': connectedFixture(),
     'schoolItems/withdrawn': providerRow({ type: 'lesson', scope: 'timetable', date: '2026-10-04' }),
     'schoolItems/history': providerRow({ type: 'lesson', scope: 'timetable', date: '2026-09-24' }),
     'schoolItems/future': providerRow({ type: 'lesson', scope: 'timetable', date: '2026-10-21' }),
     'schoolItems/undated': providerRow({ type: 'lesson', scope: 'timetable', date: '' }),
   });
-  const result = await upsertSchoolItems('parent', { ...guardedImport, items: [], reconcileScopes: [{ type: 'lesson', scopeId: 'timetable', dateFrom: '2026-10-01', dateTo: '2026-10-07' }] }, fixture.services);
+  const result = await upsertSchoolItems('family', { ...guardedImport, items: [], reconcileScopes: [{ type: 'lesson', scopeId: 'timetable', dateFrom: '2026-10-01', dateTo: '2026-10-07' }] }, fixture.services);
   assert.equal(result.deleted, 1);
   assert.equal(fixture.records.has('schoolItems/withdrawn'), false);
   for (const id of ['history', 'future', 'undated']) assert.equal(fixture.records.has(`schoolItems/${id}`), true);
 });
 
 test('failed, partial or unscoped provider fetches cannot trigger pruning', async () => {
-  const fixture = databaseFixture({ '_eduConnections/parent': connectedFixture(), 'schoolItems/old-grade': providerRow() });
-  const result = await upsertSchoolItems('parent', { ...guardedImport, items: [] }, fixture.services);
+  const fixture = databaseFixture({ '_eduConnections/family': connectedFixture(), 'schoolItems/old-grade': providerRow() });
+  const result = await upsertSchoolItems('family', { ...guardedImport, items: [] }, fixture.services);
   assert.equal(result.deleted, 0);
   assert.equal(fixture.records.has('schoolItems/old-grade'), true);
   for (const scope of [{ type: 'message', scopeId: 'all' }, { type: 'grade', scopeId: 'grades:period1', dateFrom: '2026-10-01' }, { type: 'lesson', scopeId: 'timetable', dateFrom: '2026-02-31', dateTo: '2026-03-03' }]) {
@@ -325,10 +335,10 @@ test('failed, partial or unscoped provider fetches cannot trigger pruning', asyn
 });
 
 test('excessive reconciliation changes fail before writing or deleting any data', async () => {
-  const initial = { '_eduConnections/parent': connectedFixture() };
+  const initial = { '_eduConnections/family': connectedFixture() };
   for (let index = 0; index < 451; index += 1) initial[`schoolItems/old-${index}`] = providerRow({ externalId: `old-${index}` });
   const fixture = databaseFixture(initial);
-  await assert.rejects(upsertSchoolItems('parent', { ...guardedImport, items: [], reconcileScopes: [{ type: 'grade', scopeId: 'grades:period1' }] }, fixture.services), { code: 'EDU_IMPORT_LIMIT' });
+  await assert.rejects(upsertSchoolItems('family', { ...guardedImport, items: [], reconcileScopes: [{ type: 'grade', scopeId: 'grades:period1' }] }, fixture.services), { code: 'EDU_IMPORT_LIMIT' });
   assert.equal(fixture.writes, 0);
-  assert.equal(fixture.records.size, 452);
+  assert.equal(fixture.records.size, 455);
 });

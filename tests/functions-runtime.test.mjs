@@ -29,3 +29,19 @@ test('existing school trigger names remain while no active Functions export enab
   }
   assert.equal(functions.deliverPush, undefined);
 });
+
+
+test('Google Calendar adds one independent Gen2 hourly Warsaw job using separate calendar secrets', () => {
+  const endpoint = functions.googleCalendarHourly.__endpoint;
+  assert.equal(endpoint.platform, 'gcfv2');
+  assert.deepEqual(endpoint.region, ['europe-west1']);
+  assert.equal(endpoint.scheduleTrigger.schedule, '0 * * * *');
+  assert.equal(endpoint.scheduleTrigger.timeZone, 'Europe/Warsaw');
+  assert.equal(endpoint.scheduleTrigger.retryConfig.retryCount, 0);
+  assert.equal(endpoint.timeoutSeconds, 540); assert.equal(endpoint.maxInstances, 1); assert.equal(endpoint.concurrency, 1);
+  assert.deepEqual(endpoint.secretEnvironmentVariables, [{ key: 'CALENDAR_ENCRYPTION_KEY_BASE64' }, { key: 'GOOGLE_CALENDAR_CLIENT_SECRET' }]);
+  const exportedEndpoints = Object.entries(functions).filter(([, value]) => value?.__endpoint).map(([name]) => name).sort();
+  assert.equal(exportedEndpoints.length, 14);
+  assert.deepEqual(exportedEndpoints, ['notifyCalendar', 'notifyPrivateCalendar', 'notifyTasks', 'notifyShopping', 'notifyHealth', 'notifySchool',
+    'notifySchoolParents', 'notifySchoolStudent', 'notifyChat', 'notifySchoolSync', 'eduVulcanSchoolHours', 'eduVulcanOffHours', 'medicineReminders', 'googleCalendarHourly'].sort());
+});

@@ -1,8 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { onSnapshot as subscribe, type DocumentData, type Query, type QuerySnapshot } from 'firebase/firestore';
 
-export function notify(message: string, kind: 'error' | 'info' = 'info') {
-  window.dispatchEvent(new CustomEvent('family-notice', { detail: { message, kind } }));
+export function notify(message: string, kind: 'error' | 'info' = 'info', source?: string) {
+  window.dispatchEvent(new CustomEvent('family-notice', { detail: { message, kind, source } }));
+}
+
+/** Clear only the recovered/unmounted subscription, never an unrelated action's notice. */
+export function clearNotice(source: string) {
+  window.dispatchEvent(new CustomEvent('family-notice-clear', { detail: { source } }));
 }
 
 export function errorMessage(error: unknown) {
@@ -18,18 +23,24 @@ export function onSnapshot(target: Query<DocumentData>, next: (snapshot: QuerySn
 }
 
 export function Feedback() {
-  const [notice, setNotice] = useState<{ message: string; kind: string } | null>(null);
+  const [notice, setNotice] = useState<{ message: string; kind: string; source?: string } | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
   useEffect(() => {
     const receive = (e: Event) => setNotice((e as CustomEvent).detail);
+    const clear = (e: Event) => {
+      const source = (e as CustomEvent).detail?.source;
+      if (typeof source === 'string') setNotice(current => current?.source === source ? null : current);
+    };
     const rejected = (e: PromiseRejectionEvent) => { e.preventDefault(); notify(errorMessage(e.reason), 'error'); };
     const connected = () => setOnline(navigator.onLine);
     window.addEventListener('family-notice', receive);
+    window.addEventListener('family-notice-clear', clear);
     window.addEventListener('unhandledrejection', rejected);
     window.addEventListener('online', connected);
     window.addEventListener('offline', connected);
     return () => {
       window.removeEventListener('family-notice', receive);
+      window.removeEventListener('family-notice-clear', clear);
       window.removeEventListener('unhandledrejection', rejected);
       window.removeEventListener('online', connected);
       window.removeEventListener('offline', connected);

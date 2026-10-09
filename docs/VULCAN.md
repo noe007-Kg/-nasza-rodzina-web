@@ -52,7 +52,7 @@ Użyj paczki **PROJEKT 1.5.1**, z katalogami `api/` i `server/`. Wgranie samego 
    | `FIREBASE_SERVICE_ACCOUNT_JSON` **albo** `FIREBASE_SERVICE_ACCOUNT_BASE64` | Dokładnie jeden wariant | Pełna zawartość klucza Firebase Admin w JSON albo ten sam plik zakodowany w base64. |
    | `EDUVULCAN_ENCRYPTION_KEY_BASE64` | Tak | Losowy klucz 32-bajtowy zakodowany w base64; zachowaj istniejącą wartość przy aktualizacji. |
    | `EDUVULCAN_ENCRYPTION_KEY_ID` | Nie | Domyślnie `v1`; zachowaj wartość zgodną z dotychczasowym kluczem. |
-   | `EDUVULCAN_SESSION_TTL_HOURS` | Nie | Domyślnie `24`; dopuszczalny zakres to 1–24 godziny. |
+   | `EDUVULCAN_SESSION_TTL_HOURS` | Nie | Domyślnie `24`; maksymalna retencja nieaktywnej sesji to 24 godziny. Potwierdzony odczyt szkolny wraz z udanym, chronionym importem odnawia ten termin. Sam status ani błędy synchronizacji go nie odnawiają; eduVULCAN może unieważnić sesję wcześniej. |
    | `EDUVULCAN_SITE_ORIGIN` | Nie | Dokładny adres produkcyjnej aplikacji, np. `https://twoja-rodzina.vercel.app`, bez dodatkowej ścieżki. Gdy puste, serwer porównuje origin z hostem żądania. |
 
    **Nowe zmienne wymagane w 1.5.1: żadne.** Model wspólnego połączenia nie wymaga ustawiania UID rodziców, loginu, hasła, tokenów ani kodów aktywacyjnych w Vercel. Publiczne `VITE_FIREBASE_*` pozostają bez zmian.

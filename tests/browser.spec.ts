@@ -10,8 +10,9 @@ async function login(page: Page, account: Account = accounts.parent) {
   await page.getByLabel('Hasło', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Zaloguj się', exact: true }).click();
   await expect(page.locator('.app-shell')).toBeVisible();
-  await expect(page.getByText(`Cześć,`, { exact: false })).toBeVisible();
-  await expect(page.locator('.start-welcome-copy')).toContainText(account.name);
+  const welcome = page.getByTestId('start-merged-banner');
+  await expect(welcome.getByRole('heading', { name: /^Cześć,/ })).toBeVisible();
+  await expect(welcome).toContainText(account.name);
 }
 
 async function goTo(page: Page, module: Module) {

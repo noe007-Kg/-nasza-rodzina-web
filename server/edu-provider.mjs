@@ -354,6 +354,10 @@ export function createEduProvider({ fetchImpl = (...args) => globalThis.fetch(..
     if (/name=["'](?:UserName|Password)["']/i.test(landing.body)) throw failure('EDU_SESSION_EXPIRED', 401);
     journal = deriveJournalLanding(landing);
     const pupil = chooseContextStudent(await io.json(apiUrl(journal.baseUrl, 'Context'), journal), journal.appKey);
+    // This is the actual authorized, semantically validated school read time.
+    // Return it only if the operation below really succeeds; an HTTP 200 login
+    // page, provider denial, timeout or failed operation cannot confirm a session.
+    const sessionConfirmedAt = clock();
     journal = { ...journal, ...pupil, profileId };
     const today = polishDate(clock()); const dateFrom = shiftDate(today, -7); const dateTo = shiftDate(today, 21);
     const assignmentsTo = shiftDate(today, 30);
@@ -469,7 +473,7 @@ export function createEduProvider({ fetchImpl = (...args) => globalThis.fetch(..
       ...(gradeResult ? ['grade'] : []), ...(timetableResult !== null ? ['lesson'] : []),
       ...(assignmentsNotificationReady ? ['homework', 'test'] : []), ...(messagesNotificationReady ? ['message'] : []),
     ];
-    return { session: { ...session, cookieJar: jar.toJSON(), currentProfileId: profileId, journal }, items, counts, warnings,
+    return { session: { ...session, cookieJar: jar.toJSON(), currentProfileId: profileId, journal }, sessionConfirmedAt, items, counts, warnings,
       reconcileScopes, notificationReadyTypes, range: { dateFrom, dateTo, assignmentsTo } };
   }
 

@@ -42,7 +42,7 @@ function fingerprint(snapshot: QuerySnapshot): string {
  * cache/listen targets. There is no interval and no background polling. */
 export function useInAppNotificationRefresh(user: User, member: RefreshMember = null): void {
   useEffect(() => {
-    if (!member || !['parent', 'child'].includes(member.role || '')) return;
+    if (!member || !['parent', 'adult', 'child'].includes(member.role || '')) return;
     let alive = true;
     let active = false;
     let pending: InAppRefreshReason | null = null;

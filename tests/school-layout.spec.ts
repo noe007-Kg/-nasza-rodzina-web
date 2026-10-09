@@ -205,11 +205,13 @@ test('szkolne kafle zmieniają profil i otwierają istniejące szczegóły z zac
   await profiles.getByRole('button', { name: 'Nikodem', exact: true }).click();
   await expectRecordCounts(page);
   await page.getByTestId('school-stat-grades').click();
+  await page.getByTestId('school-grade-subject-card').filter({ hasText: 'Matematyka' }).click();
   const entry = page.locator('.school-record-list .school-entry').filter({ hasText: gradeTitle });
   await expect(entry).toBeVisible();
   await entry.click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByRole('heading', { name: gradeTitle, exact: true })).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'Szczegóły oceny', exact: true })).toBeVisible();
+  await expect(dialog).toContainText(gradeTitle);
   await expect(dialog).toContainText('Matematyka');
   await expect(dialog).toContainText('tylko do odczytu');
   await expect(dialog.getByRole('button', { name: 'Edytuj wpis', exact: true })).toHaveCount(0);

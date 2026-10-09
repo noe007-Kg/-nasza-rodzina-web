@@ -50,7 +50,7 @@ export function deriveNotificationEvent(collectionName, id, before, after) {
   return { id: `${config[0]}:${id}${before ? ':' + hash(semanticRecord(after)).slice(0, 24) : ''}`, category: config[0], module: config[1], title: config[2], body: 'Otwórz aplikację, aby zobaczyć szczegóły.', important: value.priority === 'high', collection: collectionName, recordId: id, record: value, excludeUid: clean(value.uid || value.updatedBy || value.createdBy) };
 }
 export function canReceiveNotification(member, event) {
-  if (!member || member.active !== true || member.canLogin !== true || !['parent', 'child'].includes(member.role)) return false;
+  if (!member || member.active !== true || member.canLogin !== true || member.archived === true || !['parent', 'adult', 'child'].includes(member.role)) return false;
   if (member.id === event.excludeUid) return false;
   const record = event.record || {};
   const ownPerson = member.personKey || member.name;

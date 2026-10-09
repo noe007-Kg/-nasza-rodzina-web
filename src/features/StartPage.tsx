@@ -5,17 +5,23 @@ import { collection, query, where, Timestamp } from 'firebase/firestore';
 import { DndContext, DragOverlay, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { db } from '../firebase';
 import { onSnapshot } from '../feedback';
-import { AppIcon, capitalize, formatShortDate, formatTime, isParent, isPersonKey, ownPerson, personLabel, schoolQuery, isSchoolType, type CalendarEventData, type Member, type Page, type SchoolRecord, type TaskItem, type ChatMessage } from '../app-shared';
-import { addDays, endOfDay, formatDateInput, generateOccurrences, parseLocalDate, startOfDay } from '../calendar-utils';
+import { AppIcon, capitalize, formatShortDate, formatTime, isAdultMember, isParent, isPersonKey, ownPerson, personLabel, schoolQuery, isSchoolType, type CalendarEventData, type Member, type Page, type SchoolRecord, type TaskItem, type QuickProduct } from '../app-shared';
+import { addDays, endOfDay, formatDateInput, generateOccurrences, startOfDay } from '../calendar-utils';
 import { subscribeCalendar } from '../calendar-store';
 import { Icon } from '../ui';
 import { useDashboardOrder } from './useDashboardOrder';
 import { reorderDashboardCards, type StartCardId } from './start-layout';
 import './start-dashboard.css';
+import { schoolReadAccess, schoolReadAccessKey } from '../school/read-access';
+import { useFamilyDirectory, orderedFamilyProfiles } from '../family-directory';
+import { useNotifications } from '../notifications';
+import { DEFAULT_QUICK_PRODUCTS, categorizeProduct, isShoppingCategory } from './ShoppingPage';
+import { buildFamilyTime, latestConversations, shoppingPreview, type StartChatMessage, type StartShoppingItem, type StartSchoolRecord } from './start-tile-projections';
+import { ChatDetails, FamilyTimeDetails, ShoppingDetails } from './StartTileDetails';
 
 type Weather = { temp: number; max: number; min: number; wind: number; label: string; icon: string };
 type HealthPreview = { id: string; title: string; person: string; type: string; date: string; time: string; status: string; medicineTime: string; confirmedDate: string };
-type Tile = { id: StartCardId; label: string; page: Page; value: ReactNode; status: string; preview: ReactNode };
+type Tile = { id: StartCardId; label: string; page: Page; value?: ReactNode; status?: string; preview?: ReactNode; details?: ReactNode };
 function timestampDate(value: unknown) { return value instanceof Timestamp ? value.toDate() : undefined; }
 
 /** No sortable transforms: all seven source tiles keep their positions until drop. */
@@ -33,19 +39,24 @@ function DashboardTile({ tile, active, onOpen, suppressClick, dragDisabled }: { 
 function TileContents({ tile, overlay = false }: { tile: Tile; overlay?: boolean }) {
   return <>
     <span className="start-card-heading"><span className="start-card-icon"><AppIcon page={tile.id === 'family-time' ? 'Rodzina' : tile.page} size={26}/></span><strong>{tile.label}</strong><Icon name="arrow-right" size={17}/></span>
-    <span className="start-card-value">{tile.value}</span><span className="start-card-status">{tile.status}</span>
-    <span className="start-card-preview" id={overlay ? undefined : `start-card-preview-${tile.id}`}>{tile.preview}</span>
+    {tile.details ? <span className="start-custom-content" id={overlay ? undefined : `start-card-preview-${tile.id}`}>{tile.details}</span> : <><span className="start-card-value">{tile.value}</span><span className="start-card-status">{tile.status}</span>
+    <span className="start-card-preview" id={overlay ? undefined : `start-card-preview-${tile.id}`}>{tile.preview}</span></>}
   </>;
 }
 
 export function StartPage({ user, member, goTo }: { user: User; member: Member | null; goTo: (page: Page) => void }) {
   const name = member?.name || 'Rodzina';
   const parent = isParent(member); const own = ownPerson(member);
+  const profiles = orderedFamilyProfiles(useFamilyDirectory(), user.uid);
+  const { items: notifications } = useNotifications();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [events, setEvents] = useState<CalendarEventData[]>([]);
-  const [schoolRecords, setSchoolRecords] = useState<SchoolRecord[]>([]);
-  const [shopping, setShopping] = useState<{ id: string; title: string; done: boolean; quantity: string; unit: string }[]>([]);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const schoolScope = schoolReadAccessKey(user.uid, schoolReadAccess(member));
+  const [schoolData, setSchoolData] = useState<{ scope: string; rows: (SchoolRecord & StartSchoolRecord)[] }>({ scope: '', rows: [] });
+  const schoolRecords = schoolData.scope === schoolScope ? schoolData.rows : [];
+  const [shopping, setShopping] = useState<StartShoppingItem[]>([]);
+  const [quickProducts, setQuickProducts] = useState<QuickProduct[]>([]);
+  const [messages, setMessages] = useState<StartChatMessage[]>([]);
   const [health, setHealth] = useState<HealthPreview[]>([]);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [activeCard, setActiveCard] = useState<StartCardId | null>(null);
@@ -71,19 +82,36 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
     }));
   }), [user.uid]);
   useEffect(() => onSnapshot(collection(db, 'shoppingItems'), snap => setShopping(snap.docs.map(d => {
-    const x = d.data(); return { id: d.id, title: String(x.title || ''), done: x.done === true, quantity: typeof x.quantity === 'string' ? x.quantity : '', unit: typeof x.unit === 'string' ? x.unit : '' };
+    const x = d.data(); const title = String(x.title || ''); return { id: d.id, title, done: x.done === true, category: isShoppingCategory(x.category) ? x.category : categorizeProduct(title), quantity: typeof x.quantity === 'string' ? x.quantity : '', unit: typeof x.unit === 'string' ? x.unit : '', createdAt: timestampDate(x.createdAt) };
+  }))), [user.uid]);
+  useEffect(() => onSnapshot(collection(db, 'quickProducts'), snap => setQuickProducts(snap.docs.map(d => {
+    const x = d.data(); return { id: d.id, title: String(x.title || 'Produkt'), category: isShoppingCategory(x.category) ? x.category : 'inne',
+      icon: typeof x.icon === 'string' ? x.icon : undefined, imageURL: typeof x.imageURL === 'string' ? x.imageURL : undefined,
+      adultOnly: typeof x.adultOnly === 'boolean' ? x.adultOnly : undefined, hidden: x.hidden === true, defaultQuantity: String(x.defaultQuantity || '1'), defaultUnit: String(x.defaultUnit || 'szt.') };
   }))), [user.uid]);
   useEffect(() => subscribeCalendar(user.uid, setEvents), [user.uid]);
-  useEffect(() => onSnapshot(schoolQuery(member), snap => setSchoolRecords(snap.docs.map(d => {
-    const x = d.data();
-    return { id: d.id, title: String(x.title || ''), person: isPersonKey(x.person) ? x.person : 'Nikodem', type: isSchoolType(x.type) ? x.type : 'homework',
-      subject: typeof x.subject === 'string' ? x.subject : '', date: typeof x.date === 'string' ? x.date : '', time: typeof x.time === 'string' ? x.time : '',
-      endTime: typeof x.endTime === 'string' ? x.endTime : '', weekday: Number(x.weekday || 0), note: typeof x.note === 'string' ? x.note : '', createdAt: timestampDate(x.createdAt) };
-  }))), [user.uid, parent, own]);
   useEffect(() => {
-    const groups: Record<string, ChatMessage[]> = { family: [], private: [] };
+    setSchoolData({ scope: schoolScope, rows: [] });
+    const target = schoolQuery(member);
+    if (!target) return;
+    let active = true;
+    const stop = onSnapshot(target, snap => {
+      if (!active) return;
+      setSchoolData({ scope: schoolScope, rows: snap.docs.flatMap(d => {
+        const x = d.data();
+        if (!isPersonKey(x.person) || !isSchoolType(x.type)) return [];
+        return [{ id: d.id, title: String(x.title || ''), person: x.person, type: x.type,
+          subject: typeof x.subject === 'string' ? x.subject : '', date: typeof x.date === 'string' ? x.date : '', time: typeof x.time === 'string' ? x.time : '',
+          endTime: typeof x.endTime === 'string' ? x.endTime : '', weekday: Number(x.weekday || 0), note: typeof x.note === 'string' ? x.note : '',
+          source: typeof x.source === 'string' ? x.source : undefined, calendarEventId: typeof x.calendarEventId === 'string' ? x.calendarEventId : undefined, createdAt: timestampDate(x.createdAt) }];
+      }) });
+    }, () => { if (active) setSchoolData({ scope: schoolScope, rows: [] }); });
+    return () => { active = false; stop(); };
+  }, [schoolScope]);
+  useEffect(() => {
+    const groups: Record<string, StartChatMessage[]> = { family: [], private: [] };
     const load = (group: string, snap: import('firebase/firestore').QuerySnapshot) => {
-      groups[group] = snap.docs.map(d => { const x = d.data(); return { id: d.id, text: String(x.text || ''), name: String(x.name || 'Rodzina'), uid: String(x.uid || ''), channel: String(x.channel || 'family'), createdAt: timestampDate(x.createdAt) }; });
+      groups[group] = snap.docs.map(d => { const x = d.data(); return { id: d.id, text: String(x.text || ''), name: String(x.name || 'Rodzina'), uid: String(x.uid || ''), channel: String(x.channel || 'family'), participants: Array.isArray(x.participants) ? x.participants.filter((value: unknown) => typeof value === 'string') : [], createdAt: timestampDate(x.createdAt) }; });
       setMessages([...groups.family, ...groups.private].sort((a, b) => (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0)));
     };
     const family = onSnapshot(query(collection(db, 'familyMessages'), where('channel', '==', 'family')), snap => load('family', snap));
@@ -113,28 +141,21 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const todayOccurrences = useMemo(() => events.flatMap(event => generateOccurrences(event, startOfDay(now), endOfDay(now))).sort((a, b) => a.date.getTime() - b.date.getTime()), [events, todayKey]);
   const upcomingEvents = useMemo(() => events.flatMap(event => generateOccurrences(event, startOfDay(now), endOfDay(addDays(now, 45)))).filter(occurrence => occurrence.endDate >= now).sort((a, b) => a.date.getTime() - b.date.getTime()), [events, now]);
   const todaySchoolItems = useMemo(() => schoolRecords.filter(record => (record.type === 'lesson' || record.type === 'activity') && (record.weekday === todayWeekday || (!!record.date && record.date === todayKey))).sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99')), [schoolRecords, todayWeekday, todayKey]);
-  function schoolEnd(record: SchoolRecord) {
-    const start = parseLocalDate(todayKey, record.time || '08:00'); const end = parseLocalDate(todayKey, record.endTime || record.time || '08:45');
-    return end > start ? end : new Date(start.getTime() + 45 * 60000);
-  }
-  const allFreeAt = useMemo(() => {
-    const ends = todayOccurrences.filter(occurrence => occurrence.source.person !== 'family' && !occurrence.source.allDay).map(occurrence => occurrence.endDate);
-    for (const item of todaySchoolItems) ends.push(schoolEnd(item));
-    return ends.length ? formatTime(ends.reduce((max, value) => value > max ? value : max, ends[0])) : 'Teraz';
-  }, [todayOccurrences, todaySchoolItems, todayKey]);
+  const familyTime = buildFamilyTime(profiles, todayOccurrences, schoolRecords, now);
   const openTasks = tasks.filter(item => !item.done).sort((a, b) => ({ high: 0, normal: 1, low: 2 }[a.priority] - { high: 0, normal: 1, low: 2 }[b.priority] || (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99')));
   const openShopping = shopping.filter(item => !item.done);
-  const latestConversations = messages.filter((message, index, all) => all.findIndex(other => other.channel === message.channel) === index).slice(0, 3);
+  const conversations = latestConversations(messages, profiles, user.uid);
+  const shoppingRows = shoppingPreview(shopping, DEFAULT_QUICK_PRODUCTS, quickProducts, isAdultMember(member));
   const healthUpcoming = health.filter(record => record.type === 'visit' && record.date >= todayKey && record.status !== 'cancelled' && record.status !== 'done').sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
   const medicines = health.filter(record => record.type === 'medicine' && record.confirmedDate !== todayKey).sort((a, b) => a.medicineTime.localeCompare(b.medicineTime));
   const schoolUpcoming = schoolRecords.filter(record => (record.type === 'homework' || record.type === 'test') && (!record.date || record.date >= todayKey)).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999'));
   const rows = (items: ReactNode[]) => items.length ? <span className="start-preview-rows">{items.map((item, index) => <span key={index}>{item}</span>)}</span> : null;
   const tiles: Tile[] = [
-    { id: 'family-time', label: 'Rodzinny czas', page: 'Kalendarz', value: allFreeAt, status: allFreeAt === 'Teraz' ? 'Wszyscy wolni' : 'Wszyscy wolni od…', preview: 'Liczymy godziny zakończenia pracy, szkoły i zajęć.' },
+    { id: 'family-time', label: 'Rodzinny czas', page: 'Kalendarz', details: <FamilyTimeDetails summary={familyTime} now={now}/> },
     { id: 'calendar', label: 'Kalendarz', page: 'Kalendarz', value: todayOccurrences.length, status: 'wydarzeń dzisiaj', preview: rows(upcomingEvents.slice(0, 3).map(occurrence => <><time>{formatShortDate(formatDateInput(occurrence.date))} · {occurrence.source.allDay ? 'cały dzień' : formatTime(occurrence.date)}</time><span>{occurrence.source.title}</span></>)) || 'Brak nadchodzących wydarzeń.' },
     { id: 'tasks', label: 'Zadania', page: 'Zadania', value: openTasks.length, status: 'zadań do zrobienia', preview: rows(openTasks.slice(0, 3).map(item => <><span className={`start-preview-dot${item.priority === 'high' ? ' important' : ''}`}/><span>{item.title}</span></>)) || 'Brak zadań do zrobienia.' },
-    { id: 'shopping', label: 'Zakupy', page: 'Zakupy', value: openShopping.length, status: 'produktów na liście', preview: rows(openShopping.slice(0, 3).map(item => <><span className="start-preview-dot"/><span>{item.title}{item.quantity ? ` · ${item.quantity} ${item.unit}` : ''}</span></>)) || 'Lista zakupów jest pusta.' },
-    { id: 'chat', label: 'Czat', page: 'Czat', value: latestConversations.length, status: 'ostatnie rozmowy', preview: rows(latestConversations.map(message => <><span className="start-chat-name">{message.channel === 'family' ? 'Rodzina' : message.name}</span><span>{message.text.slice(0, 85)}</span></>)) || 'Napisz pierwszą wiadomość.' },
+    { id: 'shopping', label: 'Zakupy', page: 'Zakupy', details: <ShoppingDetails rows={shoppingRows} openCount={openShopping.length} total={shopping.length} bought={shopping.length - openShopping.length}/> },
+    { id: 'chat', label: 'Czat', page: 'Czat', details: <ChatDetails conversations={conversations} notifications={notifications} messages={messages} currentUid={user.uid}/> },
     { id: 'health', label: 'Zdrowie', page: 'Zdrowie', value: healthUpcoming.length, status: 'nadchodzących wizyt', preview: rows([...healthUpcoming.slice(0, 2).map(record => <><time>{formatShortDate(record.date)} · {record.time || '—'}</time><span>{record.title} · {record.person}</span></>), ...medicines.slice(0, 1).map(record => <><time>{record.medicineTime || 'Lek'}</time><span>{record.title} · {record.person}</span></>)]) || 'Brak nadchodzących wizyt i leków do potwierdzenia.' },
     { id: 'school', label: 'Szkoła', page: 'Szkoła', value: todaySchoolItems.length, status: 'lekcji i zajęć dzisiaj', preview: rows([...todaySchoolItems.slice(0, 1).map(record => <><time>{record.time || '—'}</time><span>{record.subject || record.title} · {personLabel(record.person)}</span></>), ...schoolUpcoming.slice(0, 2).map(record => <><span className="start-school-kind">{record.type === 'test' ? 'Sprawdzian' : 'Zadanie'}</span><span>{record.title} · {personLabel(record.person)}</span></>)]) || 'Brak zaplanowanych zajęć i nowych zadań.' },
   ];
@@ -145,6 +166,7 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   }
   return <div className="page-content start-dashboard-page family-ui start-dashboard-v151" data-testid="start-dashboard">
     <section className="start-family-banner" data-testid="start-merged-banner" aria-label="Powitanie i pogoda">
+      <div className="start-mobile-header" data-testid="start-mobile-header"><img src="/nasza-rodzina-logo.svg" alt="Nasza Rodzina"/><h1>Cześć, <span>{name}!</span></h1><span className="start-mobile-weather" title={weather?.label || 'Pobieranie pogody…'}><span aria-hidden="true">{weather?.icon || '🌤️'}</span><strong>{weather ? `${weather.temp}°C` : '—°C'}</strong><small aria-label="Prędkość wiatru"><span aria-hidden="true">💨</span> {weather ? weather.wind : '—'} km/h</small></span></div>
       <div className="start-welcome-copy"><h1>Cześć, <span>{name}!</span> <span aria-hidden="true">👋</span></h1><p>Miło Cię znowu widzieć.<br/>Dobrego dnia dla całej rodziny!</p></div>
       <div className="start-family-art" aria-hidden="true"><img src="/start-banner.png" alt=""/></div>
       <div className="start-banner-weather" title="Pogoda: Open-Meteo"><span className="start-weather-symbol" aria-hidden="true">{weather?.icon || '🌤️'}</span><div className="start-weather-reading"><strong>Kołobrzeg</strong><b>{weather ? `${weather.temp}°C` : '—°C'}</b><small>{weather?.label || 'Pobieranie pogody…'}</small></div><div className="start-weather-date"><strong>{capitalize(now.toLocaleDateString('pl-PL', { weekday: 'long' }))}</strong><time dateTime={todayKey}>{now.toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })}</time>{weather && <small>↑ {weather.max}°C · ↓ {weather.min}°C<br/>Wiatr {weather.wind} km/h</small>}</div></div>

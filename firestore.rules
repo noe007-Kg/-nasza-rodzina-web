@@ -8,7 +8,8 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/members/$(request.auth.uid))
         && profile().get('active', false) == true
         && profile().get('canLogin', false) == true
-        && profile().get('role', '') in ['parent', 'child'];
+        && profile().get('archived', false) == false
+        && profile().get('role', '') in ['parent', 'adult', 'child'];
     }
     function parent() { return member() && profile().role == 'parent'; }
     function ownPerson() { return profile().get('personKey', profile().get('name', '')); }
@@ -20,6 +21,15 @@ service cloud.firestore {
     function title(value) { return value is string && value.size() > 0 && value.size() <= 500; }
     function creator(data) { return data.createdBy == request.auth.uid; }
     function preserveCreator() { return request.resource.data.get('createdBy', '') == resource.data.get('createdBy', ''); }
+    // Google imports and their provenance are managed only by authorized Admin endpoints.
+    // Legacy manual/ICS documents remain editable without adding provider metadata.
+    function clientCalendar(id, data) {
+      return !id.matches('google-[a-f0-9]{64}')
+        && data.get('source', 'manual') in ['manual', 'ics']
+        && !data.keys().hasAny(['provider', 'readOnly', 'cancelled', 'sourceConnectionId', 'sourceOwnerUid',
+          'externalCalendarId', 'externalEventId', 'externalSeriesId', 'ownerProfileId', 'visibilityOverride',
+          'sourceStartDate', 'sourceEndDateExclusive']);
+    }
     function validTask(data) {
       return title(data.title) && person(data.person)
         && data.done is bool && data.requireApproval is bool
@@ -46,6 +56,14 @@ service cloud.firestore {
     function privateParticipant(data) {
       return request.auth.uid in data.participants;
     }
+    function activeChatParticipant(uid) {
+      return uid is string
+        && exists(/databases/$(database)/documents/members/$(uid))
+        && get(/databases/$(database)/documents/members/$(uid)).data.get('active', false) == true
+        && get(/databases/$(database)/documents/members/$(uid)).data.get('canLogin', false) == true
+        && get(/databases/$(database)/documents/members/$(uid)).data.get('archived', false) == false
+        && get(/databases/$(database)/documents/members/$(uid)).data.get('role', '') in ['parent', 'adult', 'child'];
+    }
     function validMessage(data) {
       return data.keys().hasOnly(['text', 'name', 'uid', 'channel', 'participants', 'createdAt'])
         && data.text is string && data.text.size() > 0 && data.text.size() <= 10000
@@ -54,8 +72,8 @@ service cloud.firestore {
         && ((data.channel == 'family' && data.participants.size() == 0)
           || (data.participants.size() == 2 && data.participants[0] != data.participants[1]
             && privateParticipant(data)
-            && exists(/databases/$(database)/documents/members/$(data.participants[0]))
-            && exists(/databases/$(database)/documents/members/$(data.participants[1]))
+            && activeChatParticipant(data.participants[0])
+            && activeChatParticipant(data.participants[1])
             && (data.channel == 'private:' + data.participants[0] + ':' + data.participants[1]
               || data.channel == 'private:' + data.participants[1] + ':' + data.participants[0])));
     }
@@ -65,30 +83,38 @@ service cloud.firestore {
       allow list: if member();
       allow write: if false;
     }
+    // The aggregate family profile is metadata, never a login identity.
+    // Changes go through the authorized Admin endpoint.
+    match /familySettings/profile {
+      allow read: if member();
+      allow write: if false;
+    }
     match /calendarEvents/{id} {
       allow read: if member();
-      allow create: if member() && creator(request.resource.data)
+      allow create: if member() && creator(request.resource.data) && clientCalendar(id, request.resource.data)
         && request.resource.data.get('private', false) == false
         && title(request.resource.data.title) && person(request.resource.data.person)
         && (parent() || ownOrFamily(request.resource.data.person));
-      allow update: if member() && preserveCreator()
+      allow update: if member() && preserveCreator() && clientCalendar(id, resource.data) && clientCalendar(id, request.resource.data)
         && request.resource.data.get('private', false) == false
         && title(request.resource.data.title) && person(request.resource.data.person)
         && (parent() || (resource.data.createdBy == request.auth.uid
           && ownOrFamily(resource.data.person) && ownOrFamily(request.resource.data.person)));
-      allow delete: if parent() || (member() && resource.data.createdBy == request.auth.uid && ownOrFamily(resource.data.person));
+      allow delete: if clientCalendar(id, resource.data)
+        && (parent() || (member() && resource.data.createdBy == request.auth.uid && ownOrFamily(resource.data.person)));
     }
     match /privateCalendarEvents/{id} {
       allow read: if member() && resource.data.ownerUid == request.auth.uid;
-      allow create: if member() && creator(request.resource.data)
+      allow create: if member() && creator(request.resource.data) && clientCalendar(id, request.resource.data)
         && request.resource.data.ownerUid == request.auth.uid && request.resource.data.private == true
         && title(request.resource.data.title) && person(request.resource.data.person)
         && (parent() || ownOrFamily(request.resource.data.person));
       allow update: if member() && resource.data.ownerUid == request.auth.uid && preserveCreator()
+        && clientCalendar(id, resource.data) && clientCalendar(id, request.resource.data)
         && request.resource.data.ownerUid == resource.data.ownerUid && request.resource.data.private == true
         && title(request.resource.data.title) && person(request.resource.data.person)
         && (parent() || ownOrFamily(request.resource.data.person));
-      allow delete: if member() && resource.data.ownerUid == request.auth.uid;
+      allow delete: if member() && resource.data.ownerUid == request.auth.uid && clientCalendar(id, resource.data);
     }
 
     function notificationPreferences(value) {

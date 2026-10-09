@@ -3,7 +3,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { EduServerError } from './edu-auth.mjs';
 import { resolveConnectionAccess } from './edu-access.mjs';
 import { encryptionConfigured } from './edu-secrets.mjs';
-import { acquireSyncLease, disconnectConnection, getConnectionStatus, loadConnection, markConnectionNeedsReconnect, releaseSyncLease, retireLegacyParentConnections, saveConnection, selectConnectionStudent, updateConnectionSession, upsertSchoolItems } from './edu-storage.mjs';
+import { acquireSyncLease, disconnectConnection, getConnectionStatus, loadConnection, markConnectionNeedsReconnect, releaseSyncLease, retireLegacyParentConnections, saveConnection, selectConnectionStudent, updateConnectionSession, upsertSchoolItems, validateConnectionSessionRefresh } from './edu-storage.mjs';
 import { connectProvider, readProviderData } from './edu-provider.mjs';
 import { expectFields } from './edu-http.mjs';
 import { safelyFlushSchoolNotifications } from './school-notifications.mjs';
@@ -79,11 +79,23 @@ export async function syncAction(context, body, { readData = readProviderData } 
     const connection = await loadConnection(id, context);
     sessionVersion = connection.sessionVersion;
     const { profileId, personKey } = connection.selectedStudent;
+    const readStartedAt = Date.now();
     const data = await readData(connection.session, profileId, { includeMessages: context.connection.scope === 'family' });
-    await updateConnectionSession(id, data.session, { sessionVersion: connection.sessionVersion, leaseId: lease.leaseId }, context);
+    validateConnectionSessionRefresh(data?.session, profileId, { confirmed: data?.sessionConfirmedAt !== undefined });
+    const refresh = { sessionVersion: connection.sessionVersion, leaseId: lease.leaseId,
+      ...(data.expiresAt === undefined ? {} : { providerExpiresAt: data.expiresAt }) };
+    // Preserve a rotated, validated cookie jar even if the subsequent import
+    // fails. This first phase does not extend the existing retention deadline.
+    await updateConnectionSession(id, data.session, refresh, context);
     const saved = await upsertSchoolItems(id, { profileId, personKey, items: data.items,
       sessionVersion: connection.sessionVersion, leaseId: lease.leaseId, reconcileScopes: data.reconcileScopes || [],
       notificationReadyTypes: data.notificationReadyTypes || [] }, context);
+    // Confirm rolling inactivity retention only after the guarded import. Jar,
+    // deadline and confirmation time commit atomically under the SAME lease and
+    // sessionVersion. A disconnected/reconnected/expired session cannot revive.
+    if (data.sessionConfirmedAt !== undefined) {
+      await updateConnectionSession(id, data.session, { ...refresh, sessionConfirmedAt: data.sessionConfirmedAt, readStartedAt }, context);
+    }
     success = true;
     await releaseSyncLease(id, lease.leaseId, { success, counts: data.counts, warnings: data.warnings }, context);
     const result = await statusAction(context);

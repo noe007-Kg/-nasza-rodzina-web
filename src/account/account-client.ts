@@ -28,7 +28,7 @@ export function accountActionMessage(error: unknown): string {
   return messages[code] || 'Nie udało się zmienić konta. Spróbuj ponownie.';
 }
 
-export async function accountRequest<T extends Record<string, unknown>>(path: 'members' | 'google-login', body: Record<string, unknown>, user?: User): Promise<T> {
+export async function accountRequest<T extends Record<string, unknown>>(path: 'members' | 'profile' | 'google-login', body: Record<string, unknown>, user?: User): Promise<T> {
   const token = user ? await user.getIdToken() : null;
   const response = await fetch(`/api/account/${path}`, {
     method: 'POST', credentials: 'same-origin', cache: 'no-store',

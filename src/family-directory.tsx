@@ -1,8 +1,10 @@
 import { createContext, useContext } from 'react';
-import type { FamilyMemberProfile } from './family-members';
+import type { FamilyAggregateProfile, FamilyMemberProfile } from './family-members';
 
 export const FamilyDirectoryContext = createContext<readonly FamilyMemberProfile[]>([]);
 export function useFamilyDirectory() { return useContext(FamilyDirectoryContext); }
+export const FamilyAggregateContext = createContext<FamilyAggregateProfile>({ emoji: '👨‍👩‍👧‍👦' });
+export function useFamilyAggregate() { return useContext(FamilyAggregateContext); }
 
 /** Account order is calculated from the authenticated UID on every roster change. */
 export function orderedFamilyProfiles(profiles: readonly FamilyMemberProfile[], uid: string) {

@@ -10,15 +10,20 @@ import { legacyFamilyProfiles, memberPersonKey, memberSchoolEnabled, schoolMembe
 import { useImportantItems } from './notifications';
 import { Card, Icon, PrimaryButton, ProfileSelector, SecondaryButton, SectionHeader, StatCard, StatusPill } from './ui';
 import type { IconName } from './ui';
-import { isSchoolType, MAX_SCHOOL_FILE_BYTES, MAX_SCHOOL_ROWS, parseSchoolFile, SCHOOL_TYPES, schoolImportId, validateSchoolEntry } from './school-import';
+import { isSchoolType, MAX_SCHOOL_FILE_BYTES, MAX_SCHOOL_ROWS, parseSchoolFile, SCHOOL_TYPES, schoolImportId, validateSchoolEntry, validSchoolDate } from './school-import';
 import type { SchoolEntry, SchoolType } from './school-import';
+import { schoolReadAccess, SCHOOL_PROFILE_UNBOUND } from './school/read-access';
+import { SchoolGrades } from './school/SchoolGrades';
+import { SchoolExpandableList } from './school/SchoolExpandableList';
+import { isPeriodGrade, parseGradeMetadata, sortGradesNewest } from './school/grade-projections';
 import './school.css';
 import './school-enhancements.css';
 
-type SchoolMember = { name?: string; role?: string; personKey?: string; photoURL?: string; schoolEnabled?: boolean; active?: boolean };
+type SchoolMember = { name?: string; role?: string; personKey?: string; photoURL?: string; schoolEnabled?: boolean; active?: boolean; canLogin?: boolean };
 type SchoolRecord = SchoolEntry & {
   id: string; calendarEventId?: string; calendarCreatedBy?: string; createdBy?: string; createdAt?: Date;
   source?: string; syncedAt?: Date; parentOnly?: boolean;
+  sourceRecordId?: string; sourceProfileId?: string; providerScopeId?: string;
 };
 type SchoolForm = SchoolEntry & { scheduleMode: 'weekly' | 'date'; addToCalendar: boolean; calendarDate: string };
 const META: Record<SchoolType, { title: string; singular: string; icon: IconName }> = {
@@ -76,6 +81,9 @@ function readSchoolRecord(id: string, data: Record<string, unknown>, parentOnly 
     createdBy: typeof data.createdBy === 'string' ? data.createdBy : undefined,
     createdAt: recordDate(data.createdAt), syncedAt: recordDate(data.syncedAt),
     source: parentOnly ? 'eduvulcan' : typeof data.source === 'string' ? data.source : undefined, parentOnly,
+    sourceRecordId: typeof data.sourceRecordId === 'string' ? data.sourceRecordId : undefined,
+    sourceProfileId: typeof data.sourceProfileId === 'string' ? data.sourceProfileId : undefined,
+    providerScopeId: typeof data.providerScopeId === 'string' ? data.providerScopeId : undefined,
   };
 }
 function importantMessageId(row: SchoolRecord): string {
@@ -123,8 +131,9 @@ function SchoolDialog({ title, children, onClose, busy = false }: { title: strin
 }
 
 export function SchoolModule({ user, member, familyMembers }: { user: User; member: SchoolMember | null; familyMembers?: readonly FamilyMemberProfile[] }) {
-  const parent = member?.role === 'parent';
-  const ownStudent = member?.personKey || member?.name || '';
+  const schoolAccess = schoolReadAccess(member);
+  const parent = schoolAccess?.scope === 'parent';
+  const ownStudent = schoolAccess?.scope === 'student' ? schoolAccess.person : '';
   const profilePhotos = useSchoolProfilePhotos(user.uid, member, familyMembers);
   const { isImportant, toggleImportant } = useImportantItems();
   const [connectionStatus, setConnectionStatus] = useState<EduVulcanStatus | null>(null);
@@ -158,9 +167,10 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
 
   useEffect(() => {
     setRecords([]); setLoading(true); setLoadError('');
-    if (!parent && !ownStudent) { setLoading(false); return; }
+    if (!parent && !ownStudent) { setLoading(false); setLoadError(SCHOOL_PROFILE_UNBOUND); return; }
     const source = parent ? collection(db, 'schoolItems') : query(collection(db, 'schoolItems'), where('person', '==', ownStudent));
     return onSnapshot(source, (snapshot) => {
+      if (currentIdentity.current !== identity) return;
       const next: SchoolRecord[] = [];
       for (const item of snapshot.docs) {
         const data = item.data();
@@ -170,7 +180,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
         if (record) next.push(record);
       }
       setRecords(next); setLoading(false); setLoadError('');
-    }, (error) => { setLoadError(errorText(error)); setLoading(false); });
+    }, (error) => { if (currentIdentity.current !== identity) return; setRecords([]); setLoadError(errorText(error)); setLoading(false); });
   }, [parent, ownStudent, user.uid, retry]);
 
   useEffect(() => {
@@ -202,19 +212,26 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
   const monday = moveDate(selectedDate, 1 - weekdayOf(selectedDate));
   const week = Array.from({ length: 7 }, (_, index) => moveDate(monday, index));
   const dayRecords = ownRecords.filter((row) => (row.type === 'lesson' || row.type === 'activity') && matchesDay(row, selectedDate)).sort((a, b) => a.time.localeCompare(b.time));
-  const filteredRecords = ownRecords.filter((row) => filter === 'all' || row.type === filter).sort((a, b) => {
-    const importantA = parent && a.type === 'message' && isImportant(importantMessageId(a));
-    const importantB = parent && b.type === 'message' && isImportant(importantMessageId(b));
-    if (importantA !== importantB) return Number(importantB) - Number(importantA);
-    if (importantA && importantB) return (b.createdAt?.getTime() || recordDate(b.date)?.getTime() || 0) - (a.createdAt?.getTime() || recordDate(a.date)?.getTime() || 0);
-    const order: SchoolType[] = ['lesson', 'activity', 'test', 'homework', 'grade', 'message'];
-    if (a.type !== b.type) return order.indexOf(a.type) - order.indexOf(b.type);
-    if (a.type === 'lesson' && b.type === 'lesson') return a.weekday - b.weekday || a.date.localeCompare(b.date) || a.time.localeCompare(b.time);
-    if (a.type === 'grade' || a.type === 'message') return (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0);
-    return (a.date || '9999').localeCompare(b.date || '9999') || a.weekday - b.weekday || a.time.localeCompare(b.time) || a.title.localeCompare(b.title, 'pl');
-  });
   // Dashboard values are views of the records already available to this account.
   const today = dateKey(new Date());
+  const listTypeOrder: SchoolType[] = ['lesson', 'activity', 'test', 'homework', 'grade', 'message'];
+  // Authorization and the selected student's scope are applied before grouping or limiting.
+  const recordGroups = listTypeOrder.filter(type => filter === 'all' || filter === type).map(type => {
+    let rows = sortGradesNewest(ownRecords.filter(row => row.type === type));
+    const newestPosition = new Map(rows.map((row, index) => [row.id, index]));
+    if (type === 'message') rows.sort((a, b) => Number(parent && isImportant(importantMessageId(b))) - Number(parent && isImportant(importantMessageId(a))) || newestPosition.get(a.id)! - newestPosition.get(b.id)!);
+    if (type === 'lesson' || type === 'activity') rows.sort((a, b) => a.weekday - b.weekday || a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.id.localeCompare(b.id));
+    if (type === 'homework' || type === 'test') rows.sort((a, b) => {
+      const rank = (row: SchoolRecord) => validSchoolDate(row.date) ? row.date >= today ? 0 : 2 : 1;
+      const difference = rank(a) - rank(b);
+      if (difference) return difference;
+      if (rank(a) === 0) return a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || newestPosition.get(a.id)! - newestPosition.get(b.id)!;
+      return newestPosition.get(a.id)! - newestPosition.get(b.id)!;
+    });
+    return { type, rows };
+  }).filter(group => group.rows.length);
+  const filteredRecords = recordGroups.flatMap(group => group.rows);
+  const listResetKey = `${identity}:${person}:${filter}`;
   const todaySessions = ownRecords.filter((row) => (row.type === 'lesson' || row.type === 'activity') && matchesDay(row, today)).sort((a, b) => a.time.localeCompare(b.time));
   const todayDeadlines = ownRecords.filter((row) => (row.type === 'homework' || row.type === 'test') && row.date === today);
   const visibleTypes = SCHOOL_TYPES.filter((type) => parent || type !== 'message');
@@ -398,7 +415,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
     {!students.length && !loading && <Card tone="neutral" className="school-no-students"><p>{parent ? 'Brak aktywnych profili szkolnych. Włącz szkołę dla dziecka w Ustawieniach → Członkowie rodziny.' : 'Ten profil nie ma włączonego modułu szkolnego.'}</p></Card>}
     {loading ? <div className="school-loading" role="status">Ładowanie danych szkolnych…</div> : person && <>
       <Card className="school-student-panel" tone="blue" as="section" aria-label={`Profil szkolny: ${person}`}>
-        <span className="school-student-avatar" aria-hidden="true"><span>{avatarFor(person)}</span>{profilePhotos.get(person) && <img src={profilePhotos.get(person)} alt="" loading="lazy" onError={(event) => { event.currentTarget.hidden = true; }} />}</span>
+        <span className="school-student-avatar" aria-hidden="true"><span>{avatarFor(person)}</span>{profilePhotos.get(person) && <img key={profilePhotos.get(person)} src={profilePhotos.get(person)} alt="" loading="lazy" onLoad={event => { event.currentTarget.hidden = false; }} onError={(event) => { event.currentTarget.hidden = true; }} />}</span>
         <div className="school-student-copy"><span className="school-eyebrow">Twój szkolny plan</span><h2>{person}</h2><p>{schoolProfile?.schoolName || 'Plan i szkolne sprawy'}{schoolProfile?.className ? ` · klasa ${schoolProfile.className}` : ''}</p>{schoolProfile?.academicYear && <small>Rok szkolny {schoolProfile.academicYear}</small>}</div>
         <div className="school-student-status"><StatusPill tone={connected ? 'success' : linkedToPerson && connectionStatus?.state === 'expired' ? 'warning' : 'neutral'}>{connected ? 'Połączono z eduVULCAN' : linkedToPerson && connectionStatus?.state === 'expired' ? 'Sesja eduVULCAN wygasła' : ownRecords.some((row) => row.source === 'eduvulcan') ? 'Dane z eduVULCAN' : 'Wpisy rodzinne'}</StatusPill><small>{lastSync ? `Ostatnia synchronizacja: ${lastSync.toLocaleString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : 'Twoje zapisane informacje są poniżej.'}</small></div>
       </Card>
@@ -424,7 +441,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
         <section ref={recordsPanel} tabIndex={-1} className="school-panel school-records-panel" aria-labelledby="school-records-title">
           <SectionHeader id="school-records-title" level={2} title="Wpisy szkolne" description={`Wszystkie zapisane informacje · ${ownRecords.length} wpisów`} icon="book" className="school-panel-heading" />
           <div className="school-filters" role="group" aria-label="Rodzaj wpisów"><button type="button" className={filter === 'all' ? 'active' : ''} aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>Wszystkie <span>{ownRecords.length}</span></button>{visibleTypes.map((type) => <button type="button" key={type} className={filter === type ? 'active' : ''} aria-pressed={filter === type} onClick={() => setFilter(type)}><Icon name={META[type].icon} />{META[type].title}<span>{ownRecords.filter((row) => row.type === type).length}</span></button>)}</div>
-          <div className="school-record-list">{filteredRecords.length ? filteredRecords.map((row) => rowButton(row)) : <div className="school-empty-state"><strong>Brak wpisów w tej kategorii.</strong>{(filter === 'all' || parent || CHILD_TYPES.includes(filter)) && <SecondaryButton onClick={() => openAdd(filter === 'all' ? 'homework' : filter)}>Dodaj pierwszy wpis</SecondaryButton>}</div>}</div>
+          <div className="school-record-list">{filter === 'grade' ? <SchoolGrades key={listResetKey} records={filteredRecords} resetKey={listResetKey} onOpen={setDetail} /> : filteredRecords.length ? recordGroups.map(group => <SchoolExpandableList key={`${listResetKey}:${group.type}`} items={group.rows} title={META[group.type].title} resetKey={`${listResetKey}:${group.type}`} renderItem={row => rowButton(row)} testId={`school-list-${group.type}`} />) : <div className="school-empty-state"><strong>Brak wpisów w tej kategorii.</strong>{(filter === 'all' || parent || CHILD_TYPES.includes(filter)) && <SecondaryButton onClick={() => openAdd(filter === 'all' ? 'homework' : filter)}>Dodaj pierwszy wpis</SecondaryButton>}</div>}</div>
         </section>
       </div>
     </>}
@@ -453,9 +470,9 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
       </fieldset></form>
     </SchoolDialog>}
 
-    {detail && <SchoolDialog title={detail.title} onClose={() => setDetail(null)}>
+    {detail && <SchoolDialog title={detail.type === 'grade' ? 'Szczegóły oceny' : detail.title} onClose={() => setDetail(null)}>
       {parent && detail.type === 'message' && <SecondaryButton icon="grade" aria-pressed={isImportant(importantMessageId(detail))} onClick={() => { void toggleImportant(importantMessageId(detail)).catch((error) => setNotice(errorText(error))); }}>{isImportant(importantMessageId(detail)) ? '★ Ważna wiadomość' : '☆ Oznacz jako ważne'}</SecondaryButton>}
-      <dl className="school-detail"><div><dt>Osoba</dt><dd>{detail.person}</dd></div><div><dt>Rodzaj</dt><dd>{META[detail.type].singular}</dd></div>{detail.subject && <div><dt>Przedmiot</dt><dd>{detail.subject}</dd></div>}{detail.date && <div><dt>Data</dt><dd>{localDate(detail.date).toLocaleDateString('pl-PL')}</dd></div>}{detail.weekday > 0 && !detail.date && <div><dt>Co tydzień</dt><dd>{WEEKDAYS[detail.weekday - 1]}</dd></div>}{detail.time && <div><dt>Godzina</dt><dd>{detail.time}{detail.endTime ? `–${detail.endTime}` : ''}</dd></div>}{detail.note && <div className="school-detail-note"><dt>Notatka</dt><dd>{detail.note}</dd></div>}</dl>
+      <dl className="school-detail">{detail.type === 'grade' && <div><dt>Ocena / wynik</dt><dd>{detail.title}</dd></div>}<div><dt>Osoba</dt><dd>{detail.person}</dd></div><div><dt>Rodzaj</dt><dd>{detail.type === 'grade' && isPeriodGrade(detail) ? 'Ocena okresowa' : META[detail.type].singular}</dd></div>{detail.subject && <div><dt>Przedmiot</dt><dd>{detail.subject}</dd></div>}{detail.date && <div><dt>Data</dt><dd>{localDate(detail.date).toLocaleDateString('pl-PL')}</dd></div>}{detail.weekday > 0 && !detail.date && <div><dt>Co tydzień</dt><dd>{WEEKDAYS[detail.weekday - 1]}</dd></div>}{detail.time && <div><dt>Godzina</dt><dd>{detail.time}{detail.endTime ? `–${detail.endTime}` : ''}</dd></div>}{detail.type === 'grade' && parseGradeMetadata(detail.note).teacher && <div><dt>Nauczyciel</dt><dd>{parseGradeMetadata(detail.note).teacher}</dd></div>}{detail.type === 'grade' && parseGradeMetadata(detail.note).weight !== undefined && <div><dt>Waga w dzienniku</dt><dd>{parseGradeMetadata(detail.note).weight}</dd></div>}{detail.note && <div className="school-detail-note"><dt>Notatka</dt><dd>{detail.note}</dd></div>}</dl>
       {detail.source === 'eduvulcan' && <div className="school-provider-detail"><strong>Źródło: eduVULCAN · tylko do odczytu</strong>{detail.syncedAt && <p>Odczytano: {detail.syncedAt.toLocaleString('pl-PL')}</p>}{detail.parentOnly && <p>Wiadomość z dziennika jest dostępna wyłącznie rodzicom.</p>}<p>Zmiany w dzienniku pojawią się po kolejnym odświeżeniu. Własne wpisy możesz dodawać osobno.</p></div>}
       {!parent && detail.calendarEventId && !canEdit(detail) && <p className="school-form-hint">Te zajęcia są połączone z kalendarzem rodzica. Zmiany wprowadza rodzic.</p>}
       {canEdit(detail) && <div className="school-form-actions"><button type="button" className="danger-button" onClick={() => { setActionError(''); setDeleting(detail); setDetail(null); }}>Usuń</button><PrimaryButton onClick={() => openEdit(detail)}>Edytuj wpis</PrimaryButton></div>}

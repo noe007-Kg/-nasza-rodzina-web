@@ -3,6 +3,7 @@ import { db } from './firebase';
 import { isPersonKey, type CalendarEventData } from './app-shared';
 import { isRepeatType, type RecurrenceRule } from './calendar-utils';
 import type { CalendarChangePlan } from './calendar-series';
+import { readCalendarSourceMetadata } from './calendar-source-metadata';
 
 function asDate(value: unknown): Date | null {
   const date = value instanceof Timestamp ? value.toDate() : value instanceof Date ? value : null;
@@ -37,6 +38,7 @@ export function readCalendarEvent(id: string, data: DocumentData, privateRecord 
     private: privateRecord, ownerUid: typeof data.ownerUid === 'string' ? data.ownerUid : data.createdBy,
     seriesId: typeof data.seriesId === 'string' ? data.seriesId : id,
     ...(typeof data.timeZone === 'string' ? { timeZone: data.timeZone } : {}),
+    ...readCalendarSourceMetadata(data),
   };
 }
 
@@ -44,16 +46,17 @@ function mergeRows(publicRows: CalendarEventData[], privateRows: CalendarEventDa
   return [...new Map([...publicRows, ...privateRows].map((row) => [row.id, row])).values()].sort((a, b) => a.date.getTime() - b.date.getTime());
 }
 
-export function subscribeCalendar(uid: string, onChange: (events: CalendarEventData[]) => void, onError?: (error: Error) => void): () => void {
+type CalendarReadSource = 'calendar.shared' | 'calendar.private';
+export function subscribeCalendar(uid: string, onChange: (events: CalendarEventData[], source: CalendarReadSource) => void, onError?: (error: Error, source: CalendarReadSource) => void): () => void {
   let publicRows: CalendarEventData[] = [], privateRows: CalendarEventData[] = [];
   const stopPublic = onSnapshot(collection(db, 'calendarEvents'), (snapshot) => {
     publicRows = snapshot.docs.map((item) => readCalendarEvent(item.id, item.data())).filter((item): item is CalendarEventData => !!item);
-    onChange(mergeRows(publicRows, privateRows));
-  }, (error) => onError?.(error));
+    onChange(mergeRows(publicRows, privateRows), 'calendar.shared');
+  }, (error) => { publicRows = []; onChange(mergeRows(publicRows, privateRows), 'calendar.shared'); onError?.(error, 'calendar.shared'); });
   const stopPrivate = onSnapshot(query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', uid)), (snapshot) => {
     privateRows = snapshot.docs.map((item) => readCalendarEvent(item.id, item.data(), true)).filter((item): item is CalendarEventData => !!item);
-    onChange(mergeRows(publicRows, privateRows));
-  }, (error) => onError?.(error));
+    onChange(mergeRows(publicRows, privateRows), 'calendar.private');
+  }, (error) => { privateRows = []; onChange(mergeRows(publicRows, privateRows), 'calendar.private'); onError?.(error, 'calendar.private'); });
   return () => { stopPublic(); stopPrivate(); };
 }
 

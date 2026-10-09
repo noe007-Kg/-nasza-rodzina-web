@@ -6,13 +6,19 @@ export type FamilyMemberProfile = {
   personKey?: string;
   role?: string;
   photoURL?: string;
+  avatarPath?: string;
+  avatarSource?: 'google' | 'custom' | 'default';
   emoji?: string;
   active?: boolean;
   archived?: boolean;
   disabled?: boolean;
   canLogin?: boolean;
   schoolEnabled?: boolean;
+  birthDate?: string;
 };
+
+/** This is an aggregate view, never a member or an Authentication account. */
+export type FamilyAggregateProfile = { emoji?: string; avatarPath?: string; avatarSource?: 'custom' | 'default'; photoURL?: string };
 
 type MemberMetadata = Omit<FamilyMemberProfile, 'id'>;
 

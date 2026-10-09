@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { CookieJar } from 'tough-cookie';
 import { EduServerError, getServerFirebase } from './edu-auth.mjs';
 import { decryptSession, encryptSession } from './edu-secrets.mjs';
 import { persistSchoolNotificationChanges, schoolNotificationBaselineRef } from './school-notifications.mjs';
 import { schoolSyncSlotStart, schoolSyncSlotConsumed } from './edu-school-slots.mjs';
+import { activeEduActor, assertCurrentSchoolTarget, schoolPersonKey, schoolProfileEnabled, validMemberDocumentId, validSchoolPersonKey } from './edu-people.mjs';
 
 const CONNECTIONS = '_eduConnections';
-const SCHOOL_PEOPLE = new Set(['Paweł', 'Nikodem', 'Layla']);
 const ITEM_TYPES = new Set(['lesson', 'homework', 'test', 'grade', 'message', 'activity']);
 const COOLDOWN_MS = 5 * 60 * 1000;
 const LEASE_MS = 2 * 60 * 1000;
@@ -26,18 +27,21 @@ function sameStudentIdentity(student, identity) {
 
 function scopeContext(connectionId, services) {
   const supplied = services.connection;
-  if (!supplied) return { id: connectionId, scope: 'family', accountRole: 'parent', actorUid: services.uid || connectionId, allowedPersonKeys: [...SCHOOL_PEOPLE], legacy: true };
-  if (supplied.id !== connectionId || !['family', 'student'].includes(supplied.scope)
+  if (!supplied || supplied.id !== connectionId || !['family', 'student'].includes(supplied.scope)
     || supplied.accountRole !== (supplied.scope === 'family' ? 'parent' : 'student')
-    || typeof supplied.actorUid !== 'string' || !supplied.actorUid || supplied.actorUid.length > 128
-    || !Array.isArray(supplied.allowedPersonKeys) || !supplied.allowedPersonKeys.length
-    || supplied.allowedPersonKeys.some((person) => !SCHOOL_PEOPLE.has(person))) {
+    || !validMemberDocumentId(supplied.actorUid) || supplied.actorUid !== services.uid
+    || !activeEduActor(services.profile) || services.profile.role !== (supplied.scope === 'family' ? 'parent' : 'child')
+    || !Array.isArray(supplied.allowedPersonKeys) || new Set(supplied.allowedPersonKeys).size !== supplied.allowedPersonKeys.length
+    || supplied.allowedPersonKeys.some((person) => !validSchoolPersonKey(person) || !Object.hasOwn(supplied.personProfileIds || {}, person)
+      || !validMemberDocumentId(supplied.personProfileIds[person]))) {
     throw new EduServerError('EDU_CONNECTION_FORBIDDEN', 403, 'Nie masz dostępu do tego połączenia z dziennikiem.');
   }
   if (supplied.scope === 'family' && connectionId !== 'family') {
     throw new EduServerError('EDU_CONNECTION_FORBIDDEN', 403, 'Nieprawidłowe połączenie rodzinne.');
   }
   if (supplied.scope === 'student' && (supplied.allowedPersonKeys.length !== 1
+    || !schoolProfileEnabled(services.profile) || schoolPersonKey(services.profile) !== supplied.allowedPersonKeys[0]
+    || supplied.personProfileIds[supplied.allowedPersonKeys[0]] !== supplied.actorUid
     || connectionId !== `student_${createHash('sha256').update(supplied.actorUid).digest('hex')}`
     || !identityKey(supplied.allowedStudentIdentity?.studentName) || !identityKey(supplied.allowedStudentIdentity?.schoolName))) {
     throw new EduServerError('EDU_STUDENT_ACCESS_REQUIRED', 403, 'Rodzic musi najpierw przypisać dziennik do tego ucznia.');
@@ -54,14 +58,19 @@ function scopedStudents(students, scope) {
 }
 
 function assertStoredScope(data, scope) {
-  if (!scope.legacy && (data.scope !== scope.scope || data.accountRole !== scope.accountRole
-    || (scope.scope === 'student' && data.connectedByUid !== scope.actorUid))) {
+  if (data.scope !== scope.scope || data.accountRole !== scope.accountRole
+    || (scope.scope === 'student' && data.connectedByUid !== scope.actorUid)) {
     throw new EduServerError('EDU_CONNECTION_FORBIDDEN', 403, 'Połączenie należy do innego konta lub zakresu danych.');
   }
 }
 
 async function assertStudentBinding(transaction, services, scope) {
+  const actor = await transaction.get(services.db.collection('members').doc(scope.actorUid));
+  if (!actor.exists || !activeEduActor(actor.data()) || actor.data().role !== (scope.scope === 'family' ? 'parent' : 'child')) {
+    throw new EduServerError('EDU_MEMBER_REQUIRED', 403, 'Konto Naszej Rodziny nie ma aktywnego dostępu.');
+  }
   if (scope.scope !== 'student') return;
+  await assertCurrentSchoolTarget(transaction, services, scope, scope.allowedPersonKeys[0]);
   const binding = await transaction.get(services.db.collection('_eduStudentBindings').doc(scope.allowedPersonKeys[0]));
   if (!binding.exists || !sameStudentIdentity(binding.data().identity, scope.allowedStudentIdentity)
     || !sameStudentIdentity(scope.allowedStudentIdentity, binding.data().identity)) {
@@ -79,6 +88,34 @@ function timestampMillis(value) {
   if (typeof value?.toMillis === 'function') return value.toMillis();
   if (value instanceof Date) return value.getTime();
   return typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN;
+}
+
+function sessionRetentionMs() {
+  const ttlHours = Number(process.env.EDUVULCAN_SESSION_TTL_HOURS || 24);
+  if (!Number.isFinite(ttlHours) || ttlHours <= 0 || ttlHours > 24) throw new EduServerError('EDU_NOT_CONFIGURED', 503, 'Czas przechowywania sesji musi wynosić maksymalnie 24 godziny.');
+  return ttlHours * 3600000;
+}
+
+/** Validate the adapter's refreshed state before saving it. Confirmation needs
+ * the selected authenticated journal, not a connect-only or arbitrary session.
+ * Cookie expiry/CSRF values do not prove the provider's future session lifetime.
+ */
+export function validateConnectionSessionRefresh(session, profileId, { confirmed = false } = {}) {
+  const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  if (!object(session) || session.v !== 1 || !object(session.cookieJar)
+    || !Array.isArray(session.cookieJar.cookies) || session.cookieJar.cookies.length > 1000
+    || !Array.isArray(session.profiles) || session.profiles.length < 1 || session.profiles.length > 30
+    || session.profiles.filter(profile => object(profile) && profile.id === profileId).length !== 1
+    || session.cookieJar.cookies.some(cookie => !object(cookie) || typeof cookie.key !== 'string' || typeof cookie.value !== 'string')
+    || confirmed && (!session.cookieJar.cookies.length || session.currentProfileId !== profileId
+      || !object(session.journal) || session.journal.profileId !== profileId
+      || typeof session.journal.key !== 'string' || !session.journal.key || session.journal.key.length > 500
+      || !['string', 'number'].includes(typeof session.journal.idDziennik) || !String(session.journal.idDziennik))) {
+    throw new EduServerError('EDU_SCHEMA_CHANGED', 502, 'Dziennik nie zwrócił poprawnego stanu sesji. Ostatnie dane pozostają zachowane.');
+  }
+  try { CookieJar.fromJSON(session.cookieJar); }
+  catch { throw new EduServerError('EDU_SCHEMA_CHANGED', 502, 'Dziennik nie zwrócił poprawnego stanu sesji. Ostatnie dane pozostają zachowane.'); }
+  return session;
 }
 
 async function removeExpiredConnection(ref, observed, services) {
@@ -135,11 +172,11 @@ export function sanitizeStudents(students) {
   });
 }
 
-function normalizeSelection(selection, students, scope = { allowedPersonKeys: [...SCHOOL_PEOPLE] }) {
+function normalizeSelection(selection, students, scope) {
   if (!selection) return null;
   const profileId = selection.profileId || selection.id;
   const personKey = selection.personKey || selection.person;
-  if (!SCHOOL_PEOPLE.has(personKey) || !scope.allowedPersonKeys.includes(personKey) || !students.some((student) => student.id === profileId)) {
+  if (!validSchoolPersonKey(personKey) || !scope.allowedPersonKeys.includes(personKey) || !students.some((student) => student.id === profileId)) {
     throw new EduServerError('EDU_INVALID_STUDENT', 400, 'Wybierz ucznia z połączonego konta i dziecko z Naszej Rodziny.');
   }
   return { profileId, personKey };
@@ -148,11 +185,15 @@ function normalizeSelection(selection, students, scope = { allowedPersonKeys: [.
 function publicStatus(data, scope) {
   const expiresAt = timestampMillis(data.expiresAt);
   const lastSync = timestampMillis(data.lastSuccessfulSyncAt);
+  const students = scopedStudents(data.students || [], scope);
+  const selectedStudent = data.selectedStudent && scope.allowedPersonKeys.includes(data.selectedStudent.personKey)
+    && students.some(student => student.id === data.selectedStudent.profileId)
+    ? normalizeSelection(data.selectedStudent, students, scope) : null;
   return {
-    connected: true, state: data.selectedStudent ? 'connected' : 'needs_profile',
+    connected: true, state: selectedStudent ? 'connected' : 'needs_profile',
     students: scope ? scopedStudents(data.students || [], scope) : sanitizeStudents(data.students || []),
     profiles: scope ? scopedStudents(data.students || [], scope) : sanitizeStudents(data.students || []),
-    selectedStudent: scope ? normalizeSelection(data.selectedStudent, scopedStudents(data.students || [], scope), scope) : data.selectedStudent || null,
+    selectedStudent,
     ...(data.scope ? { scope: data.scope, accountRole: data.accountRole, connectedByUid: data.connectedByUid } : {}),
     expiresAt: new Date(expiresAt).toISOString(),
     lastSyncAt: Number.isFinite(lastSync) ? new Date(lastSync).toISOString() : null,
@@ -168,9 +209,8 @@ export async function saveConnection(uid, { session, students, profiles, selecte
   const ref = connectionRef(uid, services);
   const scope = scopeContext(uid, services);
   const sanitized = scopedStudents(students || profiles || [], scope);
-  const ttlHours = Number(process.env.EDUVULCAN_SESSION_TTL_HOURS || 24);
-  if (!Number.isFinite(ttlHours) || ttlHours <= 0 || ttlHours > 24) throw new EduServerError('EDU_NOT_CONFIGURED', 503, 'Czas przechowywania sesji musi wynosić maksymalnie 24 godziny.');
-  const expiry = Math.min(expiresAt ? timestampMillis(expiresAt) : Infinity, Date.now() + ttlHours * 3600000);
+  const providerExpiry = expiresAt === undefined ? Infinity : timestampMillis(expiresAt);
+  const expiry = Math.min(providerExpiry, Date.now() + sessionRetentionMs());
   if (!Number.isFinite(expiry) || expiry <= Date.now()) throw new EduServerError('EDU_SESSION_EXPIRED', 401, 'Sesja dziennika wygasła. Połącz konto ponownie.');
   const storedSession = scope.scope === 'student' && Array.isArray(session?.profiles)
     ? { ...session, profiles: session.profiles.filter((profile) => sanitized.some((student) => student.id === profile.id)) } : session;
@@ -192,11 +232,13 @@ export async function saveConnection(uid, { session, students, profiles, selecte
       if (selectedStudent !== undefined) selection = normalizeSelection(requestedSelection, sanitized, scope);
       else if (sanitized.some((student) => student.id === requestedSelection.profileId)) selection = normalizeSelection(requestedSelection, sanitized, scope);
     }
+    if (selection && scope.scope === 'family') await assertCurrentSchoolTarget(transaction, services, scope, selection.personKey);
     const data = {
       envelope, students: sanitized, selectedStudent: selection,
       expiresAt: Timestamp.fromMillis(expiry), sessionVersion: randomUUID(),
+      ...(expiresAt === undefined ? {} : { providerExpiresAt: Timestamp.fromMillis(providerExpiry) }),
       updatedAt: FieldValue.serverTimestamp(),
-      ...(!scope.legacy ? { scope: scope.scope, accountRole: scope.accountRole, connectedByUid: scope.actorUid } : {}),
+      scope: scope.scope, accountRole: scope.accountRole, connectedByUid: scope.actorUid,
       ...(previous.createdAt ? { createdAt: previous.createdAt } : { createdAt: FieldValue.serverTimestamp() }),
       ...(previous.lastSuccessfulSyncAt && selection
         && previous.selectedStudent?.profileId === selection.profileId && previous.selectedStudent?.personKey === selection.personKey
@@ -250,12 +292,13 @@ export async function selectConnectionStudent(uid, selection, services = getServ
     if (timestampMillis(data.lease?.expiresAt) > Date.now()) throw new EduServerError('EDU_SYNC_BUSY', 409, 'Poczekaj na zakończenie synchronizacji.');
     const students = scopedStudents(data.students, scope);
     const selectedStudent = normalizeSelection(selection, students, scope);
+    if (scope.scope === 'family') await assertCurrentSchoolTarget(transaction, services, scope, selectedStudent.personKey);
     const changed = data.selectedStudent?.profileId !== selectedStudent.profileId || data.selectedStudent?.personKey !== selectedStudent.personKey;
     transaction.update(ref, {
       selectedStudent, updatedAt: FieldValue.serverTimestamp(),
       ...(changed ? { lastSuccessfulSyncAt: FieldValue.delete(), lastSyncAttemptAt: FieldValue.delete(), lastScheduledSchoolSlotAt: FieldValue.delete(), lastErrorCode: FieldValue.delete(), counts: FieldValue.delete(), warnings: FieldValue.delete() } : {}),
     });
-    if (!scope.legacy && scope.scope === 'family') {
+    if (scope.scope === 'family') {
       const student = students.find((profile) => profile.id === selectedStudent.profileId);
       transaction.set(services.db.collection('_eduStudentBindings').doc(selectedStudent.personKey), {
         identity: { studentName: student.studentName, schoolName: student.schoolName, ...(student.schoolSymbol ? { schoolSymbol: student.schoolSymbol } : {}) },
@@ -288,7 +331,7 @@ export async function disconnectConnection(uid, services = getServerFirebase()) 
  */
 export async function retireLegacyParentConnections(services) {
   const scope = scopeContext(services?.connection?.id, services);
-  if (scope.scope !== 'family' || scope.legacy || services.profile?.role !== 'parent') {
+  if (scope.scope !== 'family' || services.profile?.role !== 'parent') {
     throw new EduServerError('EDU_PARENT_REQUIRED', 403, 'Porządkowanie połączeń rodzinnych wymaga roli parent.');
   }
   const parents = await services.db.collection('members').where('role', '==', 'parent').limit(64).get();
@@ -317,7 +360,7 @@ export async function retireLegacyParentConnections(services) {
   });
 }
 
-export async function updateConnectionSession(uid, session, { sessionVersion, leaseId } = {}, services = getServerFirebase()) {
+export async function updateConnectionSession(uid, session, { sessionVersion, leaseId, sessionConfirmedAt, readStartedAt, providerExpiresAt } = {}, services = getServerFirebase()) {
   if (!sessionVersion || !leaseId) throw new EduServerError('EDU_CONNECTION_CHANGED', 409, 'Odświeżenie sesji wymaga bieżącej synchronizacji.');
   const ref = connectionRef(uid, services);
   const scope = scopeContext(uid, services);
@@ -327,12 +370,45 @@ export async function updateConnectionSession(uid, session, { sessionVersion, le
   await services.db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     const data = snapshot.exists ? snapshot.data() : null;
-    if (!data || timestampMillis(data.expiresAt) <= Date.now() || (sessionVersion && data.sessionVersion !== sessionVersion)
-      || (leaseId && (data.lease?.id !== leaseId || timestampMillis(data.lease?.expiresAt) <= Date.now()))) throw new EduServerError('EDU_CONNECTION_CHANGED', 409, 'Połączenie zostało zmienione. Uruchom synchronizację ponownie.');
+    let now = Date.now();
+    const oldExpiry = timestampMillis(data?.expiresAt);
+    const leaseExpiry = timestampMillis(data?.lease?.expiresAt);
+    if (!data || !Number.isFinite(oldExpiry) || oldExpiry <= now || (sessionVersion && data.sessionVersion !== sessionVersion)
+      || (leaseId && (data.lease?.id !== leaseId || !Number.isFinite(leaseExpiry) || leaseExpiry <= now))) throw new EduServerError('EDU_CONNECTION_CHANGED', 409, 'Połączenie zostało zmienione. Uruchom synchronizację ponownie.');
     assertStoredScope(data, scope);
     await assertStudentBinding(transaction, services, scope);
-    normalizeSelection(data.selectedStudent, scopedStudents(data.students, scope), scope);
-    transaction.update(ref, { envelope, updatedAt: FieldValue.serverTimestamp() });
+    const selection = normalizeSelection(data.selectedStudent, scopedStudents(data.students, scope), scope);
+    if (selection && scope.scope === 'family') await assertCurrentSchoolTarget(transaction, services, scope, selection.personKey);
+    // A binding read may cross the previous retention/lease deadline. Recheck
+    // after the last awaited read; rolling retention must not revive expiry.
+    now = Date.now();
+    if (oldExpiry <= now || leaseExpiry <= now) throw new EduServerError('EDU_CONNECTION_CHANGED', 409, 'Połączenie zostało zmienione. Uruchom synchronizację ponownie.');
+    const confirmed = sessionConfirmedAt !== undefined;
+    validateConnectionSessionRefresh(storedSession, selection?.profileId, { confirmed });
+    const providerCap = providerExpiresAt !== undefined ? timestampMillis(providerExpiresAt)
+      : data.providerExpiresAt === undefined ? Infinity : timestampMillis(data.providerExpiresAt);
+    if (providerCap !== Infinity && !Number.isFinite(providerCap)) throw new EduServerError('EDU_SCHEMA_CHANGED', 502, 'Dziennik nie zwrócił poprawnego terminu sesji.');
+    if (providerCap <= now) throw new EduServerError('EDU_SESSION_EXPIRED', 401, 'Sesja dziennika wygasła. Połącz konto ponownie.');
+    const renewal = {};
+    if (confirmed) {
+      const confirmedAt = timestampMillis(sessionConfirmedAt);
+      const startedAt = timestampMillis(readStartedAt);
+      if (!Number.isSafeInteger(confirmedAt) || !Number.isSafeInteger(startedAt)
+        || startedAt < leaseExpiry - LEASE_MS || confirmedAt < startedAt || confirmedAt > now) {
+        throw new EduServerError('EDU_SCHEMA_CHANGED', 502, 'Dziennik nie potwierdził bieżącej autoryzowanej sesji.');
+      }
+      const renewedExpiry = Math.min(confirmedAt + sessionRetentionMs(), providerCap);
+      if (renewedExpiry <= now) throw new EduServerError('EDU_SESSION_EXPIRED', 401, 'Sesja dziennika wygasła. Połącz konto ponownie.');
+      renewal.expiresAt = Timestamp.fromMillis(renewedExpiry);
+      renewal.sessionConfirmedAt = Timestamp.fromMillis(confirmedAt);
+    } else if (providerCap < oldExpiry) {
+      // A real provider deadline can tighten retention even before import; it
+      // can never extend it without the current authorized-read confirmation.
+      renewal.expiresAt = Timestamp.fromMillis(providerCap);
+    }
+    transaction.update(ref, { envelope, ...renewal,
+      ...(providerExpiresAt === undefined ? {} : { providerExpiresAt: Timestamp.fromMillis(providerCap) }),
+      updatedAt: FieldValue.serverTimestamp() });
   });
 }
 
@@ -361,7 +437,8 @@ export async function acquireSyncLease(uid, services = getServerFirebase()) {
       throw new EduServerError('EDU_INVALID_REQUEST', 400, 'Termin dziennej synchronizacji nie należy do godzin szkolnych.');
     }
     if (!data.selectedStudent) throw new EduServerError('EDU_SELECT_STUDENT', 409, 'Najpierw wybierz ucznia.');
-    normalizeSelection(data.selectedStudent, scopedStudents(data.students, scope), scope);
+    const selection = normalizeSelection(data.selectedStudent, scopedStudents(data.students, scope), scope);
+    if (scope.scope === 'family') await assertCurrentSchoolTarget(transaction, services, scope, selection.personKey);
     if (timestampMillis(data.lease?.expiresAt) > Date.now()) throw new EduServerError('EDU_SYNC_BUSY', 409, 'Synchronizacja jest już uruchomiona.');
     const lastSuccessfulSync = timestampMillis(data.lastSuccessfulSyncAt);
     const lastAttempt = timestampMillis(data.lastSyncAttemptAt);
@@ -412,7 +489,7 @@ export function prepareImportedSchoolItems(uid, { personKey, person, profileId, 
   const scope = scopeContext(uid, services);
   const mappedPerson = personKey || person;
   const mappedProfile = profileId || studentId;
-  if (!SCHOOL_PEOPLE.has(mappedPerson) || !scope.allowedPersonKeys.includes(mappedPerson) || typeof mappedProfile !== 'string' || !mappedProfile || mappedProfile.length > 500
+  if (!validSchoolPersonKey(mappedPerson) || !scope.allowedPersonKeys.includes(mappedPerson) || typeof mappedProfile !== 'string' || !mappedProfile || mappedProfile.length > 500
     || !Array.isArray(items) || items.length > MAX_ITEMS) throw new EduServerError('EDU_INVALID_DATA', 502, 'Dziennik zwrócił nieprawidłowy zakres danych.');
   const seen = new Set();
   return items.map((item) => {
@@ -439,7 +516,7 @@ export function prepareImportedSchoolItems(uid, { personKey, person, profileId, 
       note: text(item.note ?? item.body, 20000),
       source: 'eduvulcan', provider: 'eduvulcan', sourceRecordId: externalId,
       sourceProfileId: mappedProfile, sourceOwnerUid: scope.actorUid, sourceSyncId: syncId,
-      ...(!scope.legacy ? { sourceConnectionId: uid, sourceConnectionScope: scope.scope } : {}),
+      sourceConnectionId: uid, sourceConnectionScope: scope.scope,
     };
     const scopeId = item.providerScopeId ?? item.scopeId;
     if (scopeId != null) {
@@ -479,7 +556,6 @@ export function normalizeReconcileScopes(scopes = []) {
 }
 
 function matchesConnectionScope(data, scope) {
-  if (scope.legacy) return true;
   return data.sourceConnectionId === scope.id || (scope.scope === 'family' && data.sourceConnectionId === undefined);
 }
 
@@ -519,9 +595,16 @@ export async function upsertSchoolItems(uid, input, services = getServerFirebase
     assertStoredScope(connection.data(), scope);
     await assertStudentBinding(transaction, services, scope);
     normalizeSelection(selected, scopedStudents(connection.data().students, scope), scope);
+    if (scope.scope === 'family') await assertCurrentSchoolTarget(transaction, services, scope, selected.personKey);
     const baseline = await transaction.get(schoolNotificationBaselineRef(services.db, uid, selected.profileId, selected.personKey));
     const allRefs = [...refs, ...deleteCandidates];
     const existing = allRefs.length ? await transaction.getAll(...allRefs) : [];
+    // Additional roster/binding reads must not let a lease/session deadline pass
+    // before the protected import and its existing notification baseline write.
+    if (timestampMillis(connection.data().expiresAt) <= Date.now()
+      || timestampMillis(connection.data().lease?.expiresAt) <= Date.now()) {
+      throw new EduServerError('EDU_CONNECTION_CHANGED', 409, 'Połączenie zostało zmienione. Dane nie zostały zapisane.');
+    }
     const changes = [];
     added = 0;
     updated = 0;

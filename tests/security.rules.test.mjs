@@ -1,13 +1,15 @@
 import { readFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
 import { after, before, beforeEach, test } from 'node:test';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
-import { getMetadata, ref, uploadBytes } from 'firebase/storage';
+import { collection, deleteDoc, deleteField, doc, getDoc, getDocs, query, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
+import { deleteObject, getMetadata, ref, uploadBytes } from 'firebase/storage';
 
 let environment;
 let parentDb;
 let childDb;
 let siblingDb;
+let adultDb;
 // Run sequentially after browser tests: Storage's cross-service lookup uses the CLI project.
 const projectId = 'demo-nasza-rodzina';
 const profiles = {
@@ -15,6 +17,9 @@ const profiles = {
   child: { name: 'Paweł', personKey: 'Paweł', role: 'child', active: true, canLogin: true },
   sibling: { name: 'Nikodem', personKey: 'Nikodem', role: 'child', active: true, canLogin: true },
   disabled: { name: 'Dominika', personKey: 'Dominika', role: 'parent', active: false, canLogin: true },
+  adult: { name: 'Dorosły', personKey: 'member-222222222222222222222222', role: 'adult', active: true, canLogin: true },
+  passive: { name: 'Profil bez konta', personKey: 'member-abcdef0123456789abcdef01', role: 'child', active: true, canLogin: false },
+  archived: { name: 'Zarchiwizowany', personKey: 'member-111111111111111111111111', role: 'child', active: true, canLogin: true, archived: true },
 };
 
 before(async () => {
@@ -26,6 +31,7 @@ before(async () => {
   parentDb = environment.authenticatedContext('parent').firestore();
   childDb = environment.authenticatedContext('child').firestore();
   siblingDb = environment.authenticatedContext('sibling').firestore();
+  adultDb = environment.authenticatedContext('adult').firestore();
 });
 
 beforeEach(async () => {
@@ -246,6 +252,148 @@ test('private calendar data cannot be mislabeled as private in the public calend
   await assertSucceeds(getDoc(doc(childDb, 'calendarEvents', 'public')));
 });
 
+const googleCalendarEntry = (uid, extra = {}) => calendarEntry(uid, {
+  source: 'google', readOnly: true, cancelled: false,
+  sourceConnectionId: '12345678-1234-4123-8123-123456789abc', sourceOwnerUid: uid,
+  externalCalendarId: 'test-calendar', externalEventId: 'event-123', externalSeriesId: null,
+  ownerProfileId: uid, ...extra,
+});
+
+test('legacy, manual and existing ICS calendars preserve family and own-private CRUD', async () => {
+  for (const [db, uid, person] of [[parentDb, 'parent', 'family'], [childDb, 'child', 'Paweł'], [adultDb, 'adult', profiles.adult.personKey]]) {
+    for (const [label, source] of [['legacy', undefined], ['manual', 'manual'], ['ics', 'ics']]) {
+      for (const [name, isPrivate] of [['calendarEvents', false], ['privateCalendarEvents', true]]) {
+        const id = `${uid}-${name}-${label}`;
+        const entry = calendarEntry(uid, { person, private: isPrivate, ...(source ? { source } : {}), timeZone: 'Europe/Warsaw' });
+        await assertSucceeds(setDoc(doc(db, name, id), entry));
+        await assertSucceeds(updateDoc(doc(db, name, id), { title: 'Własna zmiana wydarzenia', location: 'Kołobrzeg' }));
+        const stored = await assertSucceeds(getDoc(doc(db, name, id)));
+        assert.equal(stored.data().ownerUid, uid);
+        assert.equal(stored.data().source, source);
+        await assertSucceeds(deleteDoc(doc(db, name, id)));
+      }
+    }
+  }
+});
+
+test('a client cannot create imported calendar provenance, including isolated or null markers', async () => {
+  const forbiddenFields = [
+    ['source', 'google'], ['source', 'sp4'], ['source', 'fryderyk'], ['provider', 'google'],
+    ['readOnly', true], ['readOnly', false], ['cancelled', true], ['cancelled', false],
+    ['sourceConnectionId', 'connection'], ['sourceOwnerUid', 'parent'],
+    ['externalCalendarId', 'calendar'], ['externalEventId', 'event'], ['externalSeriesId', null],
+    ['ownerProfileId', 'parent'], ['visibilityOverride', 'family'],
+    ['sourceStartDate', '2026-10-05'], ['sourceEndDateExclusive', '2026-10-06'],
+  ];
+  for (const [db, uid, person] of [[parentDb, 'parent', 'family'], [childDb, 'child', 'Paweł']]) {
+    for (const [name, isPrivate] of [['calendarEvents', false], ['privateCalendarEvents', true]]) {
+      const base = calendarEntry(uid, { person, private: isPrivate });
+      for (const [index, [field, value]] of forbiddenFields.entries()) {
+        await assertFails(setDoc(doc(db, name, `forged-${uid}-${index}`), { ...base, [field]: value }));
+      }
+      await assertFails(setDoc(doc(db, name, `forged-complete-${uid}`), googleCalendarEntry(uid, { person, private: isPrivate })));
+    }
+  }
+});
+
+test('clients cannot retrofit provider provenance or cancellation into existing manual events', async () => {
+  const forbiddenChanges = {
+    source: 'google', provider: 'google', readOnly: true, cancelled: true,
+    sourceConnectionId: 'connection', sourceOwnerUid: 'parent', externalCalendarId: 'calendar',
+    externalEventId: 'event', externalSeriesId: null, ownerProfileId: 'parent', visibilityOverride: 'private',
+    sourceStartDate: '2026-10-05', sourceEndDateExclusive: '2026-10-06',
+  };
+  for (const [name, isPrivate] of [['calendarEvents', false], ['privateCalendarEvents', true]]) {
+    const ref = doc(parentDb, name, 'manual-calendar');
+    await assertSucceeds(setDoc(ref, calendarEntry('parent', { private: isPrivate })));
+    for (const [field, value] of Object.entries(forbiddenChanges)) await assertFails(updateDoc(ref, { [field]: value }));
+    await assertSucceeds(updateDoc(ref, { title: 'Dozwolona zwykła edycja' }));
+    const stored = await getDoc(ref);
+    assert.equal(stored.data().title, 'Dozwolona zwykła edycja');
+    assert.equal(stored.data().source, undefined);
+  }
+});
+
+test('deterministic Google import IDs cannot be preoccupied by a client manual event', async () => {
+  const id = `google-${'a'.repeat(64)}`;
+  for (const [name, isPrivate] of [['calendarEvents', false], ['privateCalendarEvents', true]]) {
+    await assertFails(setDoc(doc(parentDb, name, id), calendarEntry('parent', { private: isPrivate })));
+    await assertSucceeds(setDoc(doc(parentDb, name, 'ordinary-manual-id'), calendarEntry('parent', { private: isPrivate })));
+  }
+});
+
+test('family Google events are readable but cannot be edited, stripped, overwritten or deleted by any client role', async () => {
+  const id = `google-${'b'.repeat(64)}`;
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'calendarEvents', id), googleCalendarEntry('parent', { private: false }));
+  });
+  for (const db of [parentDb, childDb, adultDb]) {
+    const ref = doc(db, 'calendarEvents', id);
+    await assertSucceeds(getDoc(ref));
+    await assertFails(updateDoc(ref, { title: 'Zmieniony import' }));
+    await assertFails(updateDoc(ref, { cancelled: true }));
+    await assertFails(updateDoc(ref, { source: 'manual', readOnly: false }));
+    await assertFails(updateDoc(ref, { source: deleteField(), sourceConnectionId: deleteField(), externalEventId: deleteField() }));
+    await assertFails(setDoc(ref, calendarEntry('parent', { private: false })));
+    await assertFails(deleteDoc(ref));
+  }
+  const stored = await getDoc(doc(parentDb, 'calendarEvents', id));
+  assert.equal(stored.data().source, 'google');
+  assert.equal(stored.data().title, 'Prywatna konsultacja');
+  assert.equal(stored.data().cancelled, false);
+});
+
+test('Google provenance is protected by metadata even under a non-reserved legacy document ID', async () => {
+  const id = 'legacy-google-import';
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'calendarEvents', id), googleCalendarEntry('parent', { private: false }));
+  });
+  const ref = doc(parentDb, 'calendarEvents', id);
+  await assertSucceeds(getDoc(ref));
+  await assertFails(updateDoc(ref, { title: 'Nie można zmienić importu' }));
+  await assertFails(setDoc(ref, calendarEntry('parent', { private: false, source: 'manual' })));
+  await assertFails(deleteDoc(ref));
+});
+
+test('private Google imports keep exact-owner reads and deny client changes even to the owner', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'privateCalendarEvents', 'parent-google'), googleCalendarEntry('parent'));
+    await setDoc(doc(db, 'privateCalendarEvents', 'child-google'), googleCalendarEntry('child', { person: 'Paweł' }));
+  });
+  for (const [db, uid, person] of [[parentDb, 'parent', 'family'], [childDb, 'child', 'Paweł']]) {
+    const ref = doc(db, 'privateCalendarEvents', `${uid}-google`);
+    await assertSucceeds(getDoc(ref));
+    const own = await assertSucceeds(getDocs(query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', uid))));
+    assert.equal(own.size, 1);
+    await assertFails(updateDoc(ref, { title: 'Własna próba edycji importu' }));
+    await assertFails(updateDoc(ref, { private: false, visibilityOverride: 'family' }));
+    await assertFails(updateDoc(ref, { source: deleteField(), readOnly: deleteField(), cancelled: deleteField(), externalCalendarId: deleteField() }));
+    await assertFails(setDoc(ref, calendarEntry(uid, { person })));
+    await assertFails(deleteDoc(ref));
+  }
+  await assertFails(getDoc(doc(parentDb, 'privateCalendarEvents', 'child-google')));
+  await assertFails(getDocs(query(collection(parentDb, 'privateCalendarEvents'), where('ownerUid', '==', 'child'))));
+  await assertFails(getDoc(doc(childDb, 'privateCalendarEvents', 'parent-google')));
+  await assertFails(getDoc(doc(siblingDb, 'privateCalendarEvents', 'child-google')));
+});
+
+test('calendar OAuth states, rates and encrypted connections remain inaccessible to every client', async () => {
+  const names = ['_calendarConnections', '_calendarOAuthStates', '_calendarOAuthRates'];
+  await environment.withSecurityRulesDisabled(async context => {
+    for (const name of names) await setDoc(doc(context.firestore(), name, 'private'), { ownerUid: 'parent', marker: 'test-only' });
+  });
+  for (const db of [parentDb, childDb, adultDb, environment.unauthenticatedContext().firestore()]) {
+    for (const name of names) {
+      await assertFails(getDoc(doc(db, name, 'private')));
+      await assertFails(getDocs(collection(db, name)));
+      await assertFails(setDoc(doc(db, name, 'forged'), { ownerUid: 'parent', marker: 'test-only' }));
+      await assertFails(updateDoc(doc(db, name, 'private'), { marker: 'tampered' }));
+      await assertFails(deleteDoc(doc(db, name, 'private')));
+    }
+  }
+});
+
 function notificationSettings(extra = {}) {
   return { enabled: true, sound: false, categories: {
     calendar: true, tasks: true, shopping: true, familyChat: true,
@@ -366,4 +514,282 @@ test('new dynamic member identities retain own-person health restrictions in Fir
   await assertFails(uploadBytes(ref(dynamicStorage, `health/shared/Paweł/${dynamicUid}/other.pdf`), file, { contentType: 'application/pdf' }));
   await assertFails(uploadBytes(ref(dynamicStorage, `health/parents/${key}/${dynamicUid}/private.pdf`), file, { contentType: 'application/pdf' }));
   await assertSucceeds(getMetadata(ref(environment.authenticatedContext('parent').storage(`gs://${projectId}.appspot.com`), ownPath)));
+});
+
+test('both active parents can execute all four FamilyPage queries without seeing another owner private calendar', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await Promise.all([
+      setDoc(doc(db, 'members', 'second-parent'), { ...profiles.parent, name: 'Dominika', personKey: 'Dominika' }),
+      setDoc(doc(db, 'calendarEvents', 'family-shared'), { ...calendarEntry('parent'), private: false }),
+      setDoc(doc(db, 'privateCalendarEvents', 'parent-own'), calendarEntry('parent')),
+      setDoc(doc(db, 'privateCalendarEvents', 'second-parent-own'), calendarEntry('second-parent')),
+    ]);
+  });
+  for (const uid of ['parent', 'second-parent']) {
+    const db = environment.authenticatedContext(uid).firestore();
+    const shared = await assertSucceeds(getDocs(collection(db, 'calendarEvents')));
+    const own = await assertSucceeds(getDocs(query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', uid))));
+    const tasks = await assertSucceeds(getDocs(collection(db, 'tasks')));
+    const school = await assertSucceeds(getDocs(collection(db, 'schoolItems')));
+    assert.equal(shared.size, 1);
+    assert.deepEqual(own.docs.map(item => item.id), [`${uid}-own`]);
+    assert.equal(tasks.size, 2);
+    assert.equal(school.size, 2);
+    const otherUid = uid === 'parent' ? 'second-parent' : 'parent';
+    await assertFails(getDocs(query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', otherUid))));
+    await assertFails(getDoc(doc(db, 'privateCalendarEvents', `${otherUid}-own`)));
+  }
+});
+
+test('all four FamilyPage queries deny anonymous, non-member and inactive accounts', async () => {
+  for (const context of [environment.unauthenticatedContext(), environment.authenticatedContext('outsider'), environment.authenticatedContext('disabled')]) {
+    const db = context.firestore();
+    await assertFails(getDocs(collection(db, 'calendarEvents')));
+    await assertFails(getDocs(query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', 'parent'))));
+    await assertFails(getDocs(collection(db, 'tasks')));
+    await assertFails(getDocs(collection(db, 'schoolItems')));
+  }
+});
+
+test('invalid explicit child personKey cannot gain school access through a valid display name or family fallback', async () => {
+  for (const [suffix, personKey] of [['empty', ''], ['null', null], ['invalid', 'member-invalid']]) {
+    const uid = `incomplete-child-${suffix}`;
+    await environment.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), 'members', uid), { ...profiles.sibling, personKey });
+    });
+    const db = environment.authenticatedContext(uid).firestore();
+    await assertFails(getDocs(query(collection(db, 'schoolItems'), where('person', '==', 'Nikodem'))));
+    await assertFails(getDocs(query(collection(db, 'schoolItems'), where('person', '==', 'family'))));
+    await assertFails(getDocs(collection(db, 'schoolItems')));
+  }
+});
+
+test('legacy child without personKey retains own-name school access, while a missing identity cannot use family fallback', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'members', 'legacy-child'), { name: 'Nikodem', role: 'child', active: true, canLogin: true });
+    await setDoc(doc(db, 'members', 'unlinked-child'), { role: 'child', active: true, canLogin: true });
+  });
+  const legacy = environment.authenticatedContext('legacy-child').firestore();
+  const unlinked = environment.authenticatedContext('unlinked-child').firestore();
+  const rows = await assertSucceeds(getDocs(query(collection(legacy, 'schoolItems'), where('person', '==', 'Nikodem'))));
+  assert.deepEqual(rows.docs.map(item => item.id), ['nikodem']);
+  await assertFails(getDocs(query(collection(legacy, 'schoolItems'), where('person', '==', 'Paweł'))));
+  await assertFails(getDocs(query(collection(unlinked, 'schoolItems'), where('person', '==', 'family'))));
+  await assertFails(getDocs(query(collection(unlinked, 'schoolItems'), where('person', '==', 'Nikodem'))));
+});
+
+test('adult membership permits general family data and own private data without parent authority', async () => {
+  await assertSucceeds(getDocs(collection(adultDb, 'members')));
+  await assertSucceeds(getDocs(collection(adultDb, 'calendarEvents')));
+  await assertSucceeds(getDocs(collection(adultDb, 'tasks')));
+  await assertSucceeds(getDocs(collection(adultDb, 'shoppingItems')));
+  await assertSucceeds(getDocs(query(collection(adultDb, 'familyMessages'), where('channel', '==', 'family'))));
+  await assertSucceeds(getDocs(query(collection(adultDb, 'healthRecords'), where('privateToParents', '==', false), where('person', 'in', ['family', profiles.adult.personKey]))));
+  await assertFails(getDocs(collection(adultDb, 'healthRecords')));
+  await assertFails(getDoc(doc(adultDb, 'healthRecords', 'private')));
+  await assertFails(getDocs(collection(adultDb, 'schoolParentMessages')));
+  await assertFails(getDocs(collection(adultDb, 'schoolStudentMessages')));
+  await assertFails(updateDoc(doc(adultDb, 'members', 'adult'), { role: 'parent' }));
+  await assertFails(deleteDoc(doc(adultDb, 'tasks', 'reward')));
+  await assertFails(setDoc(doc(adultDb, 'medicalContacts', 'forged'), { person: 'family', createdBy: 'adult', name: 'Kontakt' }));
+  const ownEvent = { ...calendarEntry('adult'), person: profiles.adult.personKey };
+  await assertSucceeds(setDoc(doc(adultDb, 'privateCalendarEvents', 'adult-own'), ownEvent));
+  await assertSucceeds(getDoc(doc(adultDb, 'privateCalendarEvents', 'adult-own')));
+  await assertFails(getDoc(doc(parentDb, 'privateCalendarEvents', 'adult-own')));
+  await assertFails(getDoc(doc(childDb, 'privateCalendarEvents', 'adult-own')));
+  await assertFails(setDoc(doc(adultDb, 'calendarEvents', 'other-person'), { ...ownEvent, private: false, person: 'Paweł' }));
+});
+
+test('aggregate family metadata is readable by members but only the Admin backend can write it', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'familySettings', 'profile'), { name: 'Cała rodzina', emoji: '👨‍👩‍👧‍👦', avatarSource: 'default' });
+  });
+  for (const db of [parentDb, adultDb, childDb]) {
+    const target = doc(db, 'familySettings', 'profile');
+    await assertSucceeds(getDoc(target));
+    await assertFails(updateDoc(target, { emoji: '★' }));
+    await assertFails(setDoc(target, { name: 'Przejęty profil' }));
+    await assertFails(deleteDoc(target));
+    await assertFails(setDoc(doc(db, 'familySettings', 'other'), { name: 'Nieznane ustawienia' }));
+    await assertFails(updateDoc(doc(db, 'members', 'child'), { avatarSource: 'custom' }));
+  }
+  for (const context of [environment.unauthenticatedContext(), environment.authenticatedContext('outsider'), environment.authenticatedContext('passive'), environment.authenticatedContext('archived')]) {
+    await assertFails(getDoc(doc(context.firestore(), 'familySettings', 'profile')));
+  }
+});
+
+test('archived accounts cannot remain members even with inconsistent active and canLogin flags', async () => {
+  const archivedDb = environment.authenticatedContext('archived').firestore();
+  await assertFails(getDocs(collection(archivedDb, 'members')));
+  await assertFails(getDocs(collection(archivedDb, 'calendarEvents')));
+  await assertFails(getDocs(collection(archivedDb, 'tasks')));
+  await assertFails(getDocs(query(collection(archivedDb, 'familyMessages'), where('channel', '==', 'family'))));
+  await assertSucceeds(getDoc(doc(archivedDb, 'members', 'archived')));
+});
+
+test('new private chat messages require both participants to be active non-archived login accounts', async () => {
+  const message = { channel: 'private:child:adult', participants: ['child', 'adult'], uid: 'child', name: 'Paweł', text: 'Cześć', createdAt: Timestamp.now() };
+  await assertSucceeds(setDoc(doc(childDb, 'familyMessages', 'adult-chat'), message));
+  const deniedRecipients = {
+    passive: profiles.passive,
+    archived: profiles.archived,
+    disabled: profiles.disabled,
+    unknownRole: { ...profiles.adult, role: 'guest' },
+  };
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'members', 'unknownRole'), deniedRecipients.unknownRole);
+  });
+  for (const uid of Object.keys(deniedRecipients)) {
+    await assertFails(setDoc(doc(childDb, 'familyMessages', `denied-${uid}`), { ...message, channel: `private:child:${uid}`, participants: ['child', uid] }));
+  }
+  await assertFails(setDoc(doc(childDb, 'familyMessages', 'invalid-participant-type'), { ...message, channel: 'private:child:123', participants: ['child', 123] }));
+});
+
+test('archiving a private chat recipient blocks new sends while preserving the active sender historical access', async () => {
+  await assertSucceeds(getDoc(doc(childDb, 'familyMessages', 'private')));
+  await environment.withSecurityRulesDisabled(async context => {
+    await updateDoc(doc(context.firestore(), 'members', 'parent'), { active: false, archived: true, canLogin: false });
+  });
+  await assertSucceeds(getDoc(doc(childDb, 'familyMessages', 'private')));
+  await assertSucceeds(getDocs(query(collection(childDb, 'familyMessages'), where('participants', 'array-contains', 'child'))));
+  await assertFails(setDoc(doc(childDb, 'familyMessages', 'new-after-archive'), { channel: 'private:child:parent', participants: ['child', 'parent'], uid: 'child', name: 'Paweł', text: 'Nowa wiadomość', createdAt: Timestamp.now() }));
+});
+
+const avatarStorage = uid => environment.authenticatedContext(uid).storage(`gs://${projectId}.appspot.com`);
+const avatarImage = new Uint8Array([137, 80, 78, 71]);
+const avatarFilename = '01234567-89ab-4def-8123-456789abcdef.png';
+
+test('own member avatars accept supported image types and remain authenticated family files', async () => {
+  for (const [index, contentType] of ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].entries()) {
+    const filename = `01234567-89ab-4def-8123-456789abcde${index}.png`;
+    const path = `avatars/members/child/child/${filename}`;
+    const own = ref(avatarStorage('child'), path);
+    await assertSucceeds(uploadBytes(own, avatarImage, { contentType }));
+    await assertSucceeds(getMetadata(own));
+    await assertSucceeds(getMetadata(ref(avatarStorage('parent'), path)));
+    await assertSucceeds(getMetadata(ref(avatarStorage('adult'), path)));
+    await assertSucceeds(uploadBytes(own, avatarImage, { contentType }));
+    for (const context of [environment.unauthenticatedContext(), environment.authenticatedContext('outsider'), environment.authenticatedContext('passive'), environment.authenticatedContext('archived')]) {
+      await assertFails(getMetadata(ref(context.storage(`gs://${projectId}.appspot.com`), path)));
+    }
+    await assertSucceeds(deleteObject(own));
+  }
+  const adult = ref(avatarStorage('adult'), `avatars/members/adult/adult/${avatarFilename}`);
+  await assertSucceeds(uploadBytes(adult, avatarImage, { contentType: 'image/png' }));
+  await assertSucceeds(deleteObject(adult));
+});
+
+test('parents may upload avatars for children and profiles without login but not another active parent or adult', async () => {
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'members', 'other-parent'), { ...profiles.parent, name: 'Drugi rodzic' });
+  });
+  for (const uid of ['parent', 'child', 'passive']) {
+    const ownUpload = ref(avatarStorage('parent'), `avatars/members/${uid}/parent/${avatarFilename}`);
+    await assertSucceeds(uploadBytes(ownUpload, avatarImage, { contentType: 'image/png' }));
+    await assertSucceeds(deleteObject(ownUpload));
+  }
+  for (const uid of ['adult', 'other-parent', 'outsider', 'disabled', 'archived']) {
+    await assertFails(uploadBytes(ref(avatarStorage('parent'), `avatars/members/${uid}/parent/${avatarFilename}`), avatarImage, { contentType: 'image/png' }));
+  }
+  for (const uid of ['sibling', 'parent', 'adult', 'passive']) {
+    await assertFails(uploadBytes(ref(avatarStorage('child'), `avatars/members/${uid}/child/${avatarFilename}`), avatarImage, { contentType: 'image/png' }));
+  }
+  await assertFails(uploadBytes(ref(avatarStorage('adult'), `avatars/members/child/adult/${avatarFilename}`), avatarImage, { contentType: 'image/png' }));
+});
+
+test('parent editing of an adult or parent avatar requires an explicit canLogin false', async () => {
+  for (const role of ['adult', 'parent']) {
+    const uid = `missing-login-${role}`;
+    const profile = { name: `Profil ${role}`, role, active: true, canLogin: false };
+    await environment.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), 'members', uid), profile);
+    });
+    const avatar = ref(avatarStorage('parent'), `avatars/members/${uid}/parent/${avatarFilename}`);
+    await assertSucceeds(uploadBytes(avatar, avatarImage, { contentType: 'image/png' }));
+
+    const { canLogin: _canLogin, ...withoutCanLogin } = profile;
+    await environment.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), 'members', uid), withoutCanLogin);
+    });
+    const freshAvatar = ref(avatarStorage('parent'), `avatars/members/${uid}/parent/01234567-89ab-4def-8123-456789abcdef.jpeg`);
+    await assertFails(uploadBytes(freshAvatar, avatarImage, { contentType: 'image/jpeg' }));
+    await assertFails(uploadBytes(avatar, avatarImage, { contentType: 'image/png' }));
+    await assertFails(deleteObject(avatar));
+    await assertSucceeds(getMetadata(avatar));
+
+    await environment.withSecurityRulesDisabled(async context => {
+      await updateDoc(doc(context.firestore(), 'members', uid), { canLogin: false });
+    });
+    await assertSucceeds(uploadBytes(avatar, avatarImage, { contentType: 'image/png' }));
+    await assertSucceeds(deleteObject(avatar));
+  }
+});
+
+test('avatar writes reject unauthenticated upload, another uploader, archived actor and cross-scope paths', async () => {
+  const path = `avatars/members/child/child/${avatarFilename}`;
+  await assertFails(uploadBytes(ref(environment.unauthenticatedContext().storage(`gs://${projectId}.appspot.com`), path), avatarImage, { contentType: 'image/png' }));
+  await assertFails(uploadBytes(ref(avatarStorage('parent'), path), avatarImage, { contentType: 'image/png' }));
+  await assertFails(uploadBytes(ref(avatarStorage('archived'), `avatars/members/archived/archived/${avatarFilename}`), avatarImage, { contentType: 'image/png' }));
+  await assertSucceeds(uploadBytes(ref(avatarStorage('child'), path), avatarImage, { contentType: 'image/png' }));
+  await assertSucceeds(deleteObject(ref(avatarStorage('parent'), path)));
+  await assertSucceeds(uploadBytes(ref(avatarStorage('child'), path), avatarImage, { contentType: 'image/png' }));
+  await assertFails(deleteObject(ref(avatarStorage('sibling'), path)));
+  await assertFails(uploadBytes(ref(avatarStorage('child'), `avatars/members/child/child/extra/${avatarFilename}`), avatarImage, { contentType: 'image/png' }));
+  await assertFails(uploadBytes(ref(avatarStorage('child'), `avatars/members/child/child/../../health/result.png`), avatarImage, { contentType: 'image/png' }));
+  await assertSucceeds(deleteObject(ref(avatarStorage('child'), path)));
+});
+
+test('avatars require UUID filenames, supported image MIME and a real maximum of five MiB', async () => {
+  const storage = avatarStorage('child');
+  for (const filename of ['photo.png', '01234567-89ab-3def-8123-456789abcdef.png', '01234567-89ab-4def-7123-456789abcdef.png', '01234567-89ab-4def-8123-456789abcdef.svg', '01234567-89ab-4def-8123-456789abcdef.pdf']) {
+    await assertFails(uploadBytes(ref(storage, `avatars/members/child/child/${filename}`), avatarImage, { contentType: 'image/png' }));
+  }
+  for (const contentType of ['application/pdf', 'image/svg+xml', 'text/html', 'application/octet-stream']) {
+    await assertFails(uploadBytes(ref(storage, `avatars/members/child/child/${avatarFilename}`), avatarImage, { contentType }));
+  }
+  const boundary = ref(storage, `avatars/members/child/child/${avatarFilename}`);
+  await assertSucceeds(uploadBytes(boundary, new Uint8Array(5 * 1024 * 1024), { contentType: 'image/png' }));
+  await assertFails(uploadBytes(boundary, new Uint8Array(5 * 1024 * 1024 + 1), { contentType: 'image/png' }));
+  await assertSucceeds(deleteObject(boundary));
+});
+
+test('the aggregate family avatar is editable only by an active parent and readable only by members', async () => {
+  const path = `avatars/family/parent/${avatarFilename}`;
+  const parentAvatar = ref(avatarStorage('parent'), path);
+  await assertSucceeds(uploadBytes(parentAvatar, avatarImage, { contentType: 'image/png' }));
+  await assertSucceeds(getMetadata(ref(avatarStorage('child'), path)));
+  await assertSucceeds(getMetadata(ref(avatarStorage('adult'), path)));
+  await assertFails(getMetadata(ref(environment.unauthenticatedContext().storage(`gs://${projectId}.appspot.com`), path)));
+  for (const uid of ['child', 'adult', 'disabled', 'archived']) {
+    await assertFails(uploadBytes(ref(avatarStorage(uid), `avatars/family/${uid}/${avatarFilename}`), avatarImage, { contentType: 'image/png' }));
+    await assertFails(deleteObject(ref(avatarStorage(uid), path)));
+  }
+  await assertFails(uploadBytes(ref(avatarStorage('parent'), `avatars/family/child/${avatarFilename}`), avatarImage, { contentType: 'image/png' }));
+  await assertSucceeds(deleteObject(parentAvatar));
+});
+
+test('adult membership does not broaden parent-private medical Storage access', async () => {
+  const path = 'health/parents/Paweł/parent/adult-scope.pdf';
+  await assertSucceeds(uploadBytes(ref(avatarStorage('parent'), path), new Uint8Array([37, 80, 68, 70]), { contentType: 'application/pdf' }));
+  await assertFails(getMetadata(ref(avatarStorage('adult'), path)));
+  await assertFails(uploadBytes(ref(avatarStorage('adult'), `health/parents/${profiles.adult.personKey}/adult/forged.pdf`), new Uint8Array([37]), { contentType: 'application/pdf' }));
+});
+
+test('avatar cleanup follows the authorized profile editor rather than the original uploader', async () => {
+  const childPath = `avatars/members/child/parent/${avatarFilename}`;
+  await assertSucceeds(uploadBytes(ref(avatarStorage('parent'), childPath), avatarImage, { contentType: 'image/png' }));
+  await assertFails(deleteObject(ref(avatarStorage('sibling'), childPath)));
+  await assertFails(deleteObject(ref(avatarStorage('adult'), childPath)));
+  await assertSucceeds(deleteObject(ref(avatarStorage('child'), childPath)));
+
+  await environment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'members', 'other-parent'), { ...profiles.parent, name: 'Drugi rodzic' });
+  });
+  const familyPath = `avatars/family/other-parent/${avatarFilename}`;
+  await assertSucceeds(uploadBytes(ref(avatarStorage('other-parent'), familyPath), avatarImage, { contentType: 'image/png' }));
+  await assertFails(deleteObject(ref(avatarStorage('child'), familyPath)));
+  await assertFails(deleteObject(ref(avatarStorage('adult'), familyPath)));
+  await assertSucceeds(deleteObject(ref(avatarStorage('parent'), familyPath)));
 });

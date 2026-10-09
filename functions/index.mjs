@@ -1,8 +1,9 @@
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
 import { onDocumentWritten, onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { defineSecret } from 'firebase-functions/params';
+import { defineSecret, defineString } from 'firebase-functions/params';
 import { info } from 'firebase-functions/logger';
 import { deriveNotificationEvent } from './notification-events.mjs';
 import { schoolSyncBootstrap } from './notification-baseline.mjs';
@@ -10,6 +11,7 @@ import { enqueueInAppEvents } from './server/notification-inbox.mjs';
 import { flushSchoolNotifications, schoolNotificationBaselineRef } from './server/school-notifications.mjs';
 import { EDU_DAY_SCHEDULE, EDU_NIGHT_SCHEDULE, EDU_SCHEDULE_TIME_ZONE, runScheduledEduSync } from './server/edu-scheduler.mjs';
 import { processNotificationWrite, processSchoolNotificationBatch } from './notification-triggers.mjs';
+import { GOOGLE_CALENDAR_SCHEDULE, GOOGLE_CALENDAR_TIME_ZONE, runScheduledGoogleCalendarSync } from './server/calendar-scheduler.mjs';
 
 // Functions use the project's managed identity, never a shipped Admin key.
 const app = getApps()[0] || initializeApp();
@@ -18,6 +20,14 @@ const region = 'europe-west1';
 // Bind the SAME existing encryption key. Declaring this parameter does not
 // create, read, rotate or change a secret during build/function discovery.
 const eduEncryptionKey = defineSecret('EDUVULCAN_ENCRYPTION_KEY_BASE64');
+// Calendar credentials use their own key and OAuth secret. These declarations
+// do not read, generate or rotate any secret during build/function discovery.
+const calendarEncryptionKey = defineSecret('CALENDAR_ENCRYPTION_KEY_BASE64');
+const googleCalendarClientSecret = defineSecret('GOOGLE_CALENDAR_CLIENT_SECRET');
+const googleCalendarClientId = defineString('GOOGLE_CALENDAR_CLIENT_ID', { default: '' });
+const calendarSiteOrigin = defineString('CALENDAR_SITE_ORIGIN', { default: '' });
+const calendarEncryptionKeyId = defineString('CALENDAR_ENCRYPTION_KEY_ID', { default: 'v1' });
+
 const notificationDependencies = {
   derive: deriveNotificationEvent, enqueue: enqueueInAppEvents,
   baselineRef: schoolNotificationBaselineRef, bootstrap: schoolSyncBootstrap,
@@ -81,6 +91,24 @@ function scheduledEdu(window) {
 }
 export const eduVulcanSchoolHours = onSchedule({ ...eduScheduleOptions, schedule: EDU_DAY_SCHEDULE }, scheduledEdu('day'));
 export const eduVulcanOffHours = onSchedule({ ...eduScheduleOptions, schedule: EDU_NIGHT_SCHEDULE }, scheduledEdu('night'));
+
+// One economical hourly job also works while the browser/PWA is closed.
+// Sequential sources share each source's 120 s lease with Vercel manual sync.
+export const googleCalendarHourly = onSchedule({ schedule: GOOGLE_CALENDAR_SCHEDULE, timeZone: GOOGLE_CALENDAR_TIME_ZONE, region,
+  secrets: [calendarEncryptionKey, googleCalendarClientSecret], retryCount: 0,
+  minInstances: 0, maxInstances: 1, concurrency: 1, memory: '256MiB', timeoutSeconds: 540,
+}, async event => {
+  // Non-secret params are injected as runtime environment variables by Firebase.
+  // Access values only at runtime; deployment discovery must never read secrets.
+  if (!googleCalendarClientId.value() || !calendarSiteOrigin.value() || !calendarEncryptionKeyId.value()) {
+    info('Google Calendar scheduled synchronization', { skipped: 1, codes: { CALENDAR_NOT_CONFIGURED: 1 } });
+    return;
+  }
+  const result = await runScheduledGoogleCalendarSync({ db, auth: getAuth(app) }, { scheduleTime: event.scheduleTime });
+  // Counts and allowlisted status codes only. Never source IDs, UIDs, calendars,
+  // private titles, provider errors, OAuth tokens or encrypted envelopes.
+  info('Google Calendar scheduled synchronization', result);
+});
 
 export const medicineReminders = onSchedule({ schedule: 'every 5 minutes', timeZone: 'Europe/Warsaw', region, retryCount: 3 }, async () => {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date()).map(part => [part.type, part.value]));

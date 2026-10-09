@@ -96,3 +96,34 @@ test('cancellation of a restored lesson with changed details gets a distinct sta
   const later = deriveNotificationEvent('schoolItems', 'lesson-1', { ...original, time: '09:00' }, null);
   assert.equal(one.id, retried.id); assert.notEqual(one.id, later.id);
 });
+
+test('adult receives general and own private notifications without receiving parental or student school mailboxes', () => {
+  const adult = { id: 'adult-uid', role: 'adult', personKey: 'member-0123456789abcdef01234567', name: 'Dorosły', active: true, canLogin: true };
+  for (const collection of ['tasks', 'shoppingItems', 'calendarEvents']) {
+    const event = deriveNotificationEvent(collection, 'general', null, { title: 'Wpis rodzinny', person: 'family', createdBy: 'other' });
+    assert.equal(canReceiveNotification(adult, event), true);
+  }
+  const family = deriveNotificationEvent('familyMessages', 'family', null, { channel: 'family', participants: [], uid: 'other', text: 'Cześć' });
+  assert.equal(canReceiveNotification(adult, family), true);
+  const personal = deriveNotificationEvent('familyMessages', 'private', null, { channel: 'private:adult-uid:other', participants: ['adult-uid', 'other'], uid: 'other', text: 'Prywatne' });
+  assert.equal(canReceiveNotification(adult, personal), true);
+  assert.equal(canReceiveNotification({ ...adult, id: 'another' }, personal), false);
+  const health = deriveNotificationEvent('healthRecords', 'own', null, { title: 'Wpis', person: adult.personKey, privateToParents: false });
+  assert.equal(canReceiveNotification(adult, health), true);
+  assert.equal(canReceiveNotification(adult, { ...health, record: { ...health.record, privateToParents: true } }), false);
+  const privateCalendar = deriveNotificationEvent('privateCalendarEvents', 'own', null, { title: 'Mój kalendarz', ownerUid: adult.id, createdBy: 'other', private: true });
+  assert.equal(canReceiveNotification(adult, privateCalendar), true);
+  assert.equal(canReceiveNotification({ ...adult, id: 'another' }, privateCalendar), false);
+  for (const collection of ['schoolParentMessages', 'schoolStudentMessages', 'schoolItems']) {
+    const event = deriveNotificationEvent(collection, 'school', null, { ...school, person: adult.personKey, sourceOwnerUid: adult.id });
+    assert.equal(canReceiveNotification(adult, event), false);
+  }
+});
+
+test('archived notification recipients are rejected even if stale active and canLogin flags remain true', () => {
+  const event = deriveNotificationEvent('familyMessages', 'family', null, { channel: 'family', uid: 'other', participants: [], text: 'Cześć' });
+  for (const role of ['parent', 'adult', 'child']) {
+    assert.equal(canReceiveNotification({ ...parent, role, archived: true }, event), false);
+    assert.equal(canReceiveNotification({ ...parent, role, archived: false }, event), true);
+  }
+});

@@ -1,8 +1,8 @@
-import { EduServerError, assertSameOrigin, getServerFirebase, requireParent } from './edu-auth.mjs';
+import { EduServerError, assertSameOrigin, getServerFirebase, requireMember, requireParent } from './edu-auth.mjs';
 import { readJsonBody } from './edu-http.mjs';
 
 /** Same-origin account endpoint; deliberately does not reuse eduVULCAN error handling/actions. */
-export function createAccountHandler(action, { public: isPublic = false, services = getServerFirebase } = {}) {
+export function createAccountHandler(action, { public: isPublic = false, memberOnly = false, services = getServerFirebase } = {}) {
   return async function handler(request, response) {
     response.setHeader('Cache-Control', 'no-store, private, max-age=0');
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -15,7 +15,7 @@ export function createAccountHandler(action, { public: isPublic = false, service
       }
       assertSameOrigin(request);
       const firebase = services();
-      const context = isPublic ? firebase : await requireParent(request, firebase);
+      const context = isPublic ? firebase : await (memberOnly ? requireMember : requireParent)(request, firebase);
       const result = await action(context, await readJsonBody(request));
       response.statusCode = 200;
       response.end(JSON.stringify({ ok: true, ...result }));

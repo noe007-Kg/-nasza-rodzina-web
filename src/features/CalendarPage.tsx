@@ -1,21 +1,44 @@
-import { addDays, addMonths, capitalize, collection, db, DetailRow, doc, downloadFile, endOfDay, errorMessage, eventActivityIcon, formatDateInput, formatTime, formatTimeInput, generateOccurrences, isParent, Modal, ModuleHeader, notify, ownPerson, parseLocalDate, PEOPLE, personColor, personEventClass, personLabel, PersonSelect, React, sameDay, startOfDay, startOfWeek, useEffect, useMemo, useRef, useState, weekTitle, type CalendarEventData, type CalendarOccurrence, type CalendarView, type EventForm, type Member, type Page, type PersonKey, type RepeatType, type User } from '../app-shared';
+import { auth, addDays, addMonths, capitalize, collection, db, DetailRow, doc, downloadFile, endOfDay, errorMessage, eventActivityIcon, formatDateInput, formatTime, formatTimeInput, generateOccurrences, isParent, Modal, ModuleHeader, notify, ownPerson, parseLocalDate, personColor, personEventClass, personLabel, PersonSelect, React, sameDay, startOfDay, startOfWeek, useEffect, useMemo, useRef, useState, weekTitle, type CalendarEventData, type CalendarOccurrence, type CalendarView, type EventForm, type Member, type Page, type PersonKey, type RepeatType, type User } from '../app-shared';
 import { exportCalendarIcs, importCalendarIcs } from '../calendar-ics';
 import { planSeriesDelete, planSeriesUpdate, seriesScopeLabel, type SeriesScope } from '../calendar-series';
 import { commitCalendarPlan, subscribeCalendar } from '../calendar-store';
 import { describeRecurrence, type RecurrenceUnit } from '../calendar-utils';
+import { useFamilyDirectory } from '../family-directory';
+import { memberPersonKey } from '../family-members';
+import { projectSchoolCalendar } from '../calendar-source-projections';
+import { useCalendarSchoolSources } from '../useCalendarSchoolSources';
+import { calendarSourceDisplayEvent, canChangeGoogleVisibility } from '../calendar-source-metadata';
+import { calendarRequest } from '../calendars/calendar-client';
+import { CalendarRequestError, calendarErrorMessage } from '../calendars/model';
 import './calendar-package.css';
+import './calendar-sources.css';
 
 
-export function CalendarPage({ user, member, goTo }: { user: User; member: Member | null; goTo: (page:Page)=>void }) {
+export function CalendarPage({ user, member, goTo, requestedSelection }: { user: User; member: Member | null; goTo: (page:Page)=>void; requestedSelection?: { person: PersonKey; requestId: number } }) {
+  const activeProfiles = useFamilyDirectory().filter(profile => profile.active !== false && !profile.archived && !profile.disabled);
+  const personOptions = ['family', ...new Set(activeProfiles.map(memberPersonKey).filter(Boolean))];
   const [view, setView] = useState<CalendarView>('week');
   const [focusDate, setFocusDate] = useState(() => new Date());
-  const [events, setEvents] = useState<CalendarEventData[]>([]);
+  const [calendarState, setCalendarState] = useState<{ uid: string; events: CalendarEventData[] }>({ uid: user.uid, events: [] });
+  const events = calendarState.uid === user.uid ? calendarState.events : [];
+  const currentCalendarUid = useRef(user.uid);
+  currentCalendarUid.current = user.uid;
+  const schoolSources = useCalendarSchoolSources(user.uid, member);
+  const schoolProjection = useMemo(() => projectSchoolCalendar(schoolSources.rows, events, schoolSources.access), [schoolSources.rows, schoolSources.scope, events]);
+  const displayEvents = useMemo(() => [...events.map(calendarSourceDisplayEvent), ...schoolProjection.events], [events, schoolProjection.events]);
   const [selectedPerson, setSelectedPerson] = useState<PersonKey>('family');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<EventForm>(() => createDefaultEventForm(new Date()));
   const [saving, setSaving] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEventData | null>(null);
   const [selectedDisplayEvent, setSelectedDisplayEvent] = useState<CalendarEventData | null>(null);
+  const [selectedCalendarUid, setSelectedCalendarUid] = useState(user.uid);
+  const [selectedSchoolScope, setSelectedSchoolScope] = useState<string | null>(null);
+  const [visibilityRequest, setVisibilityRequest] = useState<{ uid: string; eventId: string; private: boolean; confirmed: boolean } | null>(null);
+  const [visibilityError, setVisibilityError] = useState('');
+  const visibilityAbort = useRef<AbortController | null>(null);
+  const currentSelectionId = useRef<string | null>(null);
+  currentSelectionId.current = selectedEvent?.id || null;
   const [selectedOccurrenceDate, setSelectedOccurrenceDate] = useState<Date | null>(null);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<EventForm>(() => createDefaultEventForm(new Date()));
@@ -33,11 +56,51 @@ export function CalendarPage({ user, member, goTo }: { user: User; member: Membe
   const [importing, setImporting] = useState(false);
   const [transferNote, setTransferNote] = useState('');
   const importInput = useRef<HTMLInputElement | null>(null);
+  useEffect(() => { if (requestedSelection) setSelectedPerson(requestedSelection.person); }, [requestedSelection]);
 
-  useEffect(() => subscribeCalendar(user.uid, (loaded) => {
-    setEvents(loaded);
-    setSelectedEvent((current) => current ? loaded.find((item) => item.id === current.id) || current : null);
-  }, (error) => { console.error('Błąd kalendarza:', error); notify('Nie udało się odczytać kalendarza.', 'error'); }), [user.uid]);
+  useEffect(() => {
+    let active = true;
+    const uid = user.uid;
+    const stop = subscribeCalendar(uid, (loaded) => {
+      if (!active || currentCalendarUid.current !== uid) return;
+      setCalendarState({ uid, events: loaded });
+      setSelectedEvent((current) => current ? loaded.find((item) => item.id === current.id) || current : null);
+    }, (error) => {
+      if (!active || currentCalendarUid.current !== uid) return;
+      console.error('Błąd kalendarza:', error); notify('Nie udało się odczytać kalendarza.', 'error');
+    });
+    return () => { active = false; stop(); };
+  }, [user.uid]);
+
+  const schoolSelection = selectedSchoolScope !== null;
+  const currentSchoolSelection = schoolSelection && selectedSchoolScope === schoolSources.scope
+    ? schoolProjection.events.find(event => event.id === selectedEvent?.id) || null : null;
+  const currentCalendarSelection = selectedEvent && !schoolSelection
+    ? events.find(event => event.id === selectedEvent.id) || null : null;
+  // Keeping a snapshot for an occurrence must not keep an inaccessible event
+  // visible after deletion or a move to another user's private calendar.
+  const selectionVisible = selectedCalendarUid === user.uid &&
+    (schoolSelection ? !!currentSchoolSelection : !!currentCalendarSelection);
+  const visibleDisplayEvent = schoolSelection ? currentSchoolSelection
+    : currentCalendarSelection?.repeat === 'none' ? calendarSourceDisplayEvent(currentCalendarSelection) : selectedDisplayEvent;
+  const waitingOwnVisibility = visibilityRequest?.uid === user.uid && visibilityRequest.eventId === selectedEvent?.id && auth.currentUser?.uid === user.uid;
+  useEffect(() => {
+    // An atomic move can arrive through the two authorized listeners in different
+    // orders. Hide absent data immediately, but retain only the owned operation
+    // until its new snapshot arrives; no stale details stay on screen.
+    if (!selectionVisible && !waitingOwnVisibility) { setSelectedEvent(null); setSelectedDisplayEvent(null); setEditing(false); }
+  }, [selectionVisible, waitingOwnVisibility]);
+  useEffect(() => {
+    setVisibilityRequest(null); setVisibilityError('');
+    return () => { visibilityAbort.current?.abort(); visibilityAbort.current = null; };
+  }, [user.uid, selectedEvent?.id]);
+  useEffect(() => {
+    if (visibilityRequest?.confirmed && visibilityRequest.uid === user.uid && auth.currentUser?.uid === user.uid
+      && currentCalendarSelection?.id === visibilityRequest.eventId && !!currentCalendarSelection.private === visibilityRequest.private) {
+      visibilityAbort.current = null; setVisibilityRequest(null);
+      notify('Zmieniono widoczność wydarzenia.', 'info');
+    }
+  }, [visibilityRequest, currentCalendarSelection, user.uid]);
 
   const weekStart = useMemo(() => startOfWeek(focusDate), [focusDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
@@ -54,28 +117,28 @@ export function CalendarPage({ user, member, goTo }: { user: User; member: Membe
   }, [view, focusDate, weekStart, monthDays]);
 
   const occurrences = useMemo(() => {
-    return events
+    return displayEvents
       .filter((event) => selectedPerson === 'family' || event.person === selectedPerson || event.person === 'family')
       .flatMap((event) => generateOccurrences(event, range.start, range.end))
       .sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [events, selectedPerson, range]);
+  }, [displayEvents, selectedPerson, range]);
 
   const todayRange = useMemo(() => ({ start: startOfDay(new Date()), end: endOfDay(new Date()) }), []);
-  const todayOccurrences = useMemo(() => events
+  const todayOccurrences = useMemo(() => displayEvents
     .filter((event) => selectedPerson === 'family' || event.person === selectedPerson || event.person === 'family')
-    .flatMap((event) => generateOccurrences(event, todayRange.start, todayRange.end)), [events, selectedPerson, todayRange]);
+    .flatMap((event) => generateOccurrences(event, todayRange.start, todayRange.end)), [displayEvents, selectedPerson, todayRange]);
 
   const upcomingOccurrences = useMemo(() => {
     const now = new Date();
     const todayStart = startOfDay(now);
     const futureEnd = endOfDay(addDays(now, 30));
-    return events
+    return displayEvents
       .filter((event) => selectedPerson === 'family' || event.person === selectedPerson || event.person === 'family')
       .flatMap((event) => generateOccurrences(event, todayStart, futureEnd))
       .filter((item) => item.date >= todayStart)
       .sort((a, b) => a.date.getTime() - b.date.getTime())
       .slice(0, 5);
-  }, [events, selectedPerson]);
+  }, [displayEvents, selectedPerson]);
 
   function titleForView() {
     if (view === 'day') return capitalize(focusDate.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }));
@@ -95,8 +158,11 @@ export function CalendarPage({ user, member, goTo }: { user: User; member: Membe
   }
 
   function openEvent(event: CalendarEventData, occurrenceDate = event.date, originalDate = occurrenceDate) {
-    const master = events.find((item) => item.id === event.id) || event;
+    const master = displayEvents.find((item) => item.id === event.id);
+    if (!master) return;
     const duration = event.endDate.getTime() - event.date.getTime();
+    setSelectedCalendarUid(user.uid);
+    setSelectedSchoolScope(schoolProjection.events.some(item => item.id === master.id) ? schoolSources.scope : null);
     setSelectedOccurrenceDate(originalDate);
     setSelectedEvent(master);
     setSelectedDisplayEvent({ ...master, ...event, date: occurrenceDate, endDate: new Date(occurrenceDate.getTime() + duration) });
@@ -133,7 +199,7 @@ export function CalendarPage({ user, member, goTo }: { user: User; member: Membe
   }
 
   async function updateEvent(e: React.FormEvent) {
-    e.preventDefault(); if (!selectedEvent || updating) return;
+    e.preventDefault(); if (!selectedEvent || selectedEvent.readOnly || !selectionVisible || updating) return;
     const event = eventFromForm(editForm, selectedEvent); if (!event) return;
     setUpdating(true);
     try {
@@ -153,7 +219,7 @@ export function CalendarPage({ user, member, goTo }: { user: User; member: Membe
   }
 
   async function removeEvent() {
-    if (!selectedEvent || deleting) return;
+    if (!selectedEvent || selectedEvent.readOnly || !selectionVisible || deleting) return;
     if (selectedEvent.repeat !== 'none' && !showDeleteScope) { setShowDeleteScope(true); return; }
     const scope = selectedEvent.repeat === 'none' ? 'all' : deleteScope;
     if (!window.confirm(`Czy na pewno chcesz usunąć „${selectedEvent.title}”?${selectedEvent.repeat !== 'none' ? '\nZakres: ' + seriesScopeLabel(scope, true) : ''}`)) return;
@@ -161,6 +227,31 @@ export function CalendarPage({ user, member, goTo }: { user: User; member: Membe
     try { await commitCalendarPlan(planSeriesDelete(events, selectedEvent, selectedOccurrenceDate || selectedEvent.date, scope), events, user.uid); setSelectedEvent(null); }
     catch (error) { notify(errorMessage(error), 'error'); }
     finally { setDeleting(false); }
+  }
+
+  async function changeGoogleVisibility() {
+    const event = currentCalendarSelection, uid = user.uid;
+    if (!selectionVisible || visibilityRequest || (visibilityAbort.current && !visibilityAbort.current.signal.aborted)
+      || auth.currentUser?.uid !== uid || !event || !canChangeGoogleVisibility(event, uid)) return;
+    const makePrivate = !event.private;
+    if (!makePrivate && !window.confirm('Udostępnić to wydarzenie w kalendarzu rodzinnym? Członkowie rodziny zobaczą jego szczegóły.')) return;
+    const controller = new AbortController();
+    visibilityAbort.current?.abort(); visibilityAbort.current = controller;
+    setVisibilityError(''); setVisibilityRequest({ uid, eventId: event.id, private: makePrivate, confirmed: false });
+    const current = () => !controller.signal.aborted && currentCalendarUid.current === uid
+      && auth.currentUser?.uid === uid && currentSelectionId.current === event.id;
+    try {
+      const visibility = makePrivate ? 'private' : 'family';
+      const reply = await calendarRequest<{ ok: true; eventId: string; visibility: 'private' | 'family' }>('visibility', user,
+        { connectionId: event.sourceConnectionId, eventId: event.id, visibility }, controller.signal);
+      if (!current()) return;
+      if (reply.eventId !== event.id || reply.visibility !== visibility) throw new CalendarRequestError('CALENDAR_INVALID_RESPONSE');
+      // A response alone is not success: wait for the authorized calendar snapshot.
+      setVisibilityRequest({ uid, eventId: event.id, private: makePrivate, confirmed: true });
+    } catch (error) {
+      if (!current()) return;
+      visibilityAbort.current = null; setVisibilityRequest(null); setVisibilityError(calendarErrorMessage(error));
+    }
   }
 
   function downloadCalendar() {
@@ -198,8 +289,10 @@ export function CalendarPage({ user, member, goTo }: { user: User; member: Membe
 
       <div className="calendar-transfer-toolbar"><button className="secondary-button" onClick={() => { setTransferPerson(selectedPerson); setShowTransfer(true); }}>Importuj / pobierz kalendarz .ics</button></div>
       <section className="person-filters">
-        {PEOPLE.map((person) => <button key={person} type="button" className={selectedPerson === person ? 'active' : ''} onClick={() => setSelectedPerson(person)}><span style={{ background: personColor(person) }} />{personLabel(person)}</button>)}
+        {personOptions.map((person) => <button key={person} type="button" className={selectedPerson === person ? 'active' : ''} onClick={() => setSelectedPerson(person)}><span style={{ background: personColor(person) }} />{activeProfiles.find(profile => memberPersonKey(profile) === person)?.name || personLabel(person)}</button>)}
       </section>
+      {schoolSources.error && <p className="calendar-source-notice" role="status">Nie udało się odczytać zajęć SP4. Pozostałe wydarzenia nadal są dostępne.</p>}
+      {schoolProjection.incomplete > 0 && <p className="calendar-source-notice" role="status">SP4: {schoolProjection.incomplete} wpisów bez pełnej daty lub godzin. Nie dopisujemy brakujących terminów.<button type="button" onClick={() => goTo('Szkoła')}>Sprawdź w Szkole</button></p>}
 
       {view === 'day' && <CalendarDay date={focusDate} occurrences={occurrences} onOpen={openEvent} onAdd={openNewEvent} />}
       {view === 'week' && (
@@ -227,11 +320,11 @@ export function CalendarPage({ user, member, goTo }: { user: User; member: Membe
       {view === 'month' && <CalendarMonth focusDate={focusDate} days={monthDays} occurrences={occurrences} onOpen={openEvent} onAdd={openNewEvent} onDay={(day) => { setFocusDate(day); setView('day'); }} />}
 
       <section className="calendar-lower-grid">
-        <article className="calendar-lower-card"><header><strong>⏭️ Nadchodzące wydarzenia</strong></header>{upcomingOccurrences.slice(0,4).map((item) => { const done=sameDay(item.date,new Date())&&item.endDate<new Date(); return <button key={item.key} className={done?'completed-today':''} onClick={()=>openEvent(item.source, item.date, item.originalDate || item.date)}><span>{eventActivityIcon(item.source.title)}</span><div><strong>{item.source.title}</strong><small>{item.date.toLocaleDateString('pl-PL')} · {item.source.allDay?'Cały dzień':`${formatTime(item.date)}–${formatTime(item.endDate)}`}</small></div><em>{done?'✓ Zakończone':'›'}</em></button>; })}</article>
+        <article className="calendar-lower-card"><header><strong>⏭️ Nadchodzące wydarzenia</strong></header>{upcomingOccurrences.slice(0,4).map((item) => { const done=!item.source.cancelled&&sameDay(item.date,new Date())&&item.endDate<new Date(); return <button key={item.key} className={`${done?'completed-today':''} ${item.source.cancelled?'is-source-cancelled':''}`} onClick={()=>openEvent(item.source, item.date, item.originalDate || item.date)}><span>{eventActivityIcon(item.source.title)}</span><div><strong>{item.source.title}</strong><small>{item.date.toLocaleDateString('pl-PL')} · {item.source.allDay?'Cały dzień':`${formatTime(item.date)}–${formatTime(item.endDate)}`}</small><CalendarSourceBadges event={item.source} /></div><em>{done?'✓ Zakończone':'›'}</em></button>; })}</article>
         <article className="calendar-lower-card"><header><strong>🔔 Twoje przypomnienia</strong></header><p>Sprawdź nadchodzące wydarzenia tutaj, a przypomnienia o lekach w zakładce Zdrowie.</p><button className="secondary-button" onClick={()=>goTo('Ustawienia')}>Ustawienia przypomnień</button></article>
         <article className="calendar-lower-card"><header><strong>⚡ Szybkie akcje</strong></header><div className="calendar-actions"><button onClick={()=>openNewEvent(new Date())}>＋ Wydarzenie</button><button onClick={()=>openNewEvent(new Date(),'12:00',true)}>☀️ Cały dzień</button><button onClick={()=>setFocusDate(new Date())}>📍 Dzisiaj</button></div></article>
       </section>
-      <section className="connected-calendars-footer"><header><div><strong>🔗 Połączone kalendarze</strong><small>Nasza Rodzina jest kalendarzem domyślnym.</small></div></header><div><span className="connected active">● Nasza Rodzina</span><span>Google Calendar — do połączenia</span><span>Apple / iCloud — ICS</span><span>Outlook — do połączenia</span></div></section>
+      <section className="connected-calendars-footer"><header><div><strong>🔗 Połączone kalendarze</strong><small>Nasza Rodzina jest kalendarzem domyślnym.</small></div></header><div><span className="connected active">● Nasza Rodzina</span>{schoolProjection.events.length > 0 && <span>SP4 — podgląd danych szkolnych</span>}<button type="button" onClick={() => goTo('Ustawienia')}>Google Calendar — {events.some(event => event.source === 'google') ? 'zapisane wydarzenia' : 'połącz w Ustawieniach'}</button><span>Apple / iCloud — ICS</span><span>Outlook — import ICS</span></div></section>
 
       {showTransfer && <Modal title="Import i eksport kalendarza" subtitle="Pliki .ics" onClose={() => setShowTransfer(false)} wide>
         <div className="form-grid calendar-transfer-form">
@@ -240,6 +333,7 @@ export function CalendarPage({ user, member, goTo }: { user: User; member: Membe
           <label className="field"><span>Zakres od</span><input type="date" value={exportFrom} onChange={(e) => setExportFrom(e.target.value)} /></label>
           <label className="field"><span>Zakres do</span><input type="date" min={exportFrom} value={exportTo} onChange={(e) => setExportTo(e.target.value)} /></label>
           <p className="field-wide muted">Bez zakresu pobierzesz całe serie; w wybranym zakresie — ich wystąpienia. Prywatne wydarzenia innych osób nie są udostępniane.</p>
+          <p className="field-wide muted">Podgląd zajęć SP4 nie tworzy zapisanych wydarzeń. Eksport obejmuje dotychczasowy kalendarz.</p>
           <button className="primary-button" onClick={downloadCalendar}>Pobierz kalendarz</button>
           <label className="checkbox-field"><input type="checkbox" checked={importPrivate} onChange={(e) => setImportPrivate(e.target.checked)} /><span>Importuj jako prywatne</span></label>
           <input ref={importInput} className="calendar-file-input" type="file" accept=".ics,text/calendar" aria-label="Plik kalendarza ICS" onChange={(e) => { const file = e.target.files?.[0]; if (file) void importCalendar(file); }} />
@@ -254,23 +348,30 @@ export function CalendarPage({ user, member, goTo }: { user: User; member: Membe
         </Modal>
       )}
 
-      {selectedEvent && (
-        <Modal title={selectedDisplayEvent?.title || selectedEvent.title} subtitle={selectedEvent.repeat !== 'none' ? 'Wydarzenie cykliczne' : 'Wydarzenie'} onClose={() => setSelectedEvent(null)} wide>
-          {!editing ? (
+      {selectedEvent && selectionVisible && (
+        <Modal title={visibleDisplayEvent?.title || selectedEvent.title} subtitle={selectedEvent.readOnly ? `${selectedEvent.source === 'google' ? 'Google Calendar' : 'SP4'} · Tylko do odczytu` : selectedEvent.repeat !== 'none' ? 'Wydarzenie cykliczne' : 'Wydarzenie'} onClose={() => setSelectedEvent(null)} wide>
+          {(!editing || selectedEvent.readOnly) ? (
             <>
+              {selectedEvent.readOnly && visibleDisplayEvent && <div className="calendar-source-detail"><CalendarSourceBadges event={visibleDisplayEvent} />{schoolSelection ? <><p>Dane pochodzą z modułu Szkoła. Zajęcia szkolne w tym widoku są tylko do odczytu.</p><button className="secondary-button" type="button" onClick={() => goTo('Szkoła')}>Otwórz Szkołę</button></> : <><p>Treść wydarzenia pochodzi z Google Calendar. Zmień ją w kalendarzu źródłowym; kolejne pobranie zachowa lokalną widoczność.</p><button className="secondary-button" type="button" onClick={() => goTo('Ustawienia')}>Połączone kalendarze</button></>}</div>}
               <div className="details-grid">
-                <DetailRow label="Osoba" value={personLabel((selectedDisplayEvent || selectedEvent).person)} />
-                <DetailRow label="Termin wydarzenia" value={capitalize((selectedDisplayEvent?.date || selectedOccurrenceDate || selectedEvent.date).toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))} />
-                <DetailRow label="Godzina" value={(selectedDisplayEvent || selectedEvent).allDay ? 'Cały dzień' : `${formatTime((selectedDisplayEvent || selectedEvent).date)} – ${formatTime((selectedDisplayEvent || selectedEvent).endDate)}`} />
+                <DetailRow label="Osoba" value={personLabel((visibleDisplayEvent || selectedEvent).person)} />
+                <DetailRow label="Termin wydarzenia" value={capitalize((visibleDisplayEvent?.date || selectedOccurrenceDate || selectedEvent.date).toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))} />
+                <DetailRow label="Godzina" value={(visibleDisplayEvent || selectedEvent).allDay ? 'Cały dzień' : `${formatTime((visibleDisplayEvent || selectedEvent).date)} – ${formatTime((visibleDisplayEvent || selectedEvent).endDate)}`} />
                 <DetailRow label="Powtarzanie" value={describeRecurrence(selectedEvent)} />
                 {selectedEvent.repeatUntil && <DetailRow label="Powtarzaj do" value={selectedEvent.repeatUntil.toLocaleDateString('pl-PL')} />}
-                {selectedEvent.private && <DetailRow label="Widoczność" value="Prywatne — tylko Ty" />}
-                {(selectedDisplayEvent || selectedEvent).location && <DetailRow label="Lokalizacja" value={(selectedDisplayEvent || selectedEvent).location!} />}
+                {(visibleDisplayEvent || selectedEvent).private ? <DetailRow label="Widoczność" value="Prywatny — tylko Ty" /> : selectedEvent.source === 'google' ? <DetailRow label="Widoczność" value="Rodzinny" /> : null}
+                {(visibleDisplayEvent || selectedEvent).location && <DetailRow label="Lokalizacja" value={(visibleDisplayEvent || selectedEvent).location!} />}
                 {selectedEvent.repeatCount && <DetailRow label="Liczba wystąpień" value={String(selectedEvent.repeatCount)} />}
-                {(selectedDisplayEvent || selectedEvent).description && <DetailRow label="Notatka" value={(selectedDisplayEvent || selectedEvent).description} />}
+                {(visibleDisplayEvent || selectedEvent).description && <DetailRow label="Notatka" value={(visibleDisplayEvent || selectedEvent).description} />}
               </div>
+              {canChangeGoogleVisibility(currentCalendarSelection, user.uid) && <div className="calendar-source-visibility">
+                <button type="button" className="secondary-button" disabled={!!visibilityRequest} onClick={() => void changeGoogleVisibility()}>{visibilityRequest ? 'Zapisywanie widoczności…' : currentCalendarSelection?.private ? 'Udostępnij rodzinie' : 'Ustaw jako prywatny'}</button>
+                <small>Przypisanie do profilu nie udostępnia prywatnego wydarzenia innym osobom.</small>
+                {visibilityError && <p role="alert">{visibilityError}</p>}
+                {visibilityRequest?.confirmed && <p role="status">Potwierdzono zmianę. Czekamy na odświeżenie kalendarza.</p>}
+              </div>}
               {showDeleteScope && selectedEvent.repeat !== 'none' && <SeriesScopeSelector value={deleteScope} onChange={setDeleteScope} deleting />}
-              <div className="modal-actions">{(isParent(member) || selectedEvent.createdBy === user.uid) && <><button className="secondary-button" onClick={() => { setEditing(true); setShowDeleteScope(false); }}>✏️ Edytuj</button><button className="danger-button" onClick={removeEvent} disabled={deleting}>{deleting ? 'Usuwanie…' : showDeleteScope ? 'Potwierdź usunięcie' : '🗑️ Usuń'}</button></>}</div>
+              <div className="modal-actions">{!selectedEvent.readOnly && (isParent(member) || selectedEvent.createdBy === user.uid) && <><button className="secondary-button" onClick={() => { setEditing(true); setShowDeleteScope(false); }}>✏️ Edytuj</button><button className="danger-button" onClick={removeEvent} disabled={deleting}>{deleting ? 'Usuwanie…' : showDeleteScope ? 'Potwierdź usunięcie' : '🗑️ Usuń'}</button></>}</div>
             </>
           ) : (
             <><SeriesScopeSelector hidden={selectedEvent.repeat === 'none'} value={editScope} onChange={changeEditScope} /><EventFormFields allowPrivacyChange={selectedEvent.createdBy === user.uid} scope={selectedEvent.repeat !== 'none' ? editScope : undefined} allowed={isParent(member) ? undefined : ['family', ownPerson(member)]} form={editForm} setForm={setEditForm} onSubmit={updateEvent} buttonText={updating ? 'Zapisywanie…' : '✓ Zapisz zmiany'} disabled={updating} onCancel={() => setEditing(false)} /></>
@@ -353,13 +454,19 @@ export function SeriesScopeSelector({ value, onChange, deleting = false, hidden 
 
 export function CalendarEventButton({ occurrence, onClick }: { occurrence: CalendarOccurrence; onClick: () => void }) {
   const event = occurrence.source;
-  const completed = sameDay(occurrence.date, new Date()) && occurrence.endDate < new Date();
+  const completed = !event.cancelled && sameDay(occurrence.date, new Date()) && occurrence.endDate < new Date();
   return (
-    <button type="button" className={`calendar-event ${personEventClass(event.person)} ${completed ? 'completed-today' : ''}`} onClick={onClick}>
+    <button type="button" className={`calendar-event ${personEventClass(event.person)} ${completed ? 'completed-today' : ''} ${event.cancelled ? 'is-source-cancelled' : ''}`} data-source={event.source || 'manual'} onClick={onClick}>
       <strong>{event.title}</strong>
       <span>{event.allDay ? 'Cały dzień' : formatTime(occurrence.date)}{event.repeat !== 'none' ? ' · ↻' : ''}{completed ? ' · ✓ Zakończone' : ''}</span>
+      <CalendarSourceBadges event={event} />
     </button>
   );
+}
+
+function CalendarSourceBadges({ event }: { event: CalendarEventData }) {
+  if (event.source !== 'sp4' && event.source !== 'google') return null;
+  return <span className="calendar-source-badges"><span className={`calendar-source-badge ${event.source === 'google' ? 'calendar-google-badge' : ''}`} data-testid="calendar-source-badge">{event.source === 'google' ? 'Google Calendar' : 'SP4'}</span>{event.cancelled && <span className="calendar-source-badge calendar-cancelled-badge">ODWOŁANE</span>}</span>;
 }
 
 export function CalendarDay({ date, occurrences, onOpen, onAdd }: { date: Date; occurrences: CalendarOccurrence[]; onOpen: (event: CalendarEventData, occurrenceDate?: Date, originalDate?: Date) => void; onAdd: (date?: Date, time?: string, allDay?: boolean) => void }) {

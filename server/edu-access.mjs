@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { EduServerError, eduRequestHeader, getServerFirebase, requireMember, requireParent } from './edu-auth.mjs';
+import { activeEduActor, schoolPersonKey, schoolProfileEnabled, schoolProfileRoster, validSchoolPersonKey, validMemberDocumentId } from './edu-people.mjs';
 
 export const FAMILY_CONNECTION_ID = 'family';
-const SCHOOL_PEOPLE = ['Paweł', 'Nikodem', 'Layla'];
 
 export function studentConnectionId(uid) {
   if (typeof uid !== 'string' || !uid || uid.length > 128 || uid.includes('/')) {
@@ -17,17 +17,18 @@ export function studentConnectionId(uid) {
  */
 export async function resolveConnectionAccess(context, scope = 'family') {
   const { uid, profile } = context;
-  if (!profile || profile.active !== true || profile.canLogin !== true) {
+  if (!validMemberDocumentId(uid) || !activeEduActor(profile)) {
     throw new EduServerError('EDU_MEMBER_REQUIRED', 403, 'Konto Naszej Rodziny nie ma aktywnego dostępu.');
   }
   if (scope === 'family') {
     if (profile.role !== 'parent') throw new EduServerError('EDU_PARENT_REQUIRED', 403, 'Wspólnym połączeniem rodziny zarządza konto z rolą parent w Naszej Rodzinie.');
-    return { ...context, connection: { id: FAMILY_CONNECTION_ID, scope, accountRole: 'parent', actorUid: uid, allowedPersonKeys: [...SCHOOL_PEOPLE] } };
+    const roster = await schoolProfileRoster(context.db);
+    return { ...context, connection: { id: FAMILY_CONNECTION_ID, scope, accountRole: 'parent', actorUid: uid, ...roster } };
   }
   if (scope !== 'student') throw new EduServerError('EDU_INVALID_REQUEST', 400, 'Nieprawidłowy zakres połączenia z dziennikiem.');
   if (profile.role !== 'child') throw new EduServerError('EDU_STUDENT_REQUIRED', 403, 'Osobiste połączenie ucznia jest przypisane wyłącznie do jego konta Naszej Rodziny.');
-  const personKey = Object.hasOwn(profile, 'personKey') ? profile.personKey : profile.name;
-  if (!SCHOOL_PEOPLE.includes(personKey)) throw new EduServerError('EDU_STUDENT_LINK_REQUIRED', 403, 'Rodzic musi przypisać konto ucznia do jego szkolnego profilu.');
+  const personKey = schoolPersonKey(profile);
+  if (!schoolProfileEnabled(profile) || !validSchoolPersonKey(personKey)) throw new EduServerError('EDU_STUDENT_LINK_REQUIRED', 403, 'Rodzic musi przypisać konto ucznia do jego szkolnego profilu.');
   const binding = await context.db.collection('_eduStudentBindings').doc(personKey).get();
   const identity = binding.exists ? binding.data().identity : null;
   if (!identity || typeof identity.studentName !== 'string' || !identity.studentName.trim() || identity.studentName.length > 300
@@ -36,7 +37,7 @@ export async function resolveConnectionAccess(context, scope = 'family') {
   }
   return { ...context, connection: {
     id: studentConnectionId(uid), scope, accountRole: 'student', actorUid: uid,
-    allowedPersonKeys: [personKey], allowedStudentIdentity: { studentName: identity.studentName, schoolName: identity.schoolName,
+    allowedPersonKeys: [personKey], personProfileIds: { [personKey]: uid }, allowedStudentIdentity: { studentName: identity.studentName, schoolName: identity.schoolName,
       ...(typeof identity.schoolSymbol === 'string' && identity.schoolSymbol.length <= 100 ? { schoolSymbol: identity.schoolSymbol } : {}) },
   } };
 }

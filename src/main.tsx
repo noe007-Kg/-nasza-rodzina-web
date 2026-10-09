@@ -1,10 +1,15 @@
 import { onSnapshot as observeDocument } from 'firebase/firestore';
-import { APP_VERSION, AppIcon, auth, collection, createRoot, db, doc, ErrorBoundary, errorMessage, Feedback, onAuthStateChanged, onSnapshot, pageFromHash, React, registerPwa, SchoolModule, signOut, useEffect, useRef, useState, type Member, type Page, type PersonKey, type User } from "./app-shared";
+import { APP_VERSION, AppIcon, auth, collection, createRoot, db, doc, ErrorBoundary, errorMessage, Feedback, onAuthStateChanged, onSnapshot, pageFromHash, React, registerPwa, SchoolModule, signOut, useEffect, useMemo, useRef, useState, type Member, type Page, type PersonKey, type User } from "./app-shared";
 
-import { FamilyDirectoryContext } from './family-directory';
-import { memberPersonKey, type FamilyMemberProfile } from './family-members';
+import { FamilyAggregateContext, FamilyDirectoryContext } from './family-directory';
+import { memberPersonKey, type FamilyAggregateProfile, type FamilyMemberProfile } from './family-members';
+import { useProfileAvatars } from './account/useProfileAvatars';
 import { FamilyTopBar } from './FamilyTopBar';
 import { useEduActivationSync } from './school/useEduActivationSync';
+import { useCalendarActivationSync } from './calendars/useCalendarActivationSync';
+import { CalendarCallbackCompletion } from './calendars/CalendarCallbackCompletion';
+import type { CalendarNotice } from './calendars/model';
+import { schoolReadAccess, schoolReadAccessKey } from './school/read-access';
 import { CalendarPage } from "./features/CalendarPage";
 import { ChatPage } from "./features/ChatPage";
 import { FamilyPage } from "./features/FamilyPage";
@@ -59,6 +64,9 @@ function FamilyApp({ user }: { user: User }) {
   const [profileError, setProfileError] = useState('');
   const [member, setMember] = useState<Member | null>(null);
   const [familyMembers, setFamilyMembers] = useState<FamilyMemberProfile[]>([]);
+  const [aggregateProfile, setAggregateProfile] = useState<FamilyAggregateProfile>({ emoji: '👨‍👩‍👧‍👦' });
+  const [calendarSelection, setCalendarSelection] = useState<{ person: PersonKey; requestId: number }>();
+  const [calendarNotice, setCalendarNotice] = useState<CalendarNotice>();
   const [selectedFamilyPerson, setSelectedFamilyPerson] = useState<PersonKey>('family');
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -81,15 +89,29 @@ function FamilyApp({ user }: { user: User }) {
     }, error => { setProfileError(errorMessage(error)); setProfileLoading(false); });
   }, [user.uid]);
 
-  const authorized = member?.active === true && member?.canLogin === true && ['parent', 'child'].includes(member?.role || '');
+  const authorized = member?.active === true && member?.canLogin === true && member?.archived !== true && ['parent', 'adult', 'child'].includes(member?.role || '');
+  const avatarProfiles = useMemo(() => {
+    const directory = new Map(familyMembers.map(profile => [profile.id, profile]));
+    if (member) directory.set(user.uid, { ...member, id: user.uid });
+    return [...directory.values()];
+  }, [familyMembers, member, user.uid]);
+  const displayedMembers = useProfileAvatars(user.uid, avatarProfiles);
+  const displayedMember = member ? { ...member, photoURL: displayedMembers.find(profile => profile.id === user.uid)?.photoURL } : null;
+  const aggregateAvatars = useMemo(() => [{ ...aggregateProfile, id: '__family_aggregate__', familyAggregate: true }], [aggregateProfile]);
+  const displayedAggregate = useProfileAvatars(user.uid, aggregateAvatars)[0];
   // Connection management remains parent-only; children keep their existing
   // school read permissions and never request the private parent integration.
   useEduActivationSync(user, authorized && member?.role === 'parent');
+  useCalendarActivationSync(user, authorized);
   useEffect(() => {
     if (!authorized) { setFamilyMembers([]); return; }
     return onSnapshot(collection(db, 'members'), snapshot => {
       setFamilyMembers(snapshot.docs.map(row => ({ ...row.data(), id: row.id }) as FamilyMemberProfile));
     }, () => setFamilyMembers(member ? [{ ...member, id: user.uid }] : []));
+  }, [user.uid, authorized]);
+  useEffect(() => {
+    if (!authorized) { setAggregateProfile({ emoji: '👨‍👩‍👧‍👦' }); return; }
+    return observeDocument(doc(db, 'familySettings', 'profile'), snapshot => setAggregateProfile(snapshot.exists() ? snapshot.data() as FamilyAggregateProfile : { emoji: '👨‍👩‍👧‍👦' }), () => setAggregateProfile({ emoji: '👨‍👩‍👧‍👦' }));
   }, [user.uid, authorized]);
 
   useEffect(() => {
@@ -122,16 +144,16 @@ function FamilyApp({ user }: { user: User }) {
 
   function renderPage() {
     switch (page) {
-      case 'Start': return <StartPage user={user} member={member} goTo={goTo} />;
-      case 'Kalendarz': return <CalendarPage user={user} member={member} goTo={goTo} />;
-      case 'Zadania': return <TasksPage user={user} member={member} />;
-      case 'Zakupy': return <ShoppingPage user={user} member={member} />;
-      case 'Czat': return <ChatPage user={user} member={member} />;
-      case 'Zdrowie': return <HealthPage user={user} member={member} />;
-      case 'Szkoła': return <SchoolModule user={user} member={member} familyMembers={familyMembers} />;
-      case 'Rodzina': return <FamilyPage user={user} member={member} goTo={goTo} selected={selectedFamilyPerson} onSelect={setSelectedFamilyPerson} />;
-      case 'Ustawienia': return <SettingsPage user={user} member={member} theme={theme} setTheme={setTheme} goTo={goTo} onLogout={logout} />;
-      default: return <StartPage user={user} member={member} goTo={goTo} />;
+      case 'Start': return <StartPage user={user} member={displayedMember} goTo={goTo} />;
+      case 'Kalendarz': return <CalendarPage user={user} member={displayedMember} requestedSelection={calendarSelection} goTo={goTo} />;
+      case 'Zadania': return <TasksPage user={user} member={displayedMember} />;
+      case 'Zakupy': return <ShoppingPage user={user} member={displayedMember} />;
+      case 'Czat': return <ChatPage user={user} member={displayedMember} />;
+      case 'Zdrowie': return <HealthPage user={user} member={displayedMember} />;
+      case 'Szkoła': return <SchoolModule key={schoolReadAccessKey(user.uid, schoolReadAccess(member))} user={user} member={displayedMember} familyMembers={displayedMembers} />;
+      case 'Rodzina': return <FamilyPage user={user} member={displayedMember} goTo={goTo} selected={selectedFamilyPerson} onSelect={setSelectedFamilyPerson} />;
+      case 'Ustawienia': return <SettingsPage user={user} member={displayedMember} theme={theme} setTheme={setTheme} goTo={goTo} onLogout={logout} calendarNotice={calendarNotice} />;
+      default: return <StartPage user={user} member={displayedMember} goTo={goTo} />;
     }
   }
 
@@ -139,17 +161,18 @@ function FamilyApp({ user }: { user: User }) {
   if (!authorized) return <div className="loading-screen"><section className="loading-card access-card"><h2>Konto czeka na dostęp</h2><p>{profileError || 'Administrator rodziny musi przypisać temu kontu aktywny profil. Skontaktuj się z osobą, która konfiguruje aplikację dla rodziny.'}</p><button className="secondary-button" onClick={()=>void logout()}>Wyloguj</button></section></div>;
 
   return (
-    <FamilyDirectoryContext.Provider value={familyMembers}><NotificationProvider user={user} member={member} goTo={goTo}><div className={`app-shell theme-${theme}`}>
-      <Sidebar page={page} goTo={goTo} member={member} />
+    <FamilyDirectoryContext.Provider value={displayedMembers}><FamilyAggregateContext.Provider value={displayedAggregate}><NotificationProvider user={user} member={member} goTo={goTo}><div className={`app-shell theme-${theme}`}>
+      <Sidebar page={page} goTo={goTo} member={displayedMember} />
       <main className="main-area">
-        <FamilyTopBar user={user} onSelect={profile => { setSelectedFamilyPerson(memberPersonKey(profile)); goTo('Rodzina'); }} />
+        <CalendarCallbackCompletion user={user} onComplete={notice => { setCalendarNotice(notice); goTo('Ustawienia'); }} />
+        <FamilyTopBar user={user} parent={member?.role === 'parent'} onSelect={profile => { setSelectedFamilyPerson(memberPersonKey(profile)); goTo('Rodzina'); }} onFamilySelect={() => { setCalendarSelection(current => ({ person: 'family', requestId: (current?.requestId || 0) + 1 })); goTo('Kalendarz'); }} />
         {renderPage()}
       </main>
       <MobileNavigation page={page} goTo={goTo} moreOpen={mobileMoreOpen} onMore={() => setMobileMoreOpen(true)} />
       {mobileMoreOpen && (
         <MobileMoreMenu page={page} goTo={goTo} onClose={() => setMobileMoreOpen(false)} />
       )}
-    </div></NotificationProvider></FamilyDirectoryContext.Provider>
+    </div></NotificationProvider></FamilyAggregateContext.Provider></FamilyDirectoryContext.Provider>
   );
 }
 

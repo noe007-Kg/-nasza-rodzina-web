@@ -1,13 +1,14 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { deleteApp } from 'firebase-admin/app';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { EduServerError, getServerFirebase } from '../server/edu-auth.mjs';
-import { resolveConnectionAccess } from '../server/edu-access.mjs';
+import { resolveConnectionAccess, studentConnectionId } from '../server/edu-access.mjs';
 import { syncAction } from '../server/edu-service.mjs';
 import { saveConnection, selectConnectionStudent } from '../server/edu-storage.mjs';
 import { runScheduledEduSync, eduSchedulePolicy } from '../server/edu-scheduler.mjs';
+import { schoolNotificationBaselineRef } from '../server/school-notifications.mjs';
 
 // No production identities, secrets or requests may be used by this suite.
 if (process.env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8080') throw new Error('Scheduled integration requires the local demo Firestore emulator.');
@@ -77,7 +78,7 @@ function blockingProvider() {
 }
 
 before(async () => {
-  for (const [uid, value] of [[parent, { role: 'parent', name: 'Synthetic parent' }], [mother, { role: 'parent', name: 'Synthetic mother' }], [child, { role: 'child', name: 'Nikodem', personKey: 'Nikodem' }]]) {
+  for (const [uid, value] of [[parent, { role: 'parent', name: 'Synthetic parent' }], [mother, { role: 'parent', name: 'Synthetic mother' }], [child, { role: 'child', name: 'Nikodem', personKey: 'Nikodem', schoolEnabled: true }]]) {
     await db.collection('members').doc(uid).set({ ...value, active: true, canLogin: true });
     await db.collection('userPreferences').doc(uid).set({ notifications: { enabled: true } });
   }
@@ -248,4 +249,114 @@ test('an expired school-slot session requires reconnect without executing syncAc
   const marker = (await db.collection('_eduConnections').doc('family').get()).data();
   assert.equal(marker.reconnectRequired, true); assert.equal(marker.envelope, undefined);
   assert.equal(marker.lastScheduledSchoolSlotAt, undefined);
+});
+
+test('the shared Scheduler imports a dynamic passive school profile without a login or personal connection and keeps repeats idempotent', async () => {
+  const passiveUid = 'schedule-passive-school-profile';
+  const personKey = 'member-777777777777777777777777';
+  const passiveProfile = { id: 'schedule-passive-sp4', studentName: 'Synthetic passive pupil', schoolName: 'Synthetic school' };
+  const passiveSession = { v: 1, cookieJar: { cookies: [] }, profiles: [passiveProfile] };
+  const originalContext = context;
+  const recipients = [parent, mother, child];
+  const previousInboxes = new Map(await Promise.all(recipients.map(async uid => [uid, (await inbox(uid)).map(row => row.id).sort()])));
+  const personalConnection = db.collection('_eduConnections').doc(studentConnectionId(passiveUid));
+  const sourceCollections = ['schoolItems', 'schoolParentMessages', 'schoolStudentMessages'];
+  const syncJournal = db.collection('_notificationEvents')
+    .doc(createHash('sha256').update(JSON.stringify('family')).digest('hex')).collection('schoolSyncs');
+  let reads = 0;
+  let items = [grade('passive-initial-grade')];
+
+  try {
+    // Only a Firestore profile is created. This suite neither creates an Auth
+    // account nor calls Auth outside an explicitly configured local emulator.
+    await db.collection('members').doc(passiveUid).set({
+      name: 'Synthetic new pupil', personKey, role: 'child', active: true,
+      canLogin: false, schoolEnabled: true, archived: false, disabled: false,
+    });
+    assert.equal((await personalConnection.get()).exists, false);
+    context = await resolveConnectionAccess({ ...services, uid: parent,
+      profile: (await db.collection('members').doc(parent).get()).data() });
+    assert.ok(context.connection.allowedPersonKeys.includes(personKey));
+    assert.equal(context.connection.personProfileIds[personKey], passiveUid);
+    await assert.rejects(resolveConnectionAccess({ ...services, uid: passiveUid,
+      profile: (await db.collection('members').doc(passiveUid).get()).data() }, 'student'), { code: 'EDU_MEMBER_REQUIRED' });
+
+    await saveConnection('family', { session: passiveSession, profiles: [passiveProfile] }, context);
+    await selectConnectionStudent('family', { profileId: passiveProfile.id, personKey }, context);
+    const binding = (await db.collection('_eduStudentBindings').doc(personKey).get()).data();
+    assert.equal(binding.identity.studentName, passiveProfile.studentName);
+    assert.equal(binding.establishedByUid, parent);
+
+    const execute = (ctx, body) => {
+      assert.equal(ctx.connection.id, 'family');
+      assert.equal(ctx.connection.scope, 'family');
+      assert.ok(ctx.connection.allowedPersonKeys.includes(personKey));
+      assert.equal(ctx.connection.personProfileIds[personKey], passiveUid);
+      return syncAction(ctx, body, { readData: async (stored, profileId, options) => {
+        reads += 1;
+        assert.deepEqual(stored, passiveSession);
+        assert.equal(profileId, passiveProfile.id);
+        assert.equal(options.includeMessages, true);
+        return { session: passiveSession, items, counts: { grades: items.length },
+          warnings: [], notificationReadyTypes: ['grade'] };
+      } });
+    };
+    const importedRows = async () => (await db.collection('schoolItems')
+      .where('sourceProfileId', '==', passiveProfile.id).get()).docs;
+
+    await resetClock();
+    assert.equal((await scheduled(execute)).synced, 1);
+    const baselineRows = await importedRows();
+    assert.equal(baselineRows.length, 1);
+    assert.equal(baselineRows[0].data().person, personKey);
+    assert.equal(baselineRows[0].data().sourceConnectionId, 'family');
+    assert.equal(baselineRows[0].data().sourceOwnerUid, parent);
+    for (const uid of recipients) assert.deepEqual((await inbox(uid)).map(row => row.id).sort(), previousInboxes.get(uid));
+    assert.equal((await inbox(passiveUid)).length, 0);
+    assert.equal((await personalConnection.get()).exists, false);
+
+    items = [...items, grade('passive-new-grade')];
+    await resetClock();
+    assert.equal((await scheduled(execute)).synced, 1);
+    const addedRows = await importedRows();
+    assert.equal(addedRows.length, 2);
+    assert.ok(addedRows.some(row => row.id === baselineRows[0].id));
+    const stableIds = addedRows.map(row => row.id).sort();
+    const ownNotifications = async uid => (await inbox(uid)).filter(row => row.data().eventId?.startsWith(`school:grade:${passiveProfile.id}:`));
+    for (const uid of [parent, mother]) assert.equal((await ownNotifications(uid)).length, 1);
+    assert.equal((await ownNotifications(child)).length, 0);
+    assert.equal((await inbox(passiveUid)).length, 0);
+    assert.equal((await inbox(child)).length, previousInboxes.get(child).length);
+
+    await resetClock();
+    assert.equal((await scheduled(execute)).synced, 1);
+    assert.deepEqual((await importedRows()).map(row => row.id).sort(), stableIds);
+    for (const uid of [parent, mother]) assert.equal((await ownNotifications(uid)).length, 1);
+    assert.equal(reads, 3);
+    assert.equal((await personalConnection.get()).exists, false);
+    assert.equal((await db.collection('_notificationOutbox').get()).size, 0);
+  } finally {
+    // Remove only this test's source namespace and notifications. In particular,
+    // the existing Nikodem baseline, school history and inbox entries survive.
+    try {
+      for (const name of sourceCollections) {
+        const rows = await db.collection(name).where('sourceProfileId', '==', passiveProfile.id).get();
+        for (const row of rows.docs) await row.ref.delete();
+      }
+      for (const uid of recipients) {
+        for (const row of await inbox(uid)) {
+          if (row.data().eventId?.startsWith(`school:grade:${passiveProfile.id}:`)) await row.ref.delete();
+        }
+      }
+      const journal = await syncJournal.where('profileId', '==', passiveProfile.id).get();
+      for (const row of journal.docs) await row.ref.delete();
+      await schoolNotificationBaselineRef(db, 'family', passiveProfile.id, personKey).delete();
+      await db.collection('_eduStudentBindings').doc(personKey).delete();
+      await db.collection('members').doc(passiveUid).delete();
+      await db.recursiveDelete(db.collection('notificationInbox').doc(passiveUid));
+    } finally {
+      context = originalContext;
+      await connect();
+    }
+  }
 });
