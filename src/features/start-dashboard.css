@@ -91,9 +91,9 @@ html:root .start-card-overlay { min-height: 100%; height: 100%; transform: scale
 .start-family-countdown { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border-radius: 30px; color: #c22a80; background: #ffe4f1; font-size: 10px; }
 .start-family-countdown svg { flex: 0 0 auto; }
 .start-family-plan-note { display: block; margin-bottom: 10px; font-size: 10px; line-height: 1.4; }
-.start-family-mini-profiles { display: flex; gap: 6px; overflow-x: auto; max-width: 100%; padding: 2px 1px 6px; overscroll-behavior-x: contain; scrollbar-width: thin; }
-.start-family-mini-profile { display: flex; flex: 0 0 65px; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; border: 1px solid #fae5ef; border-radius: 15px; background: rgb(255 255 255 / 80%); text-align: center; }
-.start-family-mini-profile > strong { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: #171B4B; }
+.start-family-mini-profiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 65px), 1fr)); gap: 6px; min-width: 0; max-width: 100%; padding: 2px 1px 6px; }
+.start-family-mini-profile { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; border: 1px solid #fae5ef; border-radius: 15px; background: rgb(255 255 255 / 80%); text-align: center; }
+.start-family-mini-profile > strong { width: 100%; white-space: normal; overflow-wrap: anywhere; font-size: 10px; color: #171B4B; }
 .start-family-mini-profile > time { font-size: 14px; font-weight: 750; color: #171B4B; }
 .start-family-mini-profile > small { font-size: 9px; line-height: 1.2; }
 .start-detail-avatar { position: relative; display: grid; flex: 0 0 auto; place-items: center; width: 34px; height: 34px; overflow: hidden; border: 2px solid #f4d9fa; border-radius: 50%; background: #fff2fc; font-size: 23px; }
@@ -104,7 +104,7 @@ html:root .start-card-overlay { min-height: 100%; height: 100%; transform: scale
 .start-shopping-progress { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .start-shopping-progress > span { flex: 1; height: 5px; overflow: hidden; border-radius: 20px; background: #eee8de; }
 .start-shopping-progress > span > span { display: block; height: 100%; border-radius: inherit; background: #e8b653; }
-.start-shopping-progress > small { font-size: 9px; color: #8b7754; }
+.start-shopping-progress > small { flex: 0 0 auto; font-size: 9px; color: #8b7754; }
 .start-rich-list { display: flex; flex-direction: column; gap: 0; overflow: hidden; border-radius: 15px; background: rgb(255 255 255 / 78%); }
 .start-shopping-row, .start-chat-row { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 9px 7px; }
 .start-shopping-row + .start-shopping-row, .start-chat-row + .start-chat-row { border-top: 1px solid rgb(130 94 137 / 7%); }
@@ -128,7 +128,7 @@ html:root .start-card-overlay { min-height: 100%; height: 100%; transform: scale
   .start-detail-avatar { width: 29px; height: 29px; font-size: 20px; }
   .start-rich-row-copy strong { font-size: 10px; }
   .start-rich-row-copy small { font-size: 9px; }
-  .start-family-mini-profile { flex-basis: 57px; }
+  .start-family-mini-profiles { grid-template-columns: repeat(auto-fit, minmax(min(100%, 57px), 1fr)); }
   .start-family-time-summary .start-card-value { font-size: 28px; }
   .start-family-time-summary .start-card-status { font-size: 9px; }
   .start-family-plan-note { font-size: 9px; }

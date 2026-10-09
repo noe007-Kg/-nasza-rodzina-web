@@ -26,13 +26,14 @@ export function FamilyTimeDetails({ summary, now }: { summary: FamilyTimeProject
 }
 
 export function ShoppingDetails({ rows, openCount, total, bought }: { rows: ReturnType<typeof shoppingPreview>; openCount: number; total: number; bought: number }) {
+  const productLabel = openCount === 1 ? 'produkt' : openCount % 10 >= 2 && openCount % 10 <= 4 && (openCount % 100 < 12 || openCount % 100 > 14) ? 'produkty' : 'produktów';
   return <>
-    <span className="start-shopping-summary"><span className="start-card-value">{openCount}</span><span className="start-card-status">produktów do kupienia</span></span>
-    <span className="start-shopping-progress"><span role="progressbar" aria-label="Kupione produkty" aria-valuemin={0} aria-valuemax={Math.max(1, total)} aria-valuenow={bought}><span style={{ width: total ? `${bought / total * 100}%` : '0%' }}/></span><small>{bought} / {total}</small></span>
+    <span className="start-shopping-summary"><span className="start-card-status">Pozostało: </span><span className="start-card-value">{openCount}</span><span className="start-card-status"> {productLabel}</span></span>
+    <span className="start-shopping-progress"><span role="progressbar" aria-label="Kupione produkty" aria-valuemin={0} aria-valuemax={total} aria-valuenow={bought} aria-valuetext={`Kupione: ${bought} z ${total}`}><span style={{ width: total ? `${bought / total * 100}%` : '0%' }}/></span><small>Kupione: {bought} z {total}</small></span>
     <span className="start-card-preview start-rich-list">{rows.map(({ item, product }) => <span className="start-shopping-row" key={item.id} data-product-id={item.id}>
       <span className="start-product-picture" aria-hidden="true"><span>{product?.icon || SHOPPING_META[item.category as keyof typeof SHOPPING_META]?.icon || '📦'}</span>{product?.imageURL && <img src={product.imageURL} alt="" loading="lazy" draggable={false} onError={event => { event.currentTarget.hidden = true; }}/>}</span>
       <span className="start-rich-row-copy"><strong>{item.title}</strong><small>{[item.quantity, item.unit].filter(Boolean).join(' ') || 'Do kupienia'}</small></span><span className="start-detail-pill">Do kupienia</span>
-    </span>)}{!rows.length && <span className="start-rich-empty">Lista zakupów jest pusta.</span>}</span>
+    </span>)}{!rows.length && <span className="start-rich-empty">{total ? 'Wszystkie produkty są kupione.' : 'Lista zakupów jest pusta.'}</span>}</span>
     <span className="start-detail-footer">Otwórz listę zakupów <Icon name="arrow-right" size={16}/></span>
   </>;
 }
