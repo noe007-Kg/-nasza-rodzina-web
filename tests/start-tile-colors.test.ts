@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  START_TILE_COLOR_PALETTE, START_TILE_COLOR_TEXT, createStartTileColorStore,
+  START_TILE_COLOR_PALETTE, createStartTileColorStore,
   getStartTileColorStyle, normalizeStartTileColors, parseStoredStartTileColors,
   selectedStartTileColorId, startTileColorsCacheKey, type StartTileColorStorage,
 } from '../src/features/start-tile-colors';
@@ -12,9 +12,9 @@ function memoryStorage(): StartTileColorStorage & { rows: Map<string, string> } 
   return { rows, getItem: key => rows.get(key) ?? null, setItem: (key, value) => { rows.set(key, value); }, removeItem: key => { rows.delete(key); } };
 }
 
-test('tile colors accept only supported tile IDs and palette identifiers, never arbitrary CSS', () => {
-  const parsed = JSON.parse('{"shopping":"mint","chat":"violet","health":"url(https://example.invalid)","school":"#ffffff","unknown":"pink","__proto__":"yellow"}');
-  assert.deepEqual(normalizeStartTileColors(parsed), { shopping: 'mint', chat: 'violet' });
+test('tile colors accept supported tile IDs, palette identifiers and safe hex colors, never arbitrary CSS', () => {
+  const parsed = JSON.parse('{"shopping":"turquoise","chat":"violet","health":"url(https://example.invalid)","school":"#ffffff","unknown":"pink","__proto__":"yellow"}');
+  assert.deepEqual(normalizeStartTileColors(parsed), { shopping: 'turquoise', chat: 'violet', school: '#ffffff' });
   assert.deepEqual(normalizeStartTileColors(['pink']), {});
   assert.deepEqual(normalizeStartTileColors(null), {});
   assert.deepEqual(normalizeStartTileColors(Object.create({ calendar: 'blue' })), {});
@@ -22,9 +22,9 @@ test('tile colors accept only supported tile IDs and palette identifiers, never 
 });
 
 test('cache envelopes reject unsupported schemas, broken JSON and oversized input', () => {
-  assert.deepEqual(parseStoredStartTileColors('{"schemaVersion":1,"colors":{"shopping":"mint"}}'), { shopping: 'mint' });
-  assert.deepEqual(parseStoredStartTileColors('{"schemaVersion":2,"colors":{"shopping":"mint"}}'), {});
-  assert.deepEqual(parseStoredStartTileColors('{"shopping":"mint"}'), {});
+  assert.deepEqual(parseStoredStartTileColors('{"schemaVersion":1,"colors":{"shopping":"turquoise"}}'), { shopping: 'turquoise' });
+  assert.deepEqual(parseStoredStartTileColors('{"schemaVersion":2,"colors":{"shopping":"turquoise"}}'), {});
+  assert.deepEqual(parseStoredStartTileColors('{"shopping":"turquoise"}'), {});
   assert.deepEqual(parseStoredStartTileColors('{'), {});
   assert.deepEqual(parseStoredStartTileColors(' '.repeat(4097)), {});
 });
@@ -33,7 +33,7 @@ test('all seven tiles have independent choices; original removes only the select
   const storage = memoryStorage();
   const store = createStartTileColorStore('user-a', () => storage);
   for (const cardId of START_CARD_IDS) store.setColor(cardId, 'pink');
-  store.setColor('shopping', 'mint');
+  store.setColor('shopping', 'turquoise');
   store.setColor('chat', 'violet');
   store.setColor('shopping', 'original');
   assert.equal(store.getSnapshot().colors.shopping, undefined);
@@ -65,13 +65,13 @@ test('reset removes only color preferences and preserves theme, order and anothe
   const first = createStartTileColorStore('uid-a', () => storage);
   const second = createStartTileColorStore('uid-b', () => storage);
   first.setColor('chat', 'violet');
-  second.setColor('chat', 'mint');
+  second.setColor('chat', 'turquoise');
   first.resetColors();
   assert.deepEqual(first.getSnapshot().colors, {});
   assert.equal(storage.rows.has(first.key), false);
   assert.equal(storage.rows.get('nr-theme'), 'dark');
   assert.equal(storage.rows.get(dashboardCacheKey('uid-a')), '["chat","calendar"]');
-  assert.deepEqual(parseStoredStartTileColors(storage.rows.get(second.key) ?? null), { chat: 'mint' });
+  assert.deepEqual(parseStoredStartTileColors(storage.rows.get(second.key) ?? null), { chat: 'turquoise' });
 });
 
 test('mounted consumers receive immediate snapshots, including a reset and validated other-tab changes', () => {
@@ -79,12 +79,12 @@ test('mounted consumers receive immediate snapshots, including a reset and valid
   const store = createStartTileColorStore('uid-a', () => storage);
   const delivered: unknown[] = [];
   const stop = store.subscribe(() => delivered.push(store.getSnapshot().colors));
-  store.setColor('shopping', 'mint');
+  store.setColor('shopping', 'turquoise');
   store.applyStorageEvent(startTileColorsCacheKey('uid-b'), '{"schemaVersion":1,"colors":{"shopping":"pink"}}');
-  assert.deepEqual(store.getSnapshot().colors, { shopping: 'mint' });
+  assert.deepEqual(store.getSnapshot().colors, { shopping: 'turquoise' });
   store.applyStorageEvent(store.key, '{"schemaVersion":1,"colors":{"chat":"yellow","shopping":"invalid"}}');
   store.resetColors();
-  assert.deepEqual(delivered, [{ shopping: 'mint' }, { chat: 'yellow' }, {}]);
+  assert.deepEqual(delivered, [{ shopping: 'turquoise' }, { chat: 'yellow' }, {}]);
   stop();
   store.setColor('health', 'peach');
   assert.equal(delivered.length, 3);
@@ -104,7 +104,7 @@ test('a cache deletion restores original colors and cache clear does not import 
 test('returning to a mounted view refreshes same-UID changes made in another tab while it was closed', () => {
   const storage = memoryStorage();
   const store = createStartTileColorStore('uid-a', () => storage);
-  store.setColor('shopping', 'mint');
+  store.setColor('shopping', 'turquoise');
   storage.rows.set(store.key, '{"schemaVersion":1,"colors":{"shopping":"blue"}}');
   storage.rows.set(startTileColorsCacheKey('uid-b'), '{"schemaVersion":1,"colors":{"shopping":"pink"}}');
   store.refreshFromStorage();
@@ -117,9 +117,9 @@ test('returning to a mounted view refreshes same-UID changes made in another tab
 test('navigation does not discard unsaved in-memory colors when browser storage refused a write', () => {
   const storage: StartTileColorStorage = { getItem: () => null, setItem: () => { throw new Error('quota'); }, removeItem: () => {} };
   const store = createStartTileColorStore('uid-a', () => storage);
-  store.setColor('shopping', 'mint');
+  store.setColor('shopping', 'turquoise');
   store.refreshFromStorage();
-  assert.deepEqual(store.getSnapshot().colors, { shopping: 'mint' });
+  assert.deepEqual(store.getSnapshot().colors, { shopping: 'turquoise' });
   assert.equal(store.getSnapshot().persistence, 'memory');
 });
 
@@ -144,21 +144,23 @@ test('when storage becomes available a new choice saves the current user colors 
   const store = createStartTileColorStore('uid-a', () => storage);
   store.setColor('chat', 'violet');
   storage = memoryStorage();
-  store.setColor('shopping', 'mint');
+  store.setColor('shopping', 'turquoise');
   assert.equal(store.getSnapshot().persistence, 'saved');
   assert.equal(store.getSnapshot().storageMessage, null);
-  assert.deepEqual(parseStoredStartTileColors(storage.getItem(store.key)), { chat: 'violet', shopping: 'mint' });
+  assert.deepEqual(parseStoredStartTileColors(storage.getItem(store.key)), { chat: 'violet', shopping: 'turquoise' });
 });
 
-test('original tiles get no inline style or custom attribute; custom values come only from the palette', () => {
+test('original tiles get no style; opted-in colors have explicit text and surface contrast', () => {
   assert.equal(getStartTileColorStyle({}, 'chat'), undefined);
   assert.equal(selectedStartTileColorId({}, 'chat'), undefined);
   const colors = normalizeStartTileColors({ chat: 'blue' });
   assert.equal(selectedStartTileColorId(colors, 'chat'), 'blue');
-  assert.deepEqual(getStartTileColorStyle(colors, 'chat'), {
-    '--start-user-background': '#edf7ff', '--start-user-accent': '#226392',
-    '--start-user-dark-background': '#203143', '--start-user-dark-accent': '#bddfff',
-  });
+  const style = getStartTileColorStyle(colors, 'chat') as Record<string, string>;
+  const palette = START_TILE_COLOR_PALETTE.find(color => color.id === 'blue')!;
+  assert.equal(style['--start-user-background'], palette.background);
+  assert.equal(style['--start-user-dark-background'], palette.background);
+  assert.ok(contrast(style['--start-user-background'], style['--start-user-text']) >= 4.5);
+  assert.ok(contrast(style['--start-user-surface'], style['--start-user-text']) >= 4.5);
 });
 
 function luminance(hex: string) {
@@ -171,15 +173,54 @@ function contrast(a: string, b: string) {
   return (Math.max(first, second) + .05) / (Math.min(first, second) + .05);
 }
 
-test('all nine palettes have readable normal text, subtitles and action accents in light and dark themes', () => {
-  assert.equal(START_TILE_COLOR_PALETTE.length, 9);
-  assert.equal(new Set(START_TILE_COLOR_PALETTE.map(color => color.id)).size, 9);
+test('all eight neon colors have readable text, action icons and inner surfaces in either theme', () => {
+  assert.equal(START_TILE_COLOR_PALETTE.length, 8);
+  assert.equal(new Set(START_TILE_COLOR_PALETTE.map(color => color.id)).size, 8);
   for (const palette of START_TILE_COLOR_PALETTE) {
-    for (const text of [START_TILE_COLOR_TEXT.light, START_TILE_COLOR_TEXT.lightMuted, palette.accent]) {
-      assert.ok(contrast(palette.background, text) >= 4.5, `${palette.id}: light text ${text}`);
+    const style = getStartTileColorStyle({ shopping: palette.id }, 'shopping') as Record<string, string>;
+    for (const background of ['--start-user-background', '--start-user-dark-background', '--start-user-surface']) {
+      for (const text of ['--start-user-text', '--start-user-muted', '--start-user-accent', '--start-user-dark-accent']) {
+        assert.ok(contrast(style[background], style[text]) >= 4.5, `${palette.id}: ${background}/${text}`);
+      }
     }
-    for (const text of [START_TILE_COLOR_TEXT.dark, START_TILE_COLOR_TEXT.darkMuted, palette.darkAccent]) {
-      assert.ok(contrast(palette.darkBackground, text) >= 4.5, `${palette.id}: dark text ${text}`);
-    }
+  }
+});
+
+test('legacy per-UID palette selections are restored without changing the cache or other preferences', () => {
+  const storage = memoryStorage();
+  storage.rows.set(startTileColorsCacheKey('legacy'), JSON.stringify({ schemaVersion: 1, colors: { chat: 'lavender', shopping: 'mint', health: 'peach', school: 'neutral' } }));
+  assert.deepEqual(createStartTileColorStore('legacy', () => storage).getSnapshot().colors,
+    { chat: 'violet', shopping: 'turquoise', health: 'orange', school: '#f7f7fc' });
+});
+
+test('Multikolor validates a full hex value, previews immediately and saves each UID and tile separately', () => {
+  const storage = memoryStorage();
+  const first = createStartTileColorStore('custom-a', () => storage);
+  const second = createStartTileColorStore('custom-b', () => storage);
+  let updates = 0;
+  first.subscribe(() => { updates++; });
+  first.setColor('chat', '#A0B1C2');
+  first.setColor('shopping', '#000000');
+  second.setColor('chat', '#ffffff');
+  assert.equal(updates, 2);
+  assert.deepEqual(first.getSnapshot().colors, { chat: '#a0b1c2', shopping: '#000000' });
+  assert.deepEqual(second.getSnapshot().colors, { chat: '#ffffff' });
+  assert.deepEqual(createStartTileColorStore('custom-a', () => storage).getSnapshot().colors, first.getSnapshot().colors);
+  assert.equal(selectedStartTileColorId(first.getSnapshot().colors, 'chat'), '#a0b1c2');
+  assert.deepEqual(normalizeStartTileColors({ chat: '#123456; background:url(https://invalid)', school: '#12345678', health: 'red;background:black', shopping: '#123' }), {});
+  first.setColor('shopping', 'original');
+  assert.deepEqual(first.getSnapshot().colors, { chat: '#a0b1c2' });
+  first.resetColors();
+  assert.deepEqual(first.getSnapshot().colors, {});
+  assert.deepEqual(second.getSnapshot().colors, { chat: '#ffffff' });
+});
+
+test('custom colors including black, white and mid-tones keep main and inner-surface text contrast', () => {
+  for (const color of ['#000000', '#ffffff', '#ff0000', '#00ff00', '#0000ff', '#ffdf00', '#ff2fa8', '#777777', '#9c31b0', '#abcd12'] as const) {
+    const style = getStartTileColorStyle({ chat: color }, 'chat') as Record<string, string>;
+    assert.equal(style['--start-user-background'], color);
+    assert.equal(style['--start-user-dark-background'], color);
+    assert.ok(contrast(color, style['--start-user-text']) >= 4.5, color);
+    assert.ok(contrast(style['--start-user-surface'], style['--start-user-text']) >= 4.5, `${color}: inner surface`);
   }
 });

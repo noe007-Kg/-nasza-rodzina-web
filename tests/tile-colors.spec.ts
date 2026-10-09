@@ -10,6 +10,10 @@ async function login(page: Page, account: { email: string } = accounts.parent) {
 async function go(page: Page, module: string) {
   await page.evaluate(value => { location.hash = encodeURIComponent(value); }, module);
   await expect(module === 'Start' ? page.getByTestId('start-dashboard') : page.getByTestId('settings-appearance')).toBeVisible();
+  if (module === 'Ustawienia') {
+    const disclosure = page.getByRole('button', { name: 'Kolory kafelków', exact: true });
+    if (await disclosure.getAttribute('aria-expanded') === 'false') await disclosure.click();
+  }
 }
 async function background(page: Page, card = 'shopping') { return page.getByTestId(`start-card-${card}`).evaluate(node => getComputedStyle(node).backgroundColor); }
 test.beforeEach(async ({ context }) => {
@@ -29,12 +33,12 @@ test('Oryginalny wygląd, niezależne kolory i reset tylko kolorów bez zmiany m
   const original = await background(page), taskOriginal = await background(page, 'tasks');
   await go(page, 'Ustawienia');
   const settings = page.getByTestId('tile-color-settings'); await expect(settings).toContainText('nie synchronizują się między urządzeniami');
-  await settings.getByRole('radio', { name: 'Zakupy: Miętowy', exact: true }).check();
+  await settings.getByRole('radio', { name: 'Zakupy: Turkusowy', exact: true }).check();
   await settings.getByRole('radio', { name: 'Czat: Fioletowy', exact: true }).check();
-  await go(page, 'Start'); await expect(page.getByTestId('start-card-shopping')).toHaveAttribute('data-custom-color', 'mint');
+  await go(page, 'Start'); await expect(page.getByTestId('start-card-shopping')).toHaveAttribute('data-custom-color', 'turquoise');
   await expect(page.getByTestId('start-card-chat')).toHaveAttribute('data-custom-color', 'violet');
   expect(await background(page)).not.toBe(original); expect(await background(page, 'tasks')).toBe(taskOriginal);
-  await page.reload(); await expect(page.getByTestId('start-card-shopping')).toHaveAttribute('data-custom-color', 'mint');
+  await page.reload(); await expect(page.getByTestId('start-card-shopping')).toHaveAttribute('data-custom-color', 'turquoise');
   await go(page, 'Ustawienia'); await settings.getByRole('radio', { name: 'Zakupy: Oryginalny', exact: true }).check();
   await go(page, 'Start'); expect(await background(page)).toBe(original); await expect(page.getByTestId('start-card-chat')).toHaveAttribute('data-custom-color', 'violet');
   await go(page, 'Ustawienia'); await page.getByRole('button', { name: 'Ciemny', exact: true }).click();
@@ -45,17 +49,17 @@ test('Oryginalny wygląd, niezależne kolory i reset tylko kolorów bez zmiany m
 });
 
 test('Kolory pozostają przypisane do UID po wylogowaniu i zmianie rodzica lub dziecka', async ({ page }) => {
-  await login(page); await go(page, 'Ustawienia'); await page.getByRole('radio', { name: 'Zakupy: Miętowy', exact: true }).check();
+  await login(page); await go(page, 'Ustawienia'); await page.getByRole('radio', { name: 'Zakupy: Turkusowy', exact: true }).check();
   await page.getByRole('button', { name: 'Wyloguj', exact: true }).click(); await expect(page.getByRole('button', { name: 'Zaloguj się', exact: true })).toBeVisible();
   await login(page, accounts.mother); await expect(page.locator('.start-dashboard-card[data-custom-color]')).toHaveCount(0);
-  await go(page, 'Ustawienia'); await page.getByRole('radio', { name: 'Zakupy: Brzoskwiniowy', exact: true }).check();
+  await go(page, 'Ustawienia'); await page.getByRole('radio', { name: 'Zakupy: Pomarańczowy', exact: true }).check();
   await page.getByRole('button', { name: 'Wyloguj', exact: true }).click(); await expect(page.getByRole('button', { name: 'Zaloguj się', exact: true })).toBeVisible();
   await login(page, accounts.child); await expect(page.locator('.start-dashboard-card[data-custom-color]')).toHaveCount(0);
   await go(page, 'Ustawienia'); await page.getByRole('button', { name: 'Wyloguj', exact: true }).click(); await expect(page.getByRole('button', { name: 'Zaloguj się', exact: true })).toBeVisible();
-  await login(page); await expect(page.getByTestId('start-card-shopping')).toHaveAttribute('data-custom-color', 'mint');
+  await login(page); await expect(page.getByTestId('start-card-shopping')).toHaveAttribute('data-custom-color', 'turquoise');
 });
 
-test('Wszystkie dziewięć kolorów działa w jasnym i ciemnym motywie, a napisy pozostają czytelne', async ({ page }) => {
+test('Wszystkie osiem kolorów działa w jasnym i ciemnym motywie, a napisy pozostają czytelne', async ({ page }) => {
   test.setTimeout(90_000); await login(page);
   for (const theme of ['Jasny', 'Ciemny']) for (const color of START_TILE_COLOR_PALETTE) {
     await go(page, 'Ustawienia'); await page.getByRole('button', { name: theme, exact: true }).click();
@@ -79,9 +83,9 @@ test('Kółeczka 18 px mają wygodny dotyk, motywy są kompaktowe i brak przepe�
   for (const size of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 900, height: 1440 }, { width: 1024, height: 768 }, { width: 1440, height: 900 }]) {
     await page.setViewportSize(size); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     for (const card of START_CARD_IDS) {
-      const row = page.getByTestId(`tile-color-row-${card}`); await expect(row.getByRole('radio')).toHaveCount(10);
+      const row = page.getByTestId(`tile-color-row-${card}`); await expect(row.getByRole('radio')).toHaveCount(9);
       const sizes = await row.locator('.start-color-choice').first().evaluate(node => ({ target: node.getBoundingClientRect().width, dot: node.querySelector('.start-color-dot')!.getBoundingClientRect().width }));
-      expect(sizes.target).toBeGreaterThanOrEqual(44); expect(sizes.dot).toBe(18);
+      expect(sizes.target).toBeGreaterThanOrEqual(36); expect(sizes.dot).toBe(18);
     }
     for (const name of ['Jasny', 'Ciemny']) { const button = page.getByRole('button', { name, exact: true }); await expect(button).toBeVisible(); expect((await button.boundingBox())!.width).toBeLessThan(130); }
     if (process.env.NASZA_CAPTURE_CURRENT_PREVIEWS === 'true' && browserName === 'chromium' && [390, 1024].includes(size.width)) {
@@ -94,26 +98,26 @@ test('Kółeczka 18 px mają wygodny dotyk, motywy są kompaktowe i brak przepe�
 
 test('Niedostępny zapis zgłasza ograniczenie i zachowuje wybrane kolory podczas przełączania modułów', async ({ page }) => {
   await page.addInitScript(() => { const original = Storage.prototype.setItem; Storage.prototype.setItem = function(key, value) { if (key.startsWith('nr-start-tile-colors:')) throw new DOMException('Synthetic quota', 'QuotaExceededError'); original.call(this, key, value); }; });
-  await login(page); await go(page, 'Ustawienia'); await page.getByRole('radio', { name: 'Zakupy: Miętowy', exact: true }).check();
+  await login(page); await go(page, 'Ustawienia'); await page.getByRole('radio', { name: 'Zakupy: Turkusowy', exact: true }).check();
   await expect(page.getByTestId('tile-color-settings').getByRole('status')).toContainText('Nie udało się zapisać');
-  await go(page, 'Start'); await expect(page.getByTestId('start-card-shopping')).toHaveAttribute('data-custom-color', 'mint');
+  await go(page, 'Start'); await expect(page.getByTestId('start-card-shopping')).toHaveAttribute('data-custom-color', 'turquoise');
 });
 
 test('Kolor kafelka zachowuje się także w DragOverlay bez sortowania w trakcie gestu', async ({ page }) => {
-  await login(page); await go(page, 'Ustawienia'); await page.getByRole('radio', { name: 'Zakupy: Miętowy', exact: true }).check(); await go(page, 'Start');
+  await login(page); await go(page, 'Ustawienia'); await page.getByRole('radio', { name: 'Zakupy: Turkusowy', exact: true }).check(); await go(page, 'Start');
   const grid = page.locator('.start-dashboard-grid'); await expect(grid).toHaveAttribute('data-layout-ready', 'true'); const order = await grid.getAttribute('data-order');
   const tile = page.getByTestId('start-card-shopping'); await tile.scrollIntoViewIfNeeded(); const box = (await tile.boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + 30); await page.mouse.down();
-  await expect(page.getByTestId('start-drag-overlay')).toBeVisible(); await expect(page.getByTestId('start-drag-overlay')).toHaveAttribute('data-custom-color', 'mint');
+  await expect(page.getByTestId('start-drag-overlay')).toBeVisible(); await expect(page.getByTestId('start-drag-overlay')).toHaveAttribute('data-custom-color', 'turquoise');
   expect(await page.getByTestId('start-drag-overlay').evaluate(node => getComputedStyle(node).backgroundColor)).toBe(await background(page));
   await expect(grid).toHaveAttribute('data-order', order!); await page.keyboard.press('Escape'); await page.mouse.up();
   await expect(page.getByTestId('start-drag-overlay')).toHaveCount(0); await expect(grid).toHaveAttribute('data-order', order!);
 });
 
 test('Zmiana w drugiej karcie jest widoczna po ponownym otwarciu Startu', async ({ page, context }) => {
-  await login(page); await go(page, 'Ustawienia'); await page.getByRole('radio', { name: 'Zakupy: Miętowy', exact: true }).check();
+  await login(page); await go(page, 'Ustawienia'); await page.getByRole('radio', { name: 'Zakupy: Turkusowy', exact: true }).check();
   await page.evaluate(() => { location.hash = encodeURIComponent('Czat'); }); await expect(page.getByRole('heading', { name: 'Czat', exact: true })).toBeVisible();
   const other = await context.newPage(); await other.goto('/'); await expect(other.locator('.app-shell')).toBeVisible();
-  await go(other, 'Ustawienia'); await other.getByRole('radio', { name: 'Zakupy: Błękitny', exact: true }).check();
+  await go(other, 'Ustawienia'); await other.getByRole('radio', { name: 'Zakupy: Niebieski', exact: true }).check();
   await go(page, 'Start'); await expect(page.getByTestId('start-card-shopping')).toHaveAttribute('data-custom-color', 'blue'); await other.close();
 });

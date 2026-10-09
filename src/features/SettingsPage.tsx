@@ -9,6 +9,7 @@ import { NotificationSettings } from '../notifications';
 import { ConnectedCalendarsSettings } from '../calendars/ConnectedCalendarsSettings';
 import type { CalendarNotice } from '../calendars/model';
 import { StartTileColorsSettings } from './StartTileColorsSettings';
+import { StartTileSizesSettings } from './StartTileSizesSettings';
 import { SchoolConnectionsPreparation } from '../school/SchoolSources';
 import './settings-appearance.css';
 
@@ -50,7 +51,7 @@ export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout, ca
         <AccountSettings user={user} />
         <OwnProfileSettings user={user} member={member} />
 
-        <article className="settings-section settings-appearance" data-testid="settings-appearance"><header><span>🎨</span><div><strong>Wygląd</strong><small>Motyw aplikacji i kolory kafelków</small></div></header><div className="appearance-theme-buttons" role="group" aria-label="Motyw aplikacji"><button type="button" aria-pressed={theme === 'light'} onClick={()=>setTheme('light')}><span aria-hidden="true">☀️</span> Jasny</button><button type="button" aria-pressed={theme === 'dark'} onClick={()=>setTheme('dark')}><span aria-hidden="true">🌙</span> Ciemny</button></div><p className="settings-footnote">Motyw zapisuje się na tym urządzeniu.</p><StartTileColorsSettings uid={user.uid}/></article>
+        <article className="settings-section settings-appearance" data-testid="settings-appearance"><header><span>🎨</span><div><strong>Wygląd</strong><small>Motyw aplikacji, kolory i rozmiary kafelków</small></div></header><div className="appearance-theme-buttons" role="group" aria-label="Motyw aplikacji"><button type="button" aria-pressed={theme === 'light'} onClick={()=>setTheme('light')}><span aria-hidden="true">☀️</span> Jasny</button><button type="button" aria-pressed={theme === 'dark'} onClick={()=>setTheme('dark')}><span aria-hidden="true">🌙</span> Ciemny</button></div><p className="settings-footnote">Motyw zapisuje się na tym urządzeniu.</p><StartTileColorsSettings uid={user.uid}/><StartTileSizesSettings uid={user.uid}/></article>
 
         <NotificationSettings />
 

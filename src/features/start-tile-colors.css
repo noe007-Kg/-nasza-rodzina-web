@@ -2,8 +2,6 @@
 html:root .start-dashboard-card[data-custom-color] {
   --start-card-background: var(--start-user-background);
   --start-card-color: var(--start-user-accent);
-  --start-user-text: #171b4b;
-  --start-user-muted: #5f576f;
   color: var(--start-user-text);
 }
 html:root .start-dashboard-card[data-custom-color] .start-card-status,
@@ -12,6 +10,8 @@ html:root .start-dashboard-card[data-custom-color] .start-family-plan-note,
 html:root .start-dashboard-card[data-custom-color] .start-rich-row-copy small,
 html:root .start-dashboard-card[data-custom-color] .start-chat-row-meta time,
 html:root .start-dashboard-card[data-custom-color] .start-shopping-progress > small,
+html:root .start-dashboard-card[data-custom-color] .start-family-mini-profile > small,
+html:root .start-dashboard-card[data-custom-color] .start-chat-unread,
 html:root .start-dashboard-card[data-custom-color] .start-rich-empty { color: var(--start-user-muted); }
 html:root .start-dashboard-card[data-custom-color] .start-card-heading > strong,
 html:root .start-dashboard-card[data-custom-color] .start-card-value,
@@ -21,32 +21,40 @@ html:root .start-dashboard-card[data-custom-color] .start-family-mini-profile > 
 html[data-theme="dark"] .start-dashboard-card[data-custom-color] {
   --start-card-background: var(--start-user-dark-background);
   --start-card-color: var(--start-user-dark-accent);
-  --start-user-text: #f5f2ff;
-  --start-user-muted: #cfccdf;
   border-color: color-mix(in srgb, var(--start-card-color) 24%, var(--start-card-background));
 }
-html[data-theme="dark"] .start-dashboard-card[data-custom-color] .start-card-icon {
-  background: color-mix(in srgb, var(--start-card-color) 12%, var(--start-card-background));
-}
-html[data-theme="dark"] .start-dashboard-card[data-custom-color] .start-rich-list,
-html[data-theme="dark"] .start-dashboard-card[data-custom-color] .start-family-mini-profile { background: rgb(255 255 255 / 7%); border-color: rgb(255 255 255 / 13%); }
-html[data-theme="dark"] .start-dashboard-card[data-custom-color] .start-shopping-progress > span { background: rgb(255 255 255 / 16%); }
+html:root .start-dashboard-card[data-custom-color] .start-card-heading > svg { opacity: 1; }
+html:root .start-dashboard-card[data-custom-color] .start-card-icon,
+html:root .start-dashboard-card[data-custom-color] .start-rich-list,
+html:root .start-dashboard-card[data-custom-color] .start-family-mini-profile,
+html:root .start-dashboard-card[data-custom-color] .start-family-countdown { background: var(--start-user-surface); border-color: color-mix(in srgb, var(--start-user-text) 20%, var(--start-user-surface)); color: var(--start-user-text); }
+html:root .start-dashboard-card[data-custom-color] .start-shopping-progress > span { background: var(--start-user-surface); }
+html:root .start-dashboard-card[data-custom-color] .start-shopping-progress > span > span { background: var(--start-user-text); }
+html:root .start-dashboard-card[data-custom-color] .start-detail-pill { background: #fff0ce; color: #76500d; }
+html:root .start-dashboard-card[data-custom-color] .start-detail-message-badge { background: #ac1766; color: #ffffff; }
 
 .start-tile-color-settings { min-width: 0; margin-top: 18px; padding-top: 15px; border-top: 1px solid var(--nr-line); }
-.start-tile-color-settings h3 { margin: 0 0 7px; color: var(--nr-text); font-size: 14px; }
+.start-tile-color-settings .start-colors-disclosure { display: inline-flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; width: auto; max-width: 100%; margin: 0; padding: 5px 0; border: 0; background: transparent; color: var(--nr-text); font: inherit; font-size: 14px; cursor: pointer; }
+.start-colors-disclosure svg { flex: 0 0 auto; transition: transform 120ms ease; }
+.start-colors-disclosure[aria-expanded="true"] svg { transform: rotate(90deg); }
+.start-colors-content { min-width: 0; margin-top: 5px; }
+.start-colors-content[hidden] { display: none; }
 .start-tile-color-settings .start-color-note { margin: 0 0 8px; font-size: 11px; line-height: 1.6; color: var(--nr-muted); }
 .start-color-original-hint { display: flex; align-items: center; gap: 5px; margin-bottom: 9px; color: var(--nr-muted); font-size: 10px; }
 .start-color-rows { display: grid; gap: 10px; }
 .start-tile-color-settings .start-color-row { min-width: 0; margin: 0; padding: 0; border: 0; }
 .start-color-row legend { display: flex; align-items: center; gap: 7px; padding: 0; color: var(--nr-text); font-size: 12px; font-weight: 650; }
 .start-color-row legend svg { flex: 0 0 auto; color: var(--brand-primary, #d92a8a); }
-.start-color-options { display: flex; flex-wrap: wrap; align-items: center; gap: 0; min-width: 0; margin: 2px -4px 0; }
-.start-color-choice { position: relative; display: inline-flex; flex: 0 0 44px; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; margin: 0; cursor: pointer; }
+.start-color-options { display: flex; flex-wrap: nowrap; align-items: center; gap: 0; min-width: 0; max-width: 100%; margin: 2px 0 0; padding: 2px 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+.start-color-choice { position: relative; display: inline-flex; flex: 0 0 36px; align-items: center; justify-content: center; width: 36px; height: 44px; padding: 0; margin: 0; cursor: pointer; }
 .start-color-choice input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 .start-color-dot { display: block; width: 18px; height: 18px; border: 1px solid rgb(99 77 117 / 20%); border-radius: 50%; pointer-events: none; }
 .start-color-dot.is-original { background: conic-gradient(#ffd2e7, #dfd2ff, #cfe7ff, #cbefdf, #ffebbb, #ffd2e7); }
+.start-color-dot.is-multicolor { background: conic-gradient(#ff2fa8, #7d35ff, #087dff, #00dac8, #59f52f, #ffdf00, #ff8a16, #ff3355, #ff2fa8); }
+.start-color-choice.start-color-custom { flex: 0 0 auto; gap: 7px; width: auto; min-width: 104px; padding: 0 6px; color: var(--nr-text); font-size: 11px; white-space: nowrap; }
 .start-color-choice.is-selected .start-color-dot { outline: 2px solid var(--brand-primary, #d92a8a); outline-offset: 3px; }
 .start-color-choice input:focus-visible + .start-color-dot { outline: 3px solid var(--brand-primary, #d92a8a); outline-offset: 4px; }
+.start-colors-disclosure:focus-visible { outline: 3px solid var(--brand-primary, #d92a8a); outline-offset: 3px; border-radius: 5px; }
 .start-tile-color-settings .start-colors-reset { display: inline-flex; justify-content: center; align-items: center; width: auto; min-height: 40px; margin-top: 10px; padding: 8px 12px; border: 1px solid var(--nr-line); border-radius: 12px; background: var(--nr-soft); color: var(--nr-text); font: inherit; font-size: 11px; font-weight: 650; cursor: pointer; }
 .start-tile-color-settings .start-colors-reset:focus-visible { outline: 3px solid var(--brand-primary, #d92a8a); outline-offset: 3px; }
 .start-tile-color-settings .start-color-storage-warning { margin: 8px 0 0; color: var(--nr-text); font-size: 11px; line-height: 1.5; }

@@ -1,33 +1,63 @@
 import type { CSSProperties } from 'react';
 import { START_CARD_IDS, type StartCardId } from './start-layout';
 
-/** Only palette identifiers are persisted; arbitrary CSS never comes from storage. */
-export const START_TILE_COLOR_PALETTE = [
-  { id: 'pink', label: 'Pastelowy róż', background: '#fff1f7', accent: '#a32368', darkBackground: '#352332', darkAccent: '#ffc8e4' },
-  { id: 'lavender', label: 'Lawendowy', background: '#f4eeff', accent: '#6642a6', darkBackground: '#2e2640', darkAccent: '#d8c3ff' },
-  { id: 'violet', label: 'Fioletowy', background: '#f0edff', accent: '#5941b0', darkBackground: '#2a2545', darkAccent: '#d1c4ff' },
-  { id: 'blue', label: 'Błękitny', background: '#edf7ff', accent: '#226392', darkBackground: '#203143', darkAccent: '#bddfff' },
-  { id: 'mint', label: 'Miętowy', background: '#ecfbf3', accent: '#246b51', darkBackground: '#20352d', darkAccent: '#b5efd4' },
-  { id: 'green', label: 'Jasnozielony', background: '#f2fae9', accent: '#416629', darkBackground: '#2a3524', darkAccent: '#d0ecb5' },
-  { id: 'yellow', label: 'Żółty', background: '#fff8df', accent: '#795b16', darkBackground: '#393223', darkAccent: '#f5df98' },
-  { id: 'peach', label: 'Brzoskwiniowy', background: '#fff0e6', accent: '#98542c', darkBackground: '#3a2b23', darkAccent: '#f6c8aa' },
-  { id: 'neutral', label: 'Neutralny jasny', background: '#f7f7fc', accent: '#565776', darkBackground: '#2c2c39', darkAccent: '#d7d7ed' },
-] as const;
+function luminance(hex: string): number {
+  const channels = [1, 3, 5].map(offset => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255)
+    .map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4);
+  return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
+}
 
-export type StartTileColorId = typeof START_TILE_COLOR_PALETTE[number]['id'];
+function contrast(first: string, second: string): number {
+  const a = luminance(first), b = luminance(second);
+  return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+}
+
+/** Prefer the existing navy; otherwise black/white guarantees normal-text contrast. */
+function readableText(background: string): string {
+  if (contrast(background, '#171b4b') >= 4.5) return '#171b4b';
+  return contrast(background, '#ffffff') >= contrast(background, '#000000') ? '#ffffff' : '#000000';
+}
+
+function innerSurface(background: string, text: string): string {
+  const target = text === '#ffffff' ? 0 : 255;
+  return `#${[1, 3, 5].map(offset => Math.round(Number.parseInt(background.slice(offset, offset + 2), 16) * .86 + target * .14).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** Only palette IDs or validated hex colors are persisted, never arbitrary CSS. */
+export const START_TILE_COLOR_PALETTE = ([
+  { id: 'pink', label: 'Różowy', background: '#ff2fa8' },
+  { id: 'violet', label: 'Fioletowy', background: '#7d35ff' },
+  { id: 'blue', label: 'Niebieski', background: '#087dff' },
+  { id: 'turquoise', label: 'Turkusowy', background: '#00dac8' },
+  { id: 'green', label: 'Zielony', background: '#59f52f' },
+  { id: 'yellow', label: 'Żółty', background: '#ffdf00' },
+  { id: 'orange', label: 'Pomarańczowy', background: '#ff8a16' },
+  { id: 'red', label: 'Czerwony', background: '#ff3355' },
+] as const).map(color => ({ ...color, accent: readableText(color.background), darkBackground: color.background, darkAccent: readableText(color.background) }));
+
+const LEGACY_COLORS = { lavender: 'violet', mint: 'turquoise', peach: 'orange', neutral: '#f7f7fc' } as const;
+
+export type StartTileColorId = typeof START_TILE_COLOR_PALETTE[number]['id'] | `#${string}`;
 export type StartTileColors = Readonly<Partial<Record<StartCardId, StartTileColorId>>>;
-export type StartTileColorChoice = StartTileColorId | 'original';
-export const START_TILE_COLOR_TEXT = { light: '#171b4b', lightMuted: '#5f576f', dark: '#f5f2ff', darkMuted: '#cfccdf' } as const;
+export type StartTileColorChoice = StartTileColorId | 'original' | keyof typeof LEGACY_COLORS;
 const EMPTY_COLORS: StartTileColors = Object.freeze({});
 const PERSISTENCE_MESSAGE = 'Nie udało się zapisać kolorów na tym urządzeniu. Zmiany działają tylko do zamknięcia tej strony.';
+
+export function normalizeStartTileColor(value: unknown): StartTileColorId | undefined {
+  if (typeof value !== 'string') return undefined;
+  const palette = START_TILE_COLOR_PALETTE.find(color => color.id === value);
+  if (palette) return palette.id;
+  if (Object.hasOwn(LEGACY_COLORS, value)) return LEGACY_COLORS[value as keyof typeof LEGACY_COLORS];
+  return /^#[\da-f]{6}$/i.test(value) ? value.toLowerCase() as StartTileColorId : undefined;
+}
 
 export function normalizeStartTileColors(value: unknown): StartTileColors {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return EMPTY_COLORS;
   const result: Partial<Record<StartCardId, StartTileColorId>> = {};
   for (const cardId of START_CARD_IDS) {
     if (!Object.hasOwn(value, cardId)) continue;
-    const color = (value as Record<string, unknown>)[cardId];
-    if (START_TILE_COLOR_PALETTE.some(item => item.id === color)) result[cardId] = color as StartTileColorId;
+    const color = normalizeStartTileColor((value as Record<string, unknown>)[cardId]);
+    if (color) result[cardId] = color;
   }
   return Object.keys(result).length ? Object.freeze(result) : EMPTY_COLORS;
 }
@@ -48,19 +78,23 @@ export function parseStoredStartTileColors(serialized: string | null): StartTile
 }
 
 export function selectedStartTileColorId(colors: StartTileColors, cardId: StartCardId): StartTileColorId | undefined {
-  const colorId = colors[cardId];
-  return START_TILE_COLOR_PALETTE.find(item => item.id === colorId)?.id;
+  return normalizeStartTileColor(colors[cardId]);
 }
 
 /** No style for an original tile: default appearance remains entirely unchanged. */
 export function getStartTileColorStyle(colors: StartTileColors, cardId: StartCardId): CSSProperties | undefined {
-  const palette = START_TILE_COLOR_PALETTE.find(item => item.id === colors[cardId]);
-  if (!palette) return undefined;
+  const color = selectedStartTileColorId(colors, cardId);
+  if (!color) return undefined;
+  const background = color.startsWith('#') ? color : START_TILE_COLOR_PALETTE.find(item => item.id === color)!.background;
+  const text = readableText(background);
   return {
-    '--start-user-background': palette.background,
-    '--start-user-accent': palette.accent,
-    '--start-user-dark-background': palette.darkBackground,
-    '--start-user-dark-accent': palette.darkAccent,
+    '--start-user-background': background,
+    '--start-user-accent': text,
+    '--start-user-dark-background': background,
+    '--start-user-dark-accent': text,
+    '--start-user-text': text,
+    '--start-user-muted': text,
+    '--start-user-surface': innerSurface(background, text),
   } as CSSProperties;
 }
 
@@ -107,10 +141,11 @@ export function createStartTileColorStore(uid: string, getStorage: () => StartTi
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     setColor(cardId: StartCardId, colorId: StartTileColorChoice) {
       if (!START_CARD_IDS.includes(cardId)) return;
-      if (colorId !== 'original' && !START_TILE_COLOR_PALETTE.some(item => item.id === colorId)) return;
+      const normalized = normalizeStartTileColor(colorId);
+      if (colorId !== 'original' && !normalized) return;
       const next: Partial<Record<StartCardId, StartTileColorId>> = { ...snapshot.colors };
       if (colorId === 'original') delete next[cardId];
-      else next[cardId] = colorId;
+      else next[cardId] = normalized;
       save(normalizeStartTileColors(next));
     },
     resetColors() { save(EMPTY_COLORS); },
