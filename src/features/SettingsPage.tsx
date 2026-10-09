@@ -8,6 +8,9 @@ import { fetchCalendarEvents } from '../calendar-store';
 import { NotificationSettings } from '../notifications';
 import { ConnectedCalendarsSettings } from '../calendars/ConnectedCalendarsSettings';
 import type { CalendarNotice } from '../calendars/model';
+import { StartTileColorsSettings } from './StartTileColorsSettings';
+import { SchoolConnectionsPreparation } from '../school/SchoolSources';
+import './settings-appearance.css';
 
 export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout, calendarNotice }: { user: User; member: Member | null; theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void; goTo: (page: Page) => void; onLogout: () => Promise<void>; calendarNotice?: CalendarNotice }) {
   const parent=isParent(member);
@@ -47,11 +50,12 @@ export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout, ca
         <AccountSettings user={user} />
         <OwnProfileSettings user={user} member={member} />
 
-        <article className="settings-section"><header><span>🎨</span><div><strong>Motyw aplikacji</strong><small>Wygląd zapisuje się na tym urządzeniu</small></div></header><div className="theme-choice big"><button className={theme === 'light' ? 'active' : ''} onClick={()=>setTheme('light')}>☀️ <span><b>Jasny</b><small>Kolorowy i czytelny</small></span></button><button className={theme === 'dark' ? 'active' : ''} onClick={()=>setTheme('dark')}>🌙 <span><b>Ciemny</b><small>Delikatny dla oczu</small></span></button></div></article>
+        <article className="settings-section settings-appearance" data-testid="settings-appearance"><header><span>🎨</span><div><strong>Wygląd</strong><small>Motyw aplikacji i kolory kafelków</small></div></header><div className="appearance-theme-buttons" role="group" aria-label="Motyw aplikacji"><button type="button" aria-pressed={theme === 'light'} onClick={()=>setTheme('light')}><span aria-hidden="true">☀️</span> Jasny</button><button type="button" aria-pressed={theme === 'dark'} onClick={()=>setTheme('dark')}><span aria-hidden="true">🌙</span> Ciemny</button></div><p className="settings-footnote">Motyw zapisuje się na tym urządzeniu.</p><StartTileColorsSettings uid={user.uid}/></article>
 
         <NotificationSettings />
 
         {parent && <FamilyMembersSettings user={user} member={member} />}
+        {parent && <SchoolConnectionsPreparation onOpenSchool={() => goTo('Szkoła')} />}
 
         <ConnectedCalendarsSettings user={user} member={member} notice={calendarNotice}><div className="data-tools"><button className="secondary-button" disabled={exporting} onClick={()=>void downloadCalendar()}>Pobierz kalendarz .ics</button><button className="secondary-button" onClick={() => goTo('Kalendarz')}>Import, osoby i zakres dat</button></div><p className="settings-footnote">Plik jest kopią bieżącego kalendarza. Zmiany po imporcie nie synchronizują się automatycznie. Godziny przyjmują strefę Twojego kalendarza.</p></ConnectedCalendarsSettings>
 

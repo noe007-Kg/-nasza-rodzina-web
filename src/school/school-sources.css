@@ -1,0 +1,21 @@
+.school-source-selector { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; min-width:0; margin:0 0 16px; }
+.school-source-selector > button { display:flex; align-items:center; gap:10px; min-width:0; min-height:62px; padding:12px; border:1px solid var(--family-line,#eee5f3); border-radius:18px; background:var(--family-surface,#fff); color:var(--family-text,#171b4b); text-align:left; }
+.school-source-selector > button[aria-pressed=true] { border-color:#e6add2; background:var(--family-soft-rose,#fff1f7); box-shadow:0 0 0 1px #f4d5e9; }
+.school-source-selector > button > span:last-child { display:grid; min-width:0; gap:4px; }
+.school-source-selector strong { font-size:13px; overflow-wrap:anywhere; }
+.school-source-selector small { color:var(--family-muted,#6b6682); font-size:11px; overflow-wrap:anywhere; }
+.school-source-selector .family-icon,.school-music-symbol { flex:0 0 24px; width:24px; font-size:22px; }
+.school-sp4-content { display:contents; }
+.school-sp4-content[hidden] { display:none; }
+.fryderyk-preparation { display:grid; gap:16px; min-width:0; }
+.fryderyk-intro { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+.fryderyk-intro > div:first-child { flex:1 1 220px; min-width:0; }
+.fryderyk-intro h2,.fryderyk-empty h3 { margin:4px 0; }
+.fryderyk-intro p,.fryderyk-empty p { font-size:13px; line-height:1.6; color:var(--family-muted,#6b6682); overflow-wrap:anywhere; }
+.fryderyk-intro .fryderyk-connection-note,.fryderyk-intro > small { flex-basis:100%; margin:0; }
+.fryderyk-section-buttons,.fryderyk-actions { display:flex; flex-wrap:wrap; gap:8px; min-width:0; }
+.fryderyk-section-buttons .family-button[aria-pressed=true] { border-color:#e6add2; box-shadow:0 0 0 1px #f4d5e9; }
+.fryderyk-actions .family-button { white-space:normal; max-width:100%; }
+.fryderyk-empty > .family-icon { color:var(--family-ink-violet,#7c5cfc); }
+.school-connections-preparation p { color:var(--family-muted,#6b6682); font-size:12px; line-height:1.6; }
+@media(max-width:420px) { .school-source-selector { gap:7px; } .school-source-selector > button { padding:10px 8px; gap:6px; } .school-source-selector strong { font-size:12px; } }

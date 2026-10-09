@@ -1,0 +1,3 @@
+html:root .appearance-theme-buttons { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+html:root .appearance-theme-buttons > button { flex:0 0 auto; width:auto; min-height:40px; padding:8px 14px; border:1px solid var(--nr-line); border-radius:12px; background:var(--nr-panel-2); color:var(--nr-text); font-size:13px; font-weight:700; }
+html:root .appearance-theme-buttons > button[aria-pressed=true] { border-color:#dfb6e8; box-shadow:0 0 0 1px #eed9f4; background:var(--nr-soft); }

@@ -15,6 +15,7 @@ import type { SchoolEntry, SchoolType } from './school-import';
 import { schoolReadAccess, SCHOOL_PROFILE_UNBOUND } from './school/read-access';
 import { SchoolGrades } from './school/SchoolGrades';
 import { SchoolExpandableList } from './school/SchoolExpandableList';
+import { FryderykPreparation, SchoolSourceSelector, type SchoolSourceView } from './school/SchoolSources';
 import { isPeriodGrade, parseGradeMetadata, sortGradesNewest } from './school/grade-projections';
 import './school.css';
 import './school-enhancements.css';
@@ -146,6 +147,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
   const [loadError, setLoadError] = useState('');
   const [retry, setRetry] = useState(0);
   const [selectedPerson, setSelectedPerson] = useState(parent ? 'Paweł' : ownStudent);
+  const [sourceSelection, setSourceSelection] = useState<{ person: string; source: SchoolSourceView } | null>(null);
   const [selectedDate, setSelectedDate] = useState(dateKey(new Date()));
   const [filter, setFilter] = useState<'all' | SchoolType>('all');
   const [notice, setNotice] = useState('');
@@ -208,6 +210,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
   }, [parent, ownStudent, member, familyMembers, user.uid]);
   const students = useMemo(() => studentProfiles.map(memberPersonKey), [studentProfiles]);
   const person = parent ? (students.includes(selectedPerson) ? selectedPerson : students[0]) : students[0];
+  const sourceView = sourceSelection && sourceSelection.person === person ? sourceSelection.source : 'sp4';
   const ownRecords = useMemo(() => allRecords.filter((row) => row.person === person), [allRecords, person]);
   const monday = moveDate(selectedDate, 1 - weekdayOf(selectedDate));
   const week = Array.from({ length: 7 }, (_, index) => moveDate(monday, index));
@@ -404,11 +407,16 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
 
   return <div className="page-content school-module family-ui">
     {students.length > 0 && <ProfileSelector className="school-students" label={parent ? 'Wybierz dziecko' : 'Twój profil szkolny'} profiles={students.map((student) => ({ key: student, label: student, avatar: avatarFor(student), photoURL: profilePhotos.get(student) }))} value={person} onChange={setSelectedPerson} />}
-    <SectionHeader className="school-heading" title="Szkoła" eyebrow="Codzienność dzieci" description="Plan, postępy i ważne szkolne sprawy. Wszystko blisko siebie." icon="school" actions={<>
+    <SectionHeader className="school-heading" title="Szkoła" eyebrow="Codzienność dzieci" description="Plan, postępy i ważne szkolne sprawy. Wszystko blisko siebie." icon="school" actions={sourceView === 'sp4' && <>
       {parent && <SecondaryButton icon="upload" onClick={() => { setImportError(''); setImportRows([]); setImportName(''); setImportOpen(true); }}>Importuj plik</SecondaryButton>}
       {person && <PrimaryButton icon="plus" onClick={() => openAdd()}>Dodaj wpis</PrimaryButton>}
     </>} />
     <p className="school-access-note"><Icon name="shield" />{parent ? 'Widok rodzica · szkolne sprawy wszystkich dzieci.' : ownStudent ? `Twój szkolny widok · ${ownStudent}.` : 'Konto nie ma przypisanej osoby. Rodzic może uzupełnić profil w ustawieniach.'}</p>
+    {person && <SchoolSourceSelector value={sourceView} onChange={source => {
+      setSourceSelection({ person, source }); setDetail(null); setForm(null); setDeleting(null); setImportOpen(false);
+    }} />}
+    {person && sourceView === 'fryderyk' && <FryderykPreparation key={`${identity}:${person}`} student={studentProfiles.find(profile => memberPersonKey(profile) === person)?.name || person} parent={parent} onBack={() => setSourceSelection({ person, source: 'sp4' })} />}
+    <div className="school-sp4-content" data-testid="school-sp4-content" hidden={sourceView !== 'sp4'}>
     {notice && <div className="school-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Zamknij komunikat"><Icon name="close" /></button></div>}
     {loadError && <div className="school-error" role="alert"><span>{loadError}</span><SecondaryButton onClick={() => setRetry((value) => value + 1)}>Spróbuj ponownie</SecondaryButton></div>}
     {parent && messageError && <div className="school-error" role="alert"><span>{messageError}</span><SecondaryButton onClick={() => setRetry((value) => value + 1)}>Ponów odczyt wiadomości</SecondaryButton></div>}
@@ -489,6 +497,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
       {importRows.length > 0 && <><h3 className="school-preview-title">Podgląd: {importName} · {importRows.length} wpisów</h3><p className="school-form-hint">Powtórzenia tego samego wpisu są pomijane. Istniejące wpisy i późniejsze ręczne zmiany pozostają zachowane.</p><div className="school-import-preview"><table><thead><tr><th>Osoba</th><th>Rodzaj</th><th>Nazwa / przedmiot</th><th>Termin</th><th>Notatka</th></tr></thead><tbody>{importRows.map((row, index) => <tr key={index}><td>{row.person}</td><td>{META[row.type].singular}</td><td>{row.title}<small>{row.subject}</small></td><td>{row.date || (row.weekday ? WEEKDAYS[row.weekday - 1] : '—')}{row.time && <small>{row.time}{row.endTime ? `–${row.endTime}` : ''}</small>}</td><td className="school-preview-note">{row.note || '—'}</td></tr>)}</tbody></table></div></>}
       <div className="school-form-actions"><SecondaryButton disabled={importBusy} onClick={() => { fileVersion.current += 1; setImportOpen(false); setImportRows([]); }}>Anuluj</SecondaryButton><PrimaryButton disabled={importBusy || !importRows.length} onClick={() => void commitImport()}>{importBusy ? 'Proszę czekać…' : `Importuj${importRows.length ? ` (${importRows.length})` : ''}`}</PrimaryButton></div>
     </SchoolDialog>}
+    </div>
   </div>;
 }
 

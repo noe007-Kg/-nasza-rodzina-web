@@ -18,6 +18,9 @@ import { useNotifications } from '../notifications';
 import { DEFAULT_QUICK_PRODUCTS, categorizeProduct, isShoppingCategory } from './ShoppingPage';
 import { buildFamilyTime, latestConversations, shoppingPreview, type StartChatMessage, type StartShoppingItem, type StartSchoolRecord } from './start-tile-projections';
 import { ChatDetails, FamilyTimeDetails, ShoppingDetails } from './StartTileDetails';
+import { useStartTileColors } from './useStartTileColors';
+import { getStartTileColorStyle, selectedStartTileColorId, type StartTileColors } from './start-tile-colors';
+import './start-tile-colors.css';
 
 type Weather = { temp: number; max: number; min: number; wind: number; label: string; icon: string };
 type HealthPreview = { id: string; title: string; person: string; type: string; date: string; time: string; status: string; medicineTime: string; confirmedDate: string };
@@ -25,11 +28,12 @@ type Tile = { id: StartCardId; label: string; page: Page; value?: ReactNode; sta
 function timestampDate(value: unknown) { return value instanceof Timestamp ? value.toDate() : undefined; }
 
 /** No sortable transforms: all seven source tiles keep their positions until drop. */
-function DashboardTile({ tile, active, onOpen, suppressClick, dragDisabled }: { tile: Tile; active: boolean; onOpen: () => void; suppressClick: () => boolean; dragDisabled: boolean }) {
+function DashboardTile({ tile, active, onOpen, suppressClick, dragDisabled, colors }: { tile: Tile; active: boolean; onOpen: () => void; suppressClick: () => boolean; dragDisabled: boolean; colors: StartTileColors }) {
   const { attributes, listeners, setNodeRef: setDragRef } = useDraggable({ id: tile.id, disabled: dragDisabled });
   const { setNodeRef: setDropRef } = useDroppable({ id: tile.id });
   return <button ref={node => { setDragRef(node); setDropRef(node); }} {...attributes} {...listeners}
     type="button" className={`start-dashboard-card start-card--${tile.id}${active ? ' is-drag-source' : ''}`}
+    data-custom-color={selectedStartTileColorId(colors, tile.id)} style={getStartTileColorStyle(colors, tile.id)}
     data-testid={`start-card-${tile.id}`} data-card-id={tile.id} aria-label={tile.label} aria-describedby={`start-card-preview-${tile.id}`}
     onClick={event => { if (suppressClick()) { event.preventDefault(); return; } onOpen(); }} onContextMenu={event => event.preventDefault()}>
     <TileContents tile={tile}/>
@@ -62,6 +66,7 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const [activeCard, setActiveCard] = useState<StartCardId | null>(null);
   const [now, setNow] = useState(() => new Date());
   const { order, saveOrder, loaded } = useDashboardOrder(user.uid);
+  const { colors } = useStartTileColors(user.uid);
   const suppressClickUntil = useRef(0);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { delay: 550, tolerance: 8 } }),
@@ -179,9 +184,9 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
       onDragCancel: () => 'Anulowano przenoszenie. Kolejność bez zmian.',
     } }}>
       <section className="start-dashboard-grid" aria-label="Twój rodzinny Start" aria-describedby="start-drag-hint" data-order={order.join(',')} data-layout-ready={loaded}>
-        {order.map(id => <DashboardTile key={id} tile={byId[id]} active={activeCard === id} onOpen={() => goTo(byId[id].page)} suppressClick={() => Date.now() < suppressClickUntil.current} dragDisabled={!loaded}/>)}
+        {order.map(id => <DashboardTile key={id} tile={byId[id]} active={activeCard === id} onOpen={() => goTo(byId[id].page)} suppressClick={() => Date.now() < suppressClickUntil.current} dragDisabled={!loaded} colors={colors}/>)}
       </section>
-      {createPortal(<DragOverlay dropAnimation={null} zIndex={1200}>{activeCard && <div className={`start-dashboard-card start-card--${activeCard} start-card-overlay`} data-testid="start-drag-overlay" aria-hidden="true"><TileContents tile={byId[activeCard]} overlay/></div>}</DragOverlay>, document.body)}
+      {createPortal(<DragOverlay dropAnimation={null} zIndex={1200}>{activeCard && <div className={`start-dashboard-card start-card--${activeCard} start-card-overlay`} data-testid="start-drag-overlay" aria-hidden="true" data-custom-color={selectedStartTileColorId(colors, activeCard)} style={getStartTileColorStyle(colors, activeCard)}><TileContents tile={byId[activeCard]} overlay/></div>}</DragOverlay>, document.body)}
     </DndContext>
   </div>;
 }
