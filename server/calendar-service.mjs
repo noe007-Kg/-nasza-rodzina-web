@@ -2,9 +2,10 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { Timestamp } from 'firebase-admin/firestore';
 import { calendarConfiguration, calendarIdentifier, calendarSelection, expectCalendarFields, failCalendar } from './calendar-config.mjs';
 import { calendarEncryptionConfigured, decryptCalendarSecrets, encryptCalendarSecrets } from './calendar-secrets.mjs';
-import { exchangeGoogleCode, googleAuthorizationUrl, googleCalendarClient } from './calendar-google.mjs';
+import { assertFamilyV2WriteAllowed } from './family-v2-policy.mjs';
+import { exchangeGoogleCode, googleAuthorizationUrl, googleCalendarClient, GOOGLE_CALENDAR_WRITE_SCOPE, normalizeGoogleHistoryEvent } from './calendar-google.mjs';
 import { CALENDAR_LEASE_MS, acquireCalendarLease, assertCalendarActor, assertCalendarLease, assertCalendarNotRemoving, assertCalendarSelection, assertOwnedConnection, connectionRef,
-  persistCalendarCredentials, releaseCalendarLease, sourceCalendarDocuments, timestampMillis, updateCalendarLease, upsertGoogleEvents } from './calendar-storage.mjs';
+  calendarEventFingerprint, googleEventDocumentId, persistCalendarCredentials, releaseCalendarLease, sourceCalendarDocuments, timestampMillis, updateCalendarLease, upsertGoogleEvents } from './calendar-storage.mjs';
 
 const OAUTH_TTL_MS = 10 * 60000;
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -35,10 +36,19 @@ function configured() { try { calendarConfiguration(); return calendarEncryption
 const iso = value => Number.isFinite(timestampMillis(value)) ? new Date(timestampMillis(value)).toISOString() : null;
 export const publicCalendarConnection = (id, data) => ({ id, provider: 'google', calendarId: data.calendarId || '', calendarName: data.calendarName || 'Google Calendar',
   ownerProfileId: data.ownerProfileId, person: data.person, visibility: data.visibility, mode: data.mode, status: data.status,
-  selectionConfirmed: data.selectionConfirmed === true, lastSuccessfulSyncAt: iso(data.lastSuccessfulSyncAt), lastAttemptAt: iso(data.lastAttemptAt), lastErrorCode: data.lastErrorCode || null });
+  selectionConfirmed: data.selectionConfirmed === true, lastSuccessfulSyncAt: iso(data.lastSuccessfulSyncAt), lastAttemptAt: iso(data.lastAttemptAt), lastErrorCode: data.lastErrorCode || null,
+  writeAuthorized: data.writeAuthorized === true, twoWayEnabled: data.twoWayEnabled === true, historyComplete: data.historyComplete === true, historyRequired: data.historyImportVersion === 2 && data.historyComplete !== true,
+  historyProgress: data.historyProgress || null });
+
+export function assertCalendarV2WritesAllowed(context, env = process.env) {
+  if (env.VERCEL_ENV === 'preview') failCalendar('CALENDAR_PREVIEW_READ_ONLY', 403, 'Wersja Preview nie zapisuje zmian integracji w produkcyjnych danych. Użyj oddzielnego projektu testowego.');
+  assertFamilyV2WriteAllowed(context, env);
+}
 
 export async function startCalendarOAuth(context, body, { now = Date.now() } = {}) {
-  expectCalendarFields(body, ['ownerProfileId', 'visibility', 'mode', 'connectionId']);
+  expectCalendarFields(body, ['ownerProfileId', 'visibility', 'mode', 'connectionId', 'write']);
+  if (body.write !== undefined && typeof body.write !== 'boolean') failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Nieprawidłowa zgoda na zapis.');
+  if (body.write) assertCalendarV2WritesAllowed(context);
   const selection = calendarSelection(body), config = calendarConfiguration();
   if (Object.hasOwn(body, 'connectionId')) connectionRef(context, body.connectionId);
   if (!calendarEncryptionConfigured()) failCalendar('CALENDAR_NOT_CONFIGURED', 503, 'Administrator musi skonfigurować osobny klucz kalendarzy.');
@@ -56,11 +66,11 @@ export async function startCalendarOAuth(context, body, { now = Date.now() } = {
     }
     if (Number.isFinite(timestampMillis(rate?.startedAt)) && now - timestampMillis(rate.startedAt) < 10000) failCalendar('CALENDAR_RATE_LIMITED', 429, 'Połączenie zostało rozpoczęte przed chwilą. Spróbuj za moment.');
     if (rate?.stateId) transaction.delete(stateRef(context, rate.stateId));
-    transaction.set(ref, { ownerUid: context.uid, ...selection, person, ...(body.connectionId ? { connectionId: body.connectionId, expectedConnectionVersion: connection.version } : {}), phase: 'started', nonceHash: digest(nonce), envelope,
+    transaction.set(ref, { ownerUid: context.uid, ...selection, person, writeRequested: body.write === true, ...(body.connectionId ? { connectionId: body.connectionId, expectedConnectionVersion: connection.version } : {}), phase: 'started', nonceHash: digest(nonce), envelope,
       expiresAt: Timestamp.fromMillis(now + OAUTH_TTL_MS), createdAt: Timestamp.fromMillis(now) });
     transaction.set(rateRef, { startedAt: Timestamp.fromMillis(now), stateId: id });
   });
-  return { authorizationUrl: googleAuthorizationUrl(config, id, createHash('sha256').update(verifier).digest('base64url')), cookie: calendarOAuthCookie(`${id}.${nonce}`) };
+  return { authorizationUrl: googleAuthorizationUrl(config, id, createHash('sha256').update(verifier).digest('base64url'), { write: body.write === true }), cookie: calendarOAuthCookie(`${id}.${nonce}`) };
 }
 
 /** Callback has no Firebase bearer: state, PKCE and the same browser nonce bind it to the initiating UID. */
@@ -118,12 +128,17 @@ export async function finalizeCalendarOAuth(context, body, cookie, { clock = Dat
     if (state.connectionId && (!old || !state.expectedConnectionVersion || old.version !== state.expectedConnectionVersion)) failCalendar('CALENDAR_SYNC_STALE', 409, 'Połączenie zmieniło się. Zacznij ponowne połączenie od nowa.');
     if (old) { assertOwnedConnection(context, old); assertCalendarNotRemoving(old, clock()); if (old.ownerProfileId !== state.ownerProfileId || old.mode !== state.mode) failCalendar('CALENDAR_SOURCE_LOCKED', 409, 'Przypisanie źródła zmieniło się. Zacznij ponownie.'); }
     const { tokens } = decryptCalendarSecrets(state.envelope, { uid: context.uid, id: body.completionId, purpose: 'oauth' });
+    if (state.writeRequested) {
+      assertCalendarV2WritesAllowed(context);
+      if (!tokens.scopes?.includes(GOOGLE_CALENDAR_WRITE_SCOPE)) failCalendar('CALENDAR_WRITE_PERMISSION_REQUIRED', 403, 'Google nie udzielił zgody na zapis wydarzeń. Dotychczasowe połączenie pozostaje bez zmian.');
+    }
     validState(state, body.completionId, cookie, clock(), 'authorized');
     transaction.set(connection, { ...(old || {}), ownerUid: context.uid, provider: 'google', ownerProfileId: state.ownerProfileId, person, visibility: state.visibility, mode: state.mode,
       calendarId: old?.calendarId || 'primary', calendarName: old?.calendarName || 'Google Calendar', selectionConfirmed: false,
       status: 'connected', version: randomUUID(), leaseId: null, leaseExpiresAt: null, lastErrorCode: null,
       removingEvents: false, removalExpiresAt: null,
       envelope: encryptCalendarSecrets({ tokens, syncToken: null }, { uid: context.uid, id, purpose: 'connection' }),
+      writeAuthorized: state.writeRequested === true && tokens.scopes?.includes(GOOGLE_CALENDAR_WRITE_SCOPE) === true, twoWayEnabled: false, historyImportVersion: old?.historyImportVersion || 2,
       recurringIds: old?.recurringIds || [], createdAt: old?.createdAt || Timestamp.fromMillis(now), updatedAt: Timestamp.fromMillis(now) });
     transaction.delete(ref); return id;
   });
@@ -152,7 +167,7 @@ async function withClient(context, body, operation, { clock = Date.now, clientFa
     // A later failed page must not lose credentials rotated by an earlier successful refresh.
     // This preserves the OLD cursor and never turns a failed read into a successful sync.
     if (client && secrets && !['CALENDAR_RECONNECT_REQUIRED', 'CALENDAR_SYNC_STALE'].includes(error?.code)) {
-      await persistCalendarCredentials(context, ref, lease, data, client.tokens(), secrets.syncToken, clock(), clock).catch(() => {});
+      await persistCalendarCredentials(context, ref, lease, data, client.tokens(), secrets.syncToken, clock(), clock, secrets).catch(() => {});
     }
     await releaseCalendarLease(context, ref, lease, { now: clock(), errorCode: typeof error?.code === 'string' && error.code.startsWith('CALENDAR_') ? error.code : 'CALENDAR_PROVIDER_UNAVAILABLE' }).catch(() => {});
     throw error;
@@ -161,7 +176,7 @@ async function withClient(context, body, operation, { clock = Date.now, clientFa
 export async function listGoogleCalendars(context, body, options) {
   expectCalendarFields(body, ['connectionId']);
   return withClient(context, body, async (client, data, secrets, lease, ref, clock) => {
-    const calendars = await client.calendars(); await persistCalendarCredentials(context, ref, lease, data, client.tokens(), secrets.syncToken, clock(), clock); return { calendars };
+    const calendars = await client.calendars(); await persistCalendarCredentials(context, ref, lease, data, client.tokens(), secrets.syncToken, clock(), clock, secrets); return { calendars };
   }, options);
 }
 export async function configureGoogleCalendar(context, body, options) {
@@ -171,7 +186,7 @@ export async function configureGoogleCalendar(context, body, options) {
   return withClient(context, body, async (client, data, secrets, lease, ref, clock) => {
     const calendars = await client.calendars(), calendar = calendars.find(row => row.id === body.calendarId || body.calendarId === 'primary' && row.primary);
     if (!calendar) failCalendar('CALENDAR_SOURCE_NOT_FOUND', 403, 'Google nie udostępnia wybranego kalendarza.');
-    const envelope = encryptCalendarSecrets({ tokens: client.tokens(), syncToken: data.calendarId === calendar.id ? secrets.syncToken : null }, { uid: context.uid, id: data.id, purpose: 'connection' });
+    const envelope = encryptCalendarSecrets({ ...secrets, tokens: client.tokens(), syncToken: data.calendarId === calendar.id ? secrets.syncToken : null }, { uid: context.uid, id: data.id, purpose: 'connection' });
     await context.db.runTransaction(async transaction => {
       const snapshot = await transaction.get(ref), actorSnapshot = await transaction.get(context.db.collection('members').doc(context.uid)), current = snapshot.data();
       assertOwnedConnection(context, current); const person = await assertCalendarSelection(transaction, context, actorSnapshot.data(), selection); assertCalendarLease(current, lease, clock());
@@ -184,13 +199,15 @@ export async function configureGoogleCalendar(context, body, options) {
       }
       assertCalendarLease(current, lease, clock());
       transaction.update(ref, { ...selection, person, calendarId: calendar.id, calendarName: calendar.name, timeZone: calendar.timeZone, envelope,
-        selectionConfirmed: true, lastErrorCode: null, ...(current.calendarId === calendar.id ? {} : { recurringIds: [] }), updatedAt: Timestamp.fromMillis(clock()) });
+        selectionConfirmed: true, googleCalendarCanWrite: calendar.canWrite === true, lastErrorCode: null, ...(current.calendarId === calendar.id ? {} : { recurringIds: [], historyComplete: false, historyProgress: null }), updatedAt: Timestamp.fromMillis(clock()) });
     });
     return { connectionId: data.id };
   }, options);
 }
 export async function syncGoogleCalendar(context, body, options) {
   expectCalendarFields(body, ['connectionId']);
+  const current = (await connectionRef(context, body.connectionId).get()).data();
+  if (current?.historyImportVersion === 2) return syncGoogleHistory(context, body, options);
   return withClient(context, body, async (client, data, secrets, lease, ref, clock) => {
     const changes = await client.changes(data.calendarId, { syncToken: secrets.syncToken, recurringIds: data.recurringIds || [], timeZone: data.timeZone });
     // Preserve a refreshed token before importing; the old cursor remains until every upsert succeeds.
@@ -291,4 +308,230 @@ export async function disconnectGoogleCalendar(context, body, { clock = Date.now
     }
   }
   return { removed };
+}
+
+/** Bounded, resumable history. Cursors stay inside the existing AES-GCM envelope,
+ * never in the browser. Closing the UI cannot duplicate already committed pages. */
+export async function googleHistoryStep(context, body, options) {
+  expectCalendarFields(body, ['connectionId', 'operation', 'restart']);
+  assertCalendarV2WritesAllowed(context);
+  if (!['preview', 'import'].includes(body.operation) || body.restart !== undefined && typeof body.restart !== 'boolean') failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Wybierz sprawdzenie historii albo import.');
+  return withClient(context, body, async (client, data, secrets, lease, ref, clock) => {
+    let job = secrets.historyJob;
+    const continuing = job?.phase === body.operation && job.complete !== true && !body.restart;
+    if (!continuing) {
+      if (body.operation === 'import' && (data.historyProgress?.phase !== 'preview' || data.historyProgress.complete !== true) && job?.phase !== 'import') failCalendar('CALENDAR_HISTORY_CONFIRM_REQUIRED', 409, 'Najpierw sprawdź liczbę wydarzeń, a następnie zatwierdź import.');
+      job = { phase: body.operation, pageToken: null, syncToken: null, processed: 0, imported: 0, changed: 0, cancelled: 0, unchanged: 0, total: body.operation === 'import' ? data.historyProgress?.processed || null : null, complete: false };
+    }
+    return commitHistoryPage(context, client, data, secrets, lease, ref, clock, job);
+  }, options);
+}
+
+async function commitHistoryPage(context, client, data, secrets, lease, ref, clock, job) {
+  const page = await client.historyPage(data.calendarId, { pageToken: job.pageToken, syncToken: job.syncToken, timeZone: data.timeZone });
+  const events = [];
+  for (const event of page.events) {
+    if (event.exportReference && /^[a-f0-9]{64}$/.test(event.exportReference)) {
+      const exported = (await context.db.collection('_calendarExports').doc(event.exportReference).get()).data();
+      if (exported?.ownerUid === context.uid && exported.sourceConnectionId === data.id && exported.externalEventId === event.externalEventId) continue;
+    }
+    events.push(event);
+  }
+  const totals = job.phase === 'preview' ? { imported: 0, changed: 0, cancelled: 0, unchanged: 0 } : await upsertGoogleEvents(context, data, lease, events, { clock, now: clock() });
+  const complete = !page.nextPageToken;
+  const next = { ...job, pageToken: page.nextPageToken, processed: job.processed + page.events.filter(event => !event.cancelled).length, complete,
+    ...Object.fromEntries(['imported', 'changed', 'cancelled', 'unchanged'].map(key => [key, (job[key] || 0) + totals[key]])) };
+  const progress = { phase: next.phase, processed: next.processed, total: next.total || null, complete };
+  const syncToken = complete && job.phase !== 'preview' ? page.syncToken : secrets.syncToken;
+  const envelope = complete && data.mode === 'import' && job.phase === 'import' ? null : encryptCalendarSecrets({ ...secrets, tokens: client.tokens(), syncToken: syncToken || null, historyJob: next }, { uid: context.uid, id: data.id, purpose: 'connection' });
+  await updateCalendarLease(context, ref, lease, { envelope, historyProgress: progress, historyImportVersion: 2, timeZone: page.timeZone || data.timeZone || null,
+    ...(job.phase !== 'preview' ? { hasEvents: data.hasEvents || totals.imported > 0 } : {}),
+    ...(complete && job.phase !== 'preview' ? { historyComplete: true, lastSuccessfulSyncAt: Timestamp.fromMillis(clock()), status: data.mode === 'import' ? 'imported' : 'connected' } : {}),
+    lastErrorCode: null, updatedAt: Timestamp.fromMillis(clock()) }, clock(), clock);
+  return { ...totals, historyProgress: progress, complete, lastSuccessfulSyncAt: complete && job.phase !== 'preview' ? new Date(clock()).toISOString() : null };
+}
+
+export async function syncGoogleHistory(context, body, options) {
+  assertCalendarV2WritesAllowed(context);
+  const current = (await connectionRef(context, body.connectionId).get()).data();
+  const continuation = current?.historyProgress?.complete === false && ['import', 'sync'].includes(current.historyProgress.phase);
+  return withClient({ ...context, calendarHistoryContinuation: continuation }, body, async (client, data, secrets, lease, ref, clock) => {
+    if (data.historyComplete !== true && secrets.historyJob?.phase !== 'import') failCalendar('CALENDAR_HISTORY_CONFIRM_REQUIRED', 409, 'Najpierw sprawdź i zatwierdź import historii.');
+    const job = secrets.historyJob?.complete !== true && ['import', 'sync'].includes(secrets.historyJob?.phase) ? secrets.historyJob : {
+      phase: 'sync', pageToken: null, syncToken: secrets.syncToken || null, processed: 0, imported: 0, changed: 0, cancelled: 0, unchanged: 0, total: null, complete: false,
+    };
+    let result;
+    try { result = await commitHistoryPage(context, client, data, secrets, lease, ref, clock, job); }
+    catch (error) {
+      if (error?.code !== 'CALENDAR_CURSOR_EXPIRED' || !job.syncToken && !job.pageToken) throw error;
+      // A stale cursor starts a bounded full-history reread under the same
+      // lease. Existing records remain; only explicit cancellation is applied.
+      result = await commitHistoryPage(context, client, data, secrets, lease, ref, clock, { ...job, pageToken: null, syncToken: null,
+        processed: 0, imported: 0, changed: 0, cancelled: 0, unchanged: 0, complete: false });
+    }
+    if (result.complete && data.twoWayEnabled === true) await synchronizeGoogleExports(context, data, client, clock);
+    return result;
+  }, { ...options, syncing: true });
+}
+
+export async function changeGoogleVisibilityBatch(context, body, options) {
+  expectCalendarFields(body, ['connectionId', 'eventIds', 'visibility']);
+  assertCalendarV2WritesAllowed(context);
+  if (!Array.isArray(body.eventIds) || body.eventIds.length < 1 || body.eventIds.length > 100 || new Set(body.eventIds).size !== body.eventIds.length) failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Zaznacz od 1 do 100 własnych wydarzeń.');
+  // Each move remains atomic across private/family collections; a failed item
+  // does not expose any foreign record or change Google calendar sharing.
+  for (const eventId of body.eventIds) await changeGoogleEventVisibility(context, { connectionId: body.connectionId, eventId, visibility: body.visibility }, options);
+  return { changed: body.eventIds.length, visibility: body.visibility };
+}
+
+export async function configureGoogleTwoWay(context, body, options) {
+  expectCalendarFields(body, ['connectionId', 'enabled']); assertCalendarV2WritesAllowed(context);
+  if (typeof body.enabled !== 'boolean') failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Potwierdź ustawienie synchronizacji.');
+  return withClient(context, body, async (client, data, secrets, lease, ref, clock) => {
+    if (body.enabled && (!data.writeAuthorized || !client.tokens().scopes?.includes(GOOGLE_CALENDAR_WRITE_SCOPE) || !data.historyComplete || data.googleCalendarCanWrite !== true || data.mode !== 'sync')) failCalendar('CALENDAR_WRITE_PERMISSION_REQUIRED', 403, 'Wymagany jest sprawdzony import historii, kalendarz z prawem zapisu i osobna zgoda Google na zapis.');
+    await updateCalendarLease(context, ref, lease, { twoWayEnabled: body.enabled, updatedAt: Timestamp.fromMillis(clock()) }, clock(), clock);
+    return { enabled: body.enabled };
+  }, options);
+}
+
+const exportMapRef = (context, connectionId, eventId) => context.db.collection('_calendarExports').doc(digest(JSON.stringify([context.uid, connectionId, eventId])));
+const calendarEventReferences = (context, eventId) => {
+  if (typeof eventId !== 'string' || !eventId || eventId.length > 256 || /[\x00-\x1f/\\]/.test(eventId)) failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Wybierz poprawne wydarzenie.');
+  return ['privateCalendarEvents', 'calendarEvents'].map(name => context.db.collection(name).doc(eventId));
+};
+async function ownedLocalEvent(context, eventId) {
+  const [privateRef, sharedRef] = calendarEventReferences(context, eventId);
+  const [privateSnapshot, shared] = await Promise.all([privateRef.get(), sharedRef.get()]);
+  if (privateSnapshot.exists && shared.exists) failCalendar('CALENDAR_EVENT_CONFLICT', 409, 'Wydarzenie ma niejednoznaczną widoczność.');
+  const snapshot = privateSnapshot.exists ? privateSnapshot : shared;
+  const event = snapshot.data();
+  if (!event || event.ownerUid !== context.uid && event.createdBy !== context.uid || event.readOnly === true || event.source && event.source !== 'manual') failCalendar('CALENDAR_EVENT_FORBIDDEN', 403, 'Możesz eksportować wyłącznie własne, ręcznie dodane wydarzenia.');
+  return { event, ref: privateSnapshot.exists ? privateRef : sharedRef };
+}
+function localEventGoogleBody(event, fallbackTimeZone) {
+  const start = timestampMillis(event.date), end = timestampMillis(event.endDate);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Wydarzenie nie ma poprawnego terminu.');
+  const timeZone = event.timeZone || fallbackTimeZone || 'Europe/Warsaw';
+  const civil = millis => new Intl.DateTimeFormat('sv-SE', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(millis));
+  const body = { summary: String(event.title || '').slice(0, 500), description: String(event.description || '').slice(0, 10000), location: String(event.location || '').slice(0, 2000),
+    start: event.allDay ? { date: event.sourceStartDate || civil(start) } : { dateTime: new Date(start).toISOString(), timeZone },
+    end: event.allDay ? { date: event.sourceEndDateExclusive || new Date(Date.parse(`${civil(end)}T00:00:00Z`) + 86400000).toISOString().slice(0, 10) } : { dateTime: new Date(end).toISOString(), timeZone } };
+  if (Object.keys(event.recurrenceOverrides || {}).length) failCalendar('CALENDAR_EXPORT_SERIES_COMPLEX', 409, 'Seria z lokalnymi zmianami pojedynczych wystąpień wymaga osobnego uzgodnienia z Google. Nie wysłano uproszczonej kopii.');
+  if (event.repeat && event.repeat !== 'none') {
+    const units = { daily: 'DAILY', weekdays: 'WEEKLY', weekly: 'WEEKLY', monthly: 'MONTHLY', yearly: 'YEARLY' }, custom = event.recurrence || {};
+    const frequency = event.repeat === 'custom' ? { day: 'DAILY', week: 'WEEKLY', month: 'MONTHLY', year: 'YEARLY' }[custom.unit] : units[event.repeat];
+    if (!frequency) failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Nieprawidłowa reguła powtarzania.');
+    const parts = [`FREQ=${frequency}`, `INTERVAL=${event.repeat === 'custom' ? custom.interval || 1 : 1}`];
+    const weekdays = event.repeat === 'weekdays' ? [1, 2, 3, 4, 5] : custom.weekdays;
+    if (weekdays?.length) parts.push(`BYDAY=${weekdays.map(day => ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'][day]).join(',')}`);
+    if (event.repeatCount) parts.push(`COUNT=${event.repeatCount}`);
+    else if (Number.isFinite(timestampMillis(event.repeatUntil))) parts.push(`UNTIL=${new Date(timestampMillis(event.repeatUntil)).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`);
+    body.recurrence = [`RRULE:${parts.join(';')}`];
+    if (event.recurrenceExceptions?.length) body.recurrence.push(`EXDATE:${event.recurrenceExceptions.map(value => new Date(value).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')).join(',')}`);
+  }
+  return body;
+}
+const assertGoogleWriting = (data, client) => {
+  if (data.writeAuthorized !== true || data.historyComplete !== true || data.googleCalendarCanWrite !== true || !client.tokens().scopes?.includes(GOOGLE_CALENDAR_WRITE_SCOPE)) failCalendar('CALENDAR_WRITE_PERMISSION_REQUIRED', 403, 'Najpierw sprawdź import historii oraz udziel Google osobnej zgody na zapis w tym kalendarzu.');
+};
+
+/** Conscious export is separate from changing visibility in our family calendar. */
+export async function exportLocalEventToGoogle(context, body, options) {
+  expectCalendarFields(body, ['connectionId', 'eventId']); assertCalendarV2WritesAllowed(context);
+  return withClient(context, body, async (client, data, secrets, lease, ref, clock) => {
+    assertGoogleWriting(data, client);
+    const local = await ownedLocalEvent(context, body.eventId), mappingRef = exportMapRef(context, data.id, body.eventId), mapping = (await mappingRef.get()).data();
+    if (mapping) {
+      if (mapping.ownerUid !== context.uid || mapping.sourceConnectionId !== data.id) failCalendar('CALENDAR_EVENT_FORBIDDEN', 403, 'Nieprawidłowe przypisanie eksportu.');
+      if (mapping.ready === true) return { exported: false, alreadyExported: true, eventId: body.eventId };
+    }
+    const externalEventId = `nr${mappingRef.id}`, googleBody = { ...localEventGoogleBody(local.event, data.timeZone), extendedProperties: { private: { naszaRodzinaExport: mappingRef.id } } };
+    await context.db.runTransaction(async transaction => {
+      const [connection, actor, fresh, prior] = await Promise.all([transaction.get(ref), transaction.get(context.db.collection('members').doc(context.uid)), transaction.get(local.ref), transaction.get(mappingRef)]);
+      assertCalendarActor(context, actor.data()); assertOwnedConnection(context, connection.data()); assertCalendarLease(connection.data(), lease, clock());
+      if (!fresh.exists || calendarEventFingerprint(fresh.data()) !== calendarEventFingerprint(local.event)) failCalendar('CALENDAR_WRITE_CONFLICT', 409, 'Wydarzenie zmieniło się przed eksportem.');
+      if (prior.exists && prior.data().ownerUid !== context.uid) failCalendar('CALENDAR_EVENT_FORBIDDEN', 403, 'Nieprawidłowe przypisanie eksportu.');
+      if (!prior.exists) transaction.set(mappingRef, { ownerUid: context.uid, sourceConnectionId: data.id, localEventId: body.eventId, externalEventId, ready: false, localFingerprint: calendarEventFingerprint(local.event), conflict: false, updatedAt: Timestamp.fromMillis(clock()) });
+    });
+    let remote;
+    try { remote = await client.writeEvent(data.calendarId, externalEventId, googleBody, { insert: true }); }
+    catch (error) {
+      if (error.code !== 'CALENDAR_WRITE_CONFLICT') throw error;
+      remote = await client.event(data.calendarId, externalEventId);
+      if (remote.extendedProperties?.private?.naszaRodzinaExport !== mappingRef.id) throw error;
+    }
+    if (!remote.etag || remote.id !== externalEventId) failCalendar('CALENDAR_PROVIDER_DATA', 502, 'Google nie potwierdził zapisu wydarzenia.');
+    await context.db.runTransaction(async transaction => {
+      const [connection, actor, fresh, prior] = await Promise.all([transaction.get(ref), transaction.get(context.db.collection('members').doc(context.uid)), transaction.get(local.ref), transaction.get(mappingRef)]);
+      assertCalendarActor(context, actor.data()); assertOwnedConnection(context, connection.data()); assertCalendarLease(connection.data(), lease, clock());
+      if (!fresh.exists || fresh.data().ownerUid !== context.uid && fresh.data().createdBy !== context.uid || calendarEventFingerprint(fresh.data()) !== calendarEventFingerprint(local.event)) failCalendar('CALENDAR_WRITE_CONFLICT', 409, 'Lokalne wydarzenie zmieniło się podczas eksportu. Nie nadpisano jego nowej wersji.');
+      if (prior.exists && prior.data().ready === true) return;
+      transaction.set(mappingRef, { ownerUid: context.uid, sourceConnectionId: data.id, localEventId: body.eventId, externalEventId, ready: true, localFingerprint: calendarEventFingerprint(local.event), providerEtag: remote.etag, conflict: false, updatedAt: Timestamp.fromMillis(clock()) });
+    });
+    await persistCalendarCredentials(context, ref, lease, data, client.tokens(), secrets.syncToken, clock(), clock, secrets);
+    return { exported: true, eventId: body.eventId };
+  }, options);
+}
+
+export async function updateImportedGoogleEvent(context, body, options) {
+  expectCalendarFields(body, ['connectionId', 'eventId', 'patch']); assertCalendarV2WritesAllowed(context);
+  expectCalendarFields(body.patch, ['title', 'description', 'location', 'date', 'endDate', 'allDay']);
+  if (![body.patch.title, body.patch.description, body.patch.location].every(value => typeof value === 'string') || typeof body.patch.allDay !== 'boolean' || !Number.isFinite(Date.parse(body.patch.date)) || !Number.isFinite(Date.parse(body.patch.endDate))) failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Sprawdź nazwę i termin wydarzenia.');
+  return withClient(context, body, async (client, data, secrets, lease, ref, clock) => {
+    assertGoogleWriting(data, client);
+    if (!data.twoWayEnabled) failCalendar('CALENDAR_WRITE_DISABLED', 403, 'Najpierw świadomie włącz synchronizację dwukierunkową.');
+    const [privateRef, sharedRef] = calendarEventReferences(context, body.eventId), [privateSnapshot, shared] = await Promise.all([privateRef.get(), sharedRef.get()]);
+    if (privateSnapshot.exists && shared.exists) failCalendar('CALENDAR_EVENT_CONFLICT', 409, 'Wydarzenie ma niejednoznaczną widoczność.');
+    const event = privateSnapshot.exists ? privateSnapshot.data() : shared.data();
+    if (!event || event.source !== 'google' || event.sourceConnectionId !== data.id || event.sourceOwnerUid !== context.uid || event.ownerUid !== context.uid || !event.providerEtag) failCalendar('CALENDAR_EVENT_FORBIDDEN', 403, 'Możesz zmienić tylko własne wydarzenie z potwierdzoną wersją Google.');
+    const remote = await client.event(data.calendarId, event.externalEventId);
+    if (remote.etag !== event.providerEtag) failCalendar('CALENDAR_WRITE_CONFLICT', 409, 'Wydarzenie zmieniło się w Google. Najpierw zsynchronizuj i sprawdź aktualną wersję.');
+    const nextLocal = { ...event, ...body.patch, date: Date.parse(body.patch.date), endDate: Date.parse(body.patch.endDate), repeat: 'none', recurrenceOverrides: {}, sourceStartDate: null, sourceEndDateExclusive: null };
+    const payload = localEventGoogleBody(nextLocal, data.timeZone);
+    const saved = await client.writeEvent(data.calendarId, event.externalEventId, payload, { etag: event.providerEtag });
+    const incoming = normalizeGoogleHistoryEvent(saved, data.timeZone);
+    await upsertGoogleEvents(context, data, lease, [incoming], { clock, now: clock() });
+    await persistCalendarCredentials(context, ref, lease, data, client.tokens(), secrets.syncToken, clock(), clock, secrets);
+    return { updated: true, eventId: body.eventId };
+  }, options);
+}
+
+async function synchronizeGoogleExports(context, data, client, clock) {
+  assertGoogleWriting(data, client);
+  const mappings = (await context.db.collection('_calendarExports').where('sourceConnectionId', '==', data.id).limit(101).get()).docs;
+  if (mappings.length > 100) failCalendar('CALENDAR_PROVIDER_LIMIT', 409, 'Automatyczny eksport obsługuje do 100 powiązanych wydarzeń w jednym źródle. Pozostałe wydarzenia wymagają osobnego źródła.');
+  for (const row of mappings) {
+    const mapping = row.data();
+    if (mapping.ownerUid !== context.uid) failCalendar('CALENDAR_EVENT_FORBIDDEN', 403, 'Nieprawidłowe przypisanie eksportu.');
+    if (mapping.ready !== true) continue;
+    let local;
+    try { local = await ownedLocalEvent(context, mapping.localEventId); } catch { await context.db.runTransaction(async transaction => { const current = await transaction.get(row.ref); if (current.exists && current.data().ownerUid === context.uid) transaction.update(row.ref, { conflict: true }); }); continue; }
+    const remote = await client.event(data.calendarId, mapping.externalEventId);
+    const localChanged = calendarEventFingerprint(local.event) !== mapping.localFingerprint, remoteChanged = remote.etag !== mapping.providerEtag;
+    if (!localChanged && !remoteChanged) continue;
+    if (localChanged && remoteChanged || remote.status === 'cancelled') {
+      await context.db.runTransaction(async transaction => { const current = await transaction.get(row.ref); if (current.exists && current.data().ownerUid === context.uid) transaction.update(row.ref, { conflict: true }); }); continue;
+    }
+    if (localChanged) {
+      const written = await client.writeEvent(data.calendarId, mapping.externalEventId, localEventGoogleBody(local.event, data.timeZone), { etag: mapping.providerEtag });
+      await context.db.runTransaction(async transaction => { const current = await transaction.get(row.ref); if (current.exists && current.data().ownerUid === context.uid) transaction.update(row.ref, { providerEtag: written.etag, localFingerprint: calendarEventFingerprint(local.event), conflict: false, updatedAt: Timestamp.fromMillis(clock()) }); });
+    } else {
+      const incoming = normalizeGoogleHistoryEvent(remote, data.timeZone);
+      // The manual calendar has its own recurrence editor. Do not silently
+      // replace its series with a differently shaped provider rule or lose
+      // local series exceptions. An explicit reconciliation is required.
+      const expectedRules = localEventGoogleBody(local.event, data.timeZone).recurrence || [];
+      if (JSON.stringify(incoming.sourceRecurrence || []) !== JSON.stringify(expectedRules)) {
+        await context.db.runTransaction(async transaction => { const current = await transaction.get(row.ref); if (current.exists && current.data().ownerUid === context.uid) transaction.update(row.ref, { conflict: true }); });
+        continue;
+      }
+      await context.db.runTransaction(async transaction => {
+        const [fresh, current] = await Promise.all([transaction.get(local.ref), transaction.get(row.ref)]);
+        if (!fresh.exists || !current.exists || current.data().ownerUid !== context.uid || calendarEventFingerprint(fresh.data()) !== mapping.localFingerprint) { if (current.exists && current.data().ownerUid === context.uid) transaction.update(row.ref, { conflict: true }); return; }
+        const updated = { ...fresh.data(), title: incoming.title, description: incoming.description, location: incoming.location, date: Timestamp.fromMillis(incoming.start), endDate: Timestamp.fromMillis(incoming.end), allDay: incoming.allDay, timeZone: incoming.timeZone, sourceRecurrence: incoming.sourceRecurrence, updatedAt: Timestamp.fromMillis(clock()), updatedBy: context.uid };
+        transaction.set(local.ref, updated);
+        transaction.update(row.ref, { providerEtag: remote.etag, localFingerprint: calendarEventFingerprint(updated), conflict: false, updatedAt: Timestamp.fromMillis(clock()) });
+      });
+    }
+  }
 }

@@ -58,6 +58,53 @@ service firebase.storage {
         && request.resource.size <= 10 * 1024 * 1024 && medicalFile();
       allow delete: if parent();
     }
+    function taskUpload(filename) {
+      return firestore.get(/databases/(default)/documents/_taskPhotoUploads/$(filename.split('[.]')[0])).data;
+    }
+    function proofFilename(filename) {
+      return filename.matches('[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\\.(jpg|png|webp)');
+    }
+    // Storage permits at most two distinct Firestore documents per evaluation:
+    // the current member and this Admin-issued, atomically revoked upload ticket.
+    function proofTicketAccess(taskId, uid, filename) {
+      let ticket = taskUpload(filename);
+      return ticket.get('familyId', null) == profile().get('familyId', null)
+        && ticket.taskId == taskId && ticket.uid == uid
+        && ticket.path == 'taskProof/' + taskId + '/' + uid + '/' + filename
+        && ticket.state in ['open', 'submitted']
+        && (parent() || (uid == request.auth.uid && (ticket.person == ownPerson() || ticket.person == 'family')));
+    }
+    function proofAccess(taskId, uid, filename) {
+      return member() && proofFilename(filename) && proofTicketAccess(taskId, uid, filename);
+    }
+    match /taskProof/{taskId}/{uid}/{filename} {
+      allow read: if proofAccess(taskId, uid, filename);
+      allow create: if resource == null && proofAccess(taskId, uid, filename) && uid == request.auth.uid
+        && taskUpload(filename).state == 'open' && taskUpload(filename).expiresAt > request.time
+        && request.resource.size > 0 && request.resource.size <= 8 * 1024 * 1024
+        && request.resource.size == taskUpload(filename).size
+        && request.resource.contentType == taskUpload(filename).contentType
+        && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
+      allow update, delete: if false;
+    }
+    function medicalDocument(id) {
+      return firestore.get(/databases/(default)/documents/healthDocuments/$(id)).data;
+    }
+    match /healthDocuments/{documentId}/{uploaderUid}/{filename} {
+      allow read: if member() && medicalDocument(documentId).state == 'ready'
+        && request.auth.uid in medicalDocument(documentId).readers
+        && medicalDocument(documentId).storagePath == 'healthDocuments/' + documentId + '/' + uploaderUid + '/' + filename;
+      allow create: if resource == null && member() && uploaderUid == request.auth.uid
+        && medicalDocument(documentId).createdBy == request.auth.uid
+        && request.auth.uid in medicalDocument(documentId).editors
+        && medicalDocument(documentId).state == 'draft' && medicalDocument(documentId).uploadExpiresAt > request.time
+        && medicalDocument(documentId).storagePath == 'healthDocuments/' + documentId + '/' + uploaderUid + '/' + filename
+        && request.resource.size > 0 && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.size == medicalDocument(documentId).size
+        && request.resource.contentType == medicalDocument(documentId).mimeType
+        && request.resource.contentType in ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+      allow update, delete: if false;
+    }
     // Old health/person/file paths are denied. Migrate them before deploying.
     match /{path=**} { allow read, write: if false; }
   }

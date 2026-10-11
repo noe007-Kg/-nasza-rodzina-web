@@ -1,6 +1,7 @@
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
+import { getStorage } from 'firebase-admin/storage';
 import { onDocumentWritten, onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { defineSecret, defineString } from 'firebase-functions/params';
@@ -11,6 +12,9 @@ import { enqueueInAppEvents } from './server/notification-inbox.mjs';
 import { flushSchoolNotifications, schoolNotificationBaselineRef } from './server/school-notifications.mjs';
 import { EDU_DAY_SCHEDULE, EDU_NIGHT_SCHEDULE, EDU_SCHEDULE_TIME_ZONE, runScheduledEduSync } from './server/edu-scheduler.mjs';
 import { processNotificationWrite, processSchoolNotificationBatch } from './notification-triggers.mjs';
+import { runTaskPhotoCleanup } from './server/tasks-photos.mjs';
+import { runHealthDocumentReminders } from './server/health-reminders.mjs';
+import { retryHealthDocumentDeletes } from './server/health-service.mjs';
 import { GOOGLE_CALENDAR_SCHEDULE, GOOGLE_CALENDAR_TIME_ZONE, runScheduledGoogleCalendarSync } from './server/calendar-scheduler.mjs';
 
 // Functions use the project's managed identity, never a shipped Admin key.
@@ -27,6 +31,8 @@ const googleCalendarClientSecret = defineSecret('GOOGLE_CALENDAR_CLIENT_SECRET')
 const googleCalendarClientId = defineString('GOOGLE_CALENDAR_CLIENT_ID', { default: '' });
 const calendarSiteOrigin = defineString('CALENDAR_SITE_ORIGIN', { default: '' });
 const calendarEncryptionKeyId = defineString('CALENDAR_ENCRYPTION_KEY_ID', { default: 'v1' });
+const familyV2WritesEnabled = defineString('FAMILY_V2_WRITES_ENABLED', { default: 'false' });
+const familyStorageBucket = defineString('FIREBASE_STORAGE_BUCKET', { default: '' });
 
 const notificationDependencies = {
   derive: deriveNotificationEvent, enqueue: enqueueInAppEvents,
@@ -124,4 +130,27 @@ export const medicineReminders = onSchedule({ schedule: 'every 5 minutes', timeZ
     if (!phase) continue;
     await enqueueNotification({ id: `medicine:${snapshot.id}:${today}:${phase}`, category: 'health', module: 'Zdrowie', title: phase === 'due' ? 'Przypomnienie o leku' : 'Sprawdź potwierdzenie leku', body: 'Otwórz Zdrowie, aby zobaczyć szczegóły.', important: phase === 'late', collection: 'healthRecords', recordId: snapshot.id, record, excludeUid: '' });
   }
+});
+
+// Version 2.0 jobs are inert until explicitly enabled after Rules/IAM review.
+// They do not modify the existing SP4 schedules, sessions or medicine reminders.
+const familyJobOptions = { timeZone: 'Europe/Warsaw', region, retryCount: 0,
+  minInstances: 0, maxInstances: 1, concurrency: 1, memory: '256MiB', timeoutSeconds: 300 };
+function familyJobContext() {
+  if (familyV2WritesEnabled.value() !== 'true' || !familyStorageBucket.value()) return null;
+  return { app, db, bucket: getStorage(app).bucket(familyStorageBucket.value()) };
+}
+export const taskPhotoCleanup = onSchedule({ ...familyJobOptions, schedule: '0 * * * *' }, async () => {
+  const context = familyJobContext();
+  if (!context) return;
+  const result = await runTaskPhotoCleanup(context);
+  info('Task photograph cleanup', result); // Aggregate counts only.
+});
+export const healthDocumentReminders = onSchedule({ ...familyJobOptions, schedule: '0 8 * * *' }, async () => {
+  const context = familyJobContext();
+  if (!context) return;
+  const reminders = await runHealthDocumentReminders(context);
+  // Only explicitly requested deletions are retried; expiry never deletes a document.
+  const deletions = await retryHealthDocumentDeletes(context);
+  info('Protected health document maintenance', { ...reminders, ...deletions });
 });

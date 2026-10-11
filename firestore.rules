@@ -26,15 +26,10 @@ service cloud.firestore {
     function clientCalendar(id, data) {
       return !id.matches('google-[a-f0-9]{64}')
         && data.get('source', 'manual') in ['manual', 'ics']
+        && (!data.keys().hasAny(['important']) || data.important is bool)
         && !data.keys().hasAny(['provider', 'readOnly', 'cancelled', 'sourceConnectionId', 'sourceOwnerUid',
           'externalCalendarId', 'externalEventId', 'externalSeriesId', 'ownerProfileId', 'visibilityOverride',
           'sourceStartDate', 'sourceEndDateExclusive']);
-    }
-    function validTask(data) {
-      return title(data.title) && person(data.person)
-        && data.done is bool && data.requireApproval is bool
-        && data.points is number && data.points >= 0 && data.points <= 10000
-        && data.approvalStatus in ['none', 'pending', 'approved'];
     }
     function validHealth(data) {
       return title(data.title) && person(data.person) && data.privateToParents is bool
@@ -154,30 +149,51 @@ service cloud.firestore {
     match /_notificationEvents/{id} { allow read, write: if false; }
     match /_notificationOutbox/{id} { allow read, write: if false; }
     match /_notificationBaselines/{id} { allow read, write: if false; }
+    // All completion, approval and accounting transitions share the Admin transaction.
+    // Legacy tasks stay readable; no browser (including a parent) can mint points.
     match /tasks/{id} {
       allow read: if member();
-      allow create: if member() && creator(request.resource.data) && validTask(request.resource.data)
-        && request.resource.data.done == false && request.resource.data.approvalStatus == 'none'
-        && (parent() || (ownOrFamily(request.resource.data.person)
-          && request.resource.data.points == 0 && request.resource.data.requireApproval == true));
-      allow update: if member() && preserveCreator() && validTask(request.resource.data)
-        && (parent() || (ownOrFamily(resource.data.person)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['done', 'approvalStatus', 'completedAt', 'updatedAt'])
-          && resource.data.done == false
-          && ((resource.data.requireApproval == true && request.resource.data.done == false && request.resource.data.approvalStatus == 'pending')
-            || (resource.data.requireApproval == false && request.resource.data.done == true && request.resource.data.approvalStatus == 'none')))
-          || (resource.data.createdBy == request.auth.uid && resource.data.done == false
-            && resource.data.points == 0 && ownOrFamily(request.resource.data.person)
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'person', 'dueDate', 'priority', 'note', 'repeat', 'updatedAt'])
-            && request.resource.data.points == 0 && request.resource.data.requireApproval == true));
-      allow delete: if parent();
+      allow write: if false;
+    }
+    match /taskPointBalances/{id} { allow read, write: if false; }
+    match /taskPointLedger/{id} { allow read, write: if false; }
+    match /taskCompletions/{id} { allow read, write: if false; }
+    match /taskRewards/{id} { allow read, write: if false; }
+    match /taskRewardRequests/{id} { allow read, write: if false; }
+    match /_taskPhotoUploads/{id} { allow read, write: if false; }
+    match /_taskPhotoCleanup/{id} { allow read, write: if false; }
+
+    function shopIdAt(ids, index) {
+      return ids.size() <= index || (ids[index] is string && ids[index].matches('[a-z0-9][a-z0-9-]{0,79}'));
+    }
+    function shoppingShops(data) {
+      let ids = data.get('shopIds', []);
+      return ids is list && ids.size() <= 20 && ids.toSet().size() == ids.size()
+        && shopIdAt(ids, 0) && shopIdAt(ids, 1) && shopIdAt(ids, 2) && shopIdAt(ids, 3)
+        && shopIdAt(ids, 4) && shopIdAt(ids, 5) && shopIdAt(ids, 6) && shopIdAt(ids, 7)
+        && shopIdAt(ids, 8) && shopIdAt(ids, 9) && shopIdAt(ids, 10) && shopIdAt(ids, 11)
+        && shopIdAt(ids, 12) && shopIdAt(ids, 13) && shopIdAt(ids, 14) && shopIdAt(ids, 15)
+        && shopIdAt(ids, 16) && shopIdAt(ids, 17) && shopIdAt(ids, 18) && shopIdAt(ids, 19);
+    }
+    function validShoppingStore(id, data) {
+      return id.matches('[a-z0-9][a-z0-9-]{0,79}')
+        && data.keys().hasOnly(['name', 'createdBy', 'createdAt', 'updatedAt', 'archived'])
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 80
+        && data.archived is bool && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+    match /shoppingStores/{id} {
+      allow read: if member();
+      allow create: if member() && creator(request.resource.data) && validShoppingStore(id, request.resource.data);
+      allow update: if member() && (parent() || creator(resource.data)) && preserveCreator()
+        && request.resource.data.createdAt == resource.data.createdAt && validShoppingStore(id, request.resource.data);
+      allow delete: if false;
     }
     match /shoppingItems/{id} {
       allow read, delete: if member();
       allow create: if member() && creator(request.resource.data) && title(request.resource.data.title)
-        && request.resource.data.done is bool;
+        && request.resource.data.done is bool && shoppingShops(request.resource.data);
       allow update: if member() && preserveCreator() && title(request.resource.data.title)
-        && request.resource.data.done is bool;
+        && request.resource.data.done is bool && shoppingShops(request.resource.data);
     }
     match /quickProducts/{id} {
       allow read: if member();
@@ -191,6 +207,52 @@ service cloud.firestore {
       allow delete: if member() && (resource.data.uid == request.auth.uid
         || (parent() && resource.data.channel == 'family'));
     }
+    function chatMessageVisible(id) {
+      let data = get(/databases/$(database)/documents/familyMessages/$(id)).data;
+      return exists(/databases/$(database)/documents/familyMessages/$(id))
+        && (data.get('channel', '') == 'family' || privateParticipant(data));
+    }
+    match /familyMessages/{messageId}/reactions/{uid} {
+      allow read: if member() && chatMessageVisible(messageId);
+      allow create, update: if member() && uid == request.auth.uid && chatMessageVisible(messageId)
+        && request.resource.data.keys().hasOnly(['uid', 'emoji', 'updatedAt'])
+        && request.resource.data.uid == uid && request.resource.data.emoji in ['❤️', '👍', '😂', '🎉', '🙏']
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if member() && uid == request.auth.uid && chatMessageVisible(messageId);
+    }
+    function validChatReadState(data) {
+      return data.keys().hasOnly(['channel', 'participants', 'lastReadAt', 'updatedAt', 'lastMessageId'])
+        && data.channel is string && data.participants is list
+        && data.lastReadAt is timestamp && data.lastReadAt <= request.time
+        && data.updatedAt == request.time
+        && data.lastMessageId is string && data.lastMessageId.size() <= 200
+        && ((data.channel == 'family' && data.participants.size() == 0)
+          || (data.participants.size() == 2 && data.participants[0] != data.participants[1]
+            && privateParticipant(data)
+            && activeChatParticipant(data.participants[0]) && activeChatParticipant(data.participants[1])
+            && (data.channel == 'private:' + data.participants[0] + ':' + data.participants[1]
+              || data.channel == 'private:' + data.participants[1] + ':' + data.participants[0])));
+    }
+    match /chatReadStates/{uid}/channels/{channelId} {
+      allow read: if member() && uid == request.auth.uid;
+      allow create, update: if member() && uid == request.auth.uid
+        && channelId == request.resource.data.channel && validChatReadState(request.resource.data);
+      allow delete: if member() && uid == request.auth.uid;
+    }
+    // New medical documents have explicit server-issued UID ACLs. The parent role
+    // grants no automatic access to an adult's document or to its authorization.
+    match /healthDocuments/{id} {
+      allow read: if member() && resource.data.state == 'ready' && request.auth.uid in resource.data.readers;
+      allow write: if false;
+    }
+    match /healthDocumentGrants/{ownerProfileId} {
+      allow get: if member() && (ownerProfileId == request.auth.uid
+        || resource.data.ownerUid == request.auth.uid || request.auth.uid in resource.data.authorizedUids);
+      allow list: if member() && (resource.data.ownerUid == request.auth.uid || request.auth.uid in resource.data.authorizedUids);
+      allow write: if false;
+    }
+    match /_healthDocumentCleanup/{id} { allow read, write: if false; }
+    match /_healthDocumentReminderEvents/{id} { allow read, write: if false; }
     match /healthRecords/{id} {
       allow read: if member() && healthVisible(resource.data);
       allow create: if member() && creator(request.resource.data) && validHealth(request.resource.data)

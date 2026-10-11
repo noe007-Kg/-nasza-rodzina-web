@@ -117,12 +117,12 @@ test('chat send cannot impersonate another account or invent a mismatched channe
   await assertFails(setDoc(doc(childDb, 'familyMessages', 'unknown'), { ...message, participants: ['child', 'unknown'], channel: 'private:child:unknown' }));
 });
 
-test('children submit their assigned tasks without granting themselves rewards', async () => {
-  await assertSucceeds(updateDoc(doc(childDb, 'tasks', 'reward'), { approvalStatus: 'pending', updatedAt: Timestamp.now() }));
+test('task completion and approval require the server even for parents', async () => {
+  await assertFails(updateDoc(doc(childDb, 'tasks', 'reward'), { approvalStatus: 'pending', updatedAt: Timestamp.now() }));
   await assertFails(updateDoc(doc(childDb, 'tasks', 'reward'), { done: true, approvalStatus: 'approved' }));
   await assertFails(updateDoc(doc(childDb, 'tasks', 'reward'), { points: 100 }));
   await assertFails(updateDoc(doc(childDb, 'tasks', 'sibling'), { approvalStatus: 'pending' }));
-  await assertSucceeds(updateDoc(doc(parentDb, 'tasks', 'reward'), { done: true, approvalStatus: 'approved' }));
+  await assertFails(updateDoc(doc(parentDb, 'tasks', 'reward'), { done: true, approvalStatus: 'approved' }));
 });
 
 test('new health entries cannot contain publicly tokenized document URLs', async () => {

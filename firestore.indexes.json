@@ -7,6 +7,38 @@
         { "fieldPath": "participants", "arrayConfig": "CONTAINS" },
         { "fieldPath": "channel", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "healthDocuments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "readers", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "state", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "healthDocuments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "indefinite", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "_taskPhotoUploads",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "orphanAfter", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "_taskPhotoCleanup",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

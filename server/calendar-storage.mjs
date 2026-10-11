@@ -64,7 +64,7 @@ export async function acquireCalendarLease(context, id, { now = Date.now(), sync
       failCalendar('CALENDAR_SCHEDULE_SLOT_CONSUMED', 409, 'Kalendarz został już odświeżony w tym terminie.');
     }
     if (data.leaseId && (!Number.isFinite(timestampMillis(data.leaseExpiresAt)) || timestampMillis(data.leaseExpiresAt) > now)) failCalendar('CALENDAR_BUSY', 409, 'To połączenie jest już odświeżane. Spróbuj za chwilę.');
-    if (syncing && Number.isFinite(timestampMillis(data.lastAttemptAt)) && now - timestampMillis(data.lastAttemptAt) < CALENDAR_SYNC_COOLDOWN_MS) {
+    if (syncing && !context.calendarHistoryContinuation && Number.isFinite(timestampMillis(data.lastAttemptAt)) && now - timestampMillis(data.lastAttemptAt) < CALENDAR_SYNC_COOLDOWN_MS) {
       failCalendar('CALENDAR_RATE_LIMITED', 429, 'Kalendarz został odświeżony przed chwilą. Spróbuj ponownie za minutę.');
     }
     const lease = { id: randomUUID(), version: data.version };
@@ -96,9 +96,11 @@ export const googleEventDocumentId = (uid, connectionId, calendarId, externalEve
 const sameSource = (event, connection, externalEventId) => event.source === 'google' && event.sourceConnectionId === connection.id
   && event.sourceOwnerUid === connection.ownerUid && event.ownerUid === connection.ownerUid && event.createdBy === connection.ownerUid
   && event.externalCalendarId === connection.calendarId && event.externalEventId === externalEventId;
-const fingerprint = event => createHash('sha256').update(JSON.stringify({ title: event.title, description: event.description || '', location: event.location || '',
+export const calendarEventFingerprint = event => createHash('sha256').update(JSON.stringify({ title: event.title, description: event.description || '', location: event.location || '',
   start: timestampMillis(event.date), end: timestampMillis(event.endDate), allDay: event.allDay === true, timeZone: event.timeZone || '',
-  sourceStartDate: event.sourceStartDate || null, sourceEndDateExclusive: event.sourceEndDateExclusive || null, cancelled: event.cancelled === true })).digest('hex');
+  sourceStartDate: event.sourceStartDate || null, sourceEndDateExclusive: event.sourceEndDateExclusive || null, sourceRecurrence: event.sourceRecurrence || [],
+  repeat: event.repeat || 'none', recurrence: event.recurrence || null, repeatCount: event.repeatCount || null, repeatUntil: timestampMillis(event.repeatUntil),
+  recurrenceExceptions: event.recurrenceExceptions || [], recurrenceOverrides: event.recurrenceOverrides || {}, cancelled: event.cancelled === true })).digest('hex');
 
 /** Each event boundary is atomic across both collections. Cursor advances only after all chunks. */
 export async function upsertGoogleEvents(context, connection, lease, events, { now = Date.now(), clock = Date.now } = {}) {
@@ -118,24 +120,36 @@ export async function upsertGoogleEvents(context, connection, lease, events, { n
         if (shared.exists && privateSnapshot.exists) failCalendar('CALENDAR_EVENT_CONFLICT', 409, 'Wydarzenie wymaga sprawdzenia ustawień prywatności.');
         const existing = shared.exists ? shared.data() : privateSnapshot.exists ? privateSnapshot.data() : null;
         if (existing && !sameSource(existing, connection, incoming.externalEventId)) failCalendar('CALENDAR_EVENT_CONFLICT', 409, 'Identyfikator wydarzenia jest już używany przez inne źródło.');
-        return { incoming, id, existing, target: existing ? privateSnapshot.exists ? privateRef : sharedRef : connection.visibility === 'private' ? privateRef : sharedRef, isPrivate: existing ? privateSnapshot.exists : connection.visibility === 'private' };
+        // New imported data is owner-only, even when an older source was configured as family.
+        // Explicit visibility of previously imported records is never reset by synchronization.
+        return { incoming, id, existing, target: existing ? privateSnapshot.exists ? privateRef : sharedRef : privateRef, isPrivate: existing ? privateSnapshot.exists : true };
       }));
       const counts = { imported: 0, changed: 0, cancelled: 0, unchanged: 0 };
       assertCalendarLease(data, lease, clock());
       for (const { incoming, id, existing, target, isPrivate } of pairs) {
-        if (incoming.cancelled && !existing) { counts.unchanged++; continue; } // A titleless tombstone is not an invented event.
-        const event = incoming.cancelled ? { ...existing, cancelled: true } : {
+        const exceptionMarker = incoming.cancelled && !existing && incoming.externalSeriesId && incoming.externalOriginalStart;
+        if (incoming.cancelled && !existing && !exceptionMarker) { counts.unchanged++; continue; } // A titleless tombstone is not an invented event.
+        const markerDate = exceptionMarker ? Date.parse(incoming.externalOriginalStart) : null;
+        const event = exceptionMarker ? { title: '', description: '', location: '', date: Timestamp.fromMillis(markerDate), endDate: Timestamp.fromMillis(markerDate),
+          allDay: incoming.externalOriginalStart.length === 10, person: actor.personKey || actor.name, createdBy: context.uid, ownerUid: context.uid, private: true,
+          repeat: 'none', repeatUntil: null, source: 'google', readOnly: true, cancelled: true, sourceExceptionTombstone: true, externalSeriesId: incoming.externalSeriesId,
+          externalOriginalStart: incoming.externalOriginalStart, sourceConnectionId: connection.id, sourceOwnerUid: context.uid, externalCalendarId: connection.calendarId, externalEventId: incoming.externalEventId, ownerProfileId: context.uid,
+          timeZone: connection.timeZone || null, createdAt: Timestamp.fromMillis(now) } : incoming.cancelled ? { ...existing, cancelled: true, ...(incoming.externalOriginalStart ? { externalOriginalStart: incoming.externalOriginalStart } : {}) } : {
           ...(existing || {}), title: incoming.title, description: incoming.description, location: incoming.location,
           date: Timestamp.fromMillis(incoming.start), endDate: Timestamp.fromMillis(incoming.end), allDay: incoming.allDay, timeZone: incoming.timeZone, cancelled: false,
+          ...(existing?.sourceExceptionTombstone === true ? { sourceExceptionTombstone: false } : {}),
           sourceStartDate: incoming.allDay ? incoming.sourceStartDate || null : null,
           sourceEndDateExclusive: incoming.allDay ? incoming.sourceEndDateExclusive || null : null,
-          person: existing?.person || connection.person, createdBy: context.uid, ownerUid: context.uid, private: isPrivate,
+          person: existing?.person || actor.personKey || actor.name, createdBy: context.uid, ownerUid: context.uid, private: isPrivate,
           repeat: 'none', repeatUntil: null, recurrence: null, repeatCount: null, recurrenceExceptions: [], recurrenceOverrides: {}, seriesId: id,
           source: 'google', readOnly: true, sourceConnectionId: connection.id, sourceOwnerUid: context.uid,
           externalCalendarId: connection.calendarId, externalEventId: incoming.externalEventId, externalSeriesId: incoming.externalSeriesId || null,
-          ownerProfileId: connection.ownerProfileId, ...(existing ? {} : { createdAt: Timestamp.fromMillis(now) }),
+          ownerProfileId: existing?.ownerProfileId || context.uid, ...(existing ? {} : { createdAt: Timestamp.fromMillis(now) }),
+          ...(incoming.sourceRecurrence ? { sourceRecurrence: incoming.sourceRecurrence } : {}),
+          ...(Object.hasOwn(incoming, 'externalOriginalStart') ? { externalOriginalStart: incoming.externalOriginalStart } : {}),
+          ...(incoming.providerEtag ? { providerEtag: incoming.providerEtag } : {}),
         };
-        if (existing && fingerprint(existing) === fingerprint(event)) { counts.unchanged++; continue; }
+        if (existing && calendarEventFingerprint(existing) === calendarEventFingerprint(event) && existing.providerEtag === event.providerEtag) { counts.unchanged++; continue; }
         transaction.set(target, { ...event, updatedAt: Timestamp.fromMillis(now), updatedBy: context.uid });
         if (!existing) counts.imported++;
         else if (incoming.cancelled && existing.cancelled !== true) counts.cancelled++;
@@ -161,7 +175,7 @@ export async function sourceCalendarDocuments(context, id) {
   }, { readOnly: true });
 }
 
-export async function persistCalendarCredentials(context, ref, lease, connection, tokens, syncToken, now, clock = Date.now) {
-  const envelope = encryptCalendarSecrets({ tokens, syncToken: syncToken || null }, { uid: context.uid, id: connection.id, purpose: 'connection' });
+export async function persistCalendarCredentials(context, ref, lease, connection, tokens, syncToken, now, clock = Date.now, extra = {}) {
+  const envelope = encryptCalendarSecrets({ ...extra, tokens, syncToken: syncToken || null }, { uid: context.uid, id: connection.id, purpose: 'connection' });
   await updateCalendarLease(context, ref, lease, { envelope }, now, clock);
 }

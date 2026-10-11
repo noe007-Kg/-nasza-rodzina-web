@@ -1,6 +1,7 @@
 import { failCalendar, calendarIdentifier } from './calendar-config.mjs';
 
 export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+export const GOOGLE_CALENDAR_WRITE_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 export const MAX_GOOGLE_RECORDS = 5000;
 export const MAX_GOOGLE_READ_MS = 45000;
 const API_ROOT = 'https://www.googleapis.com/calendar/v3/';
@@ -19,9 +20,9 @@ async function boundedJson(response) {
   catch { failCalendar('CALENDAR_PROVIDER_UNAVAILABLE', 502, 'Nie udało się odczytać kalendarza. Spróbuj ponownie.'); }
 }
 
-export function googleAuthorizationUrl(config, state, challenge) {
+export function googleAuthorizationUrl(config, state, challenge, { write = false } = {}) {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-  url.search = new URLSearchParams({ client_id: config.clientId, redirect_uri: config.redirectUri, response_type: 'code', scope: GOOGLE_CALENDAR_SCOPE,
+  url.search = new URLSearchParams({ client_id: config.clientId, redirect_uri: config.redirectUri, response_type: 'code', scope: write ? `${GOOGLE_CALENDAR_SCOPE} ${GOOGLE_CALENDAR_WRITE_SCOPE}` : GOOGLE_CALENDAR_SCOPE,
     state, code_challenge: challenge, code_challenge_method: 'S256', access_type: 'offline', prompt: 'consent' }).toString();
   return url.href;
 }
@@ -36,7 +37,8 @@ function tokenFields(payload, previous, now) {
   }
   const refreshToken = payload.refresh_token || previous?.refreshToken;
   if (!refreshToken) failCalendar('CALENDAR_RECONNECT_REQUIRED', 401, 'Google nie udostępnił autoryzacji do kolejnych odświeżeń. Połącz kalendarz ponownie.');
-  return { accessToken: payload.access_token, refreshToken, expiresAt: now + payload.expires_in * 1000 };
+  const scopes = payload.scope ? String(payload.scope).split(' ').filter(Boolean) : previous?.scopes || [GOOGLE_CALENDAR_SCOPE];
+  return { accessToken: payload.access_token, refreshToken, expiresAt: now + payload.expires_in * 1000, scopes };
 }
 async function tokenRequest(config, parameters, { fetchImpl = fetch, now = Date.now(), signal } = {}, previous) {
   let response;
@@ -68,7 +70,7 @@ export function googleCalendarClient(config, initialTokens, { fetchImpl = fetch,
     tokens = await tokenRequest(config, { refresh_token: tokens.refreshToken, grant_type: 'refresh_token' }, { fetchImpl, now, signal: operationSignal }, tokens);
     checkDeadline();
   };
-  const request = async (path, params = {}) => {
+  const request = async (path, params = {}, writeOptions) => {
     checkDeadline();
     if (!tokens.accessToken || tokens.expiresAt < now + 30000) await refresh();
     const url = new URL(path, API_ROOT); url.search = new URLSearchParams(params).toString();
@@ -76,7 +78,8 @@ export function googleCalendarClient(config, initialTokens, { fetchImpl = fetch,
     let response;
     const call = async () => {
       checkDeadline();
-      try { return await fetchImpl(url.href, { redirect: 'error', signal: operationSignal, headers: { Authorization: `Bearer ${tokens.accessToken}`, Accept: 'application/json' } }); }
+      if (writeOptions && !tokens.scopes?.includes(GOOGLE_CALENDAR_WRITE_SCOPE)) failCalendar('CALENDAR_WRITE_PERMISSION_REQUIRED', 403, 'Google nie potwierdził aktualnego uprawnienia do zapisu. Połącz kalendarz ponownie i udziel zgody.');
+      try { return await fetchImpl(url.href, { redirect: 'error', signal: operationSignal, ...(writeOptions ? { method: writeOptions.method, body: JSON.stringify(writeOptions.body) } : {}), headers: { Authorization: `Bearer ${tokens.accessToken}`, Accept: 'application/json', ...(writeOptions ? { 'Content-Type': 'application/json', ...(writeOptions.etag ? { 'If-Match': writeOptions.etag } : {}) } : {}) } }); }
       catch { failCalendar('CALENDAR_PROVIDER_UNAVAILABLE', 502, 'Nie udało się odświeżyć kalendarza. Spróbujemy ponownie.'); }
     };
     response = await call();
@@ -86,6 +89,8 @@ export function googleCalendarClient(config, initialTokens, { fetchImpl = fetch,
     if (response.status === 410) failCalendar('CALENDAR_CURSOR_EXPIRED', 410, 'Kalendarz wymaga pełnego odświeżenia.');
     if (response.status === 401) failCalendar('CALENDAR_RECONNECT_REQUIRED', 401, 'Google unieważnił autoryzację. Połącz kalendarz ponownie.');
     if (response.status === 429) failCalendar('CALENDAR_PROVIDER_RATE_LIMITED', 429, 'Google ograniczył liczbę odświeżeń. Spróbuj ponownie później.');
+    if ([409, 412].includes(response.status)) failCalendar('CALENDAR_WRITE_CONFLICT', 409, 'Wydarzenie zmieniło się w Google. Sprawdź obie wersje przed zapisaniem.');
+    if (response.status === 403) failCalendar('CALENDAR_WRITE_PERMISSION_REQUIRED', 403, 'Google nie udzielił uprawnienia do zapisu w tym kalendarzu.');
     if (!response.ok) failCalendar('CALENDAR_PROVIDER_UNAVAILABLE', 502, 'Nie udało się odświeżyć kalendarza. Spróbujemy ponownie.');
     const result = await boundedJson(response); checkDeadline(); return result;
   };
@@ -119,9 +124,26 @@ export function googleCalendarClient(config, initialTokens, { fetchImpl = fetch,
           timeZone = metadata.id === row.id ? validTimeZone(metadata.timeZone) : null;
           if (!timeZone) failCalendar('CALENDAR_PROVIDER_DATA', 502, 'Google nie przekazał pełnych danych kalendarza. Spróbuj ponownie.');
         }
-        calendars.push({ id: row.id, name: String(row.summary || 'Kalendarz').slice(0, 200), timeZone, primary: row.primary === true });
+        calendars.push({ id: row.id, name: String(row.summary || 'Kalendarz').slice(0, 200), timeZone, primary: row.primary === true, canWrite: ['owner', 'writer'].includes(row.accessRole) });
       }
       return calendars;
+    },
+    /** One provider page, no timeMin/timeMax: complete history and raw recurring masters.
+     * The service commits the continuation only after this page's atomic upserts. */
+    async historyPage(calendarId, { pageToken, syncToken, timeZone } = {}) {
+      if (!calendarIdentifier(calendarId) || pageToken && !calendarIdentifier(pageToken) || syncToken && !calendarIdentifier(syncToken)) failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Nieprawidłowe źródło kalendarza.');
+      const result = await request(`calendars/${encodeURIComponent(calendarId)}/events`, { singleEvents: 'false', showDeleted: 'true', maxResults: '250', ...(pageToken ? { pageToken } : {}), ...(syncToken ? { syncToken } : {}) });
+      if (!Array.isArray(result.items) || result.items.length > 250 || result.nextPageToken && !calendarIdentifier(result.nextPageToken) || !result.nextPageToken && !calendarIdentifier(result.nextSyncToken)) failCalendar('CALENDAR_PROVIDER_DATA', 502, 'Google nie potwierdził kompletnego pobrania strony kalendarza.');
+      return { events: result.items.map(raw => normalizeGoogleHistoryEvent(raw, validTimeZone(result.timeZone) || timeZone)), nextPageToken: result.nextPageToken || null, syncToken: result.nextSyncToken || null, timeZone: validTimeZone(result.timeZone) || validTimeZone(timeZone) };
+    },
+    async event(calendarId, eventId) {
+      if (!calendarIdentifier(calendarId) || !calendarIdentifier(eventId)) failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Nieprawidłowe wydarzenie.');
+      return request(`calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`);
+    },
+    async writeEvent(calendarId, eventId, body, { etag, insert = false } = {}) {
+      if (!tokens.scopes?.includes(GOOGLE_CALENDAR_WRITE_SCOPE)) failCalendar('CALENDAR_WRITE_PERMISSION_REQUIRED', 403, 'Połącz ponownie Google Calendar i świadomie udziel zgody na zapis.');
+      if (!calendarIdentifier(calendarId) || !calendarIdentifier(eventId) || !insert && !etag) failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Zapis wymaga potwierdzonej wersji wydarzenia.');
+      return request(`calendars/${encodeURIComponent(calendarId)}/events${insert ? '' : `/${encodeURIComponent(eventId)}`}`, {}, { method: insert ? 'POST' : 'PATCH', body: insert ? { ...body, id: eventId } : body, etag });
     },
     async changes(calendarId, { syncToken, recurringIds = [], timeZone } = {}) {
       if (!calendarIdentifier(calendarId) || recurringIds.length > 500 || syncToken && !calendarIdentifier(syncToken)) failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Nieprawidłowe źródło kalendarza.');
@@ -157,6 +179,18 @@ export function googleCalendarClient(config, initialTokens, { fetchImpl = fetch,
         authoritativeSeries: [...new Set([...series, ...explicitlyInactive])], windowStart: Date.parse(windowStart), windowEnd: Date.parse(windowEnd) };
     },
   };
+}
+
+/** Preserve RFC5545 rules verbatim instead of expanding only a recent window. */
+export function normalizeGoogleHistoryEvent(raw, timeZone) {
+  const event = normalizeGoogleEvent(raw, timeZone);
+  const recurrence = raw.recurrence;
+  if (recurrence !== undefined && (!Array.isArray(recurrence) || recurrence.length > 64 || recurrence.some(line => typeof line !== 'string' || line.length > 4096 || !/^(?:RRULE|RDATE|EXDATE)(?:[;:])/.test(line) || /[\r\n\x00]/.test(line)))) failCalendar('CALENDAR_PROVIDER_DATA', 502, 'Google zwrócił nieprawidłową serię wydarzeń.');
+  const original = raw.originalStartTime?.dateTime || raw.originalStartTime?.date;
+  if (original && (typeof original !== 'string' || !OFFSET_DATE.test(original) && !DATE.test(original))) failCalendar('CALENDAR_PROVIDER_DATA', 502, 'Google nie przekazał terminu pierwotnego wystąpienia.');
+  return { ...event, sourceRecurrence: recurrence || [], externalOriginalStart: original || null,
+    providerEtag: typeof raw.etag === 'string' && raw.etag.length < 1024 ? raw.etag : null,
+    ...(raw.extendedProperties?.private?.naszaRodzinaExport ? { exportReference: String(raw.extendedProperties.private.naszaRodzinaExport).slice(0, 128) } : {}) };
 }
 
 export function validTimeZone(value) { if (typeof value !== 'string' || value.length > 80) return null; try { new Intl.DateTimeFormat('en', { timeZone: value }); return value; } catch { return null; } }

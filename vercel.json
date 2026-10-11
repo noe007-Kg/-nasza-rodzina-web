@@ -80,6 +80,19 @@
           "value": "nosniff"
         }
       ]
+    },
+    {
+      "source": "/api/family/:path*",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, private, max-age=0"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
     }
   ],
   "functions": {
@@ -96,6 +109,10 @@
       "includeFiles": "server/**"
     },
     "api/calendars/*.mjs": {
+      "maxDuration": 60,
+      "includeFiles": "server/**"
+    },
+    "api/family/*.mjs": {
       "maxDuration": 60,
       "includeFiles": "server/**"
     }
