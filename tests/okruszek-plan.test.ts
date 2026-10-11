@@ -5,13 +5,14 @@ import {
   createOkruszekDays, OKRUSZEK_END, OKRUSZEK_PLAN_ID, OKRUSZEK_START,
   okruszekDateStatus, okruszekDayEntry, okruszekDayId, parseOkruszekDay, validateOkruszekDays,
 } from '../src/school/okruszek-plan.ts';
+import { schoolOwnerProfileId, schoolSourcesForProfile } from '../src/school/profile-schools.ts';
 
 test('Okruszek preserves all supplied abbreviations, blank positions, order and whole-day bounds', () => {
   const days = createOkruszekDays('Paweł');
   assert.deepEqual(days.map(day => [day.weekday, day.time, day.endTime, day.lessons]), [
     [1, '07:30', '15:10', ['Rewalidacja', 'Rewalidacja', 'f.os i społ', 'f.os i społ', 'PDP/kuchnia', 'Z.R.Z', 'PDP', 'PDP']],
-    [2, '08:50', '16:00', ['-', 'Zaj. k. kreat', 'Zaj. k. kreat', 'religia', 'PDP', 'PDP', 'PDP', 'Z.r.k', 'Z.r.k']],
-    [3, '08:50', '16:30', ['-', 'PDP/kuchnia', 'PDP/kuchnia', 'WF', 'WF', 'WF', 'PDP/kuchnia', 'rewalidacja', 'rewalidacja']],
+    [2, '08:50', '16:00', ['—', 'Zaj. k. kreat', 'Zaj. k. kreat', 'religia', 'PDP', 'PDP', 'PDP', 'Z.r.k', 'Z.r.k']],
+    [3, '08:50', '16:30', ['—', 'PDP/kuchnia', 'PDP/kuchnia', 'WF', 'WF', 'WF', 'PDP/kuchnia', 'rewalidacja', 'rewalidacja']],
     [4, '08:00', '16:00', ['PDP', 'PDP', 'PDP/praktyki', 'PDP/praktyki', 'PDP/praktyki', 'PDP/praktyki', 'rewalidacja', 'PDP', 'logopedia']],
     [5, '08:00', '16:00', ['Z.k.k', 'Z.k.k', 'PDP/praktyki', 'PDP/praktyki', 'PDP/praktyki', 'PDP/praktyki', 'f.os i społ', 'f.os i społ', 'f.os i społ']],
   ]);
@@ -44,14 +45,40 @@ test('the requested period is bounded; school-year closing hours are explicitly 
   assert.equal(okruszekDateStatus('2026-10-15', thursday).kind, 'day-off');
 });
 
-test('stable per-person weekday identities survive reimports and editable content changes', async () => {
-  const initial = createOkruszekDays('Paweł');
-  const ids = await Promise.all(initial.map(day => okruszekDayId(day.person, day.weekday)));
+test('stable student profile identities survive reimports and editable content changes', async () => {
+  const initial = createOkruszekDays('Paweł', 'actual-pawel-profile');
+  const ids = await Promise.all(initial.map(day => okruszekDayId(day.ownerProfileId!, day.weekday)));
   initial[0].time = '07:40'; initial[0].lessons.push('Ręczna poprawka'); initial[0].revision++;
-  assert.equal(await okruszekDayId(initial[0].person, initial[0].weekday), ids[0]);
+  assert.equal(await okruszekDayId(initial[0].ownerProfileId!, initial[0].weekday), ids[0]);
   assert.equal(new Set(ids).size, 5);
-  assert.notEqual(await okruszekDayId('Inny uczeń', 1), ids[0]);
+  assert.notEqual(await okruszekDayId('actual-nikodem-profile', 1), ids[0]);
+  assert.notEqual(await okruszekDayId('actual-parent-profile', 1), ids[0]);
   await assert.rejects(okruszekDayId('Paweł', 6));
+});
+
+test('school assignments belong to the selected real profile; placeholders never become account ownership', () => {
+  const pawel = { id: 'actual-pawel-profile', personKey: 'Paweł', name: 'Paweł', role: 'child', active: true };
+  const nikodem = { id: 'actual-nikodem-profile', personKey: 'Nikodem', name: 'Nikodem', role: 'child', active: true };
+  assert.deepEqual(schoolSourcesForProfile(pawel), ['okruszek']);
+  assert.deepEqual(schoolSourcesForProfile(nikodem), ['sp4', 'fryderyk']);
+  assert.equal(schoolOwnerProfileId(pawel), pawel.id);
+  assert.equal(schoolOwnerProfileId({ ...pawel, id: 'legacy:Paweł' }), null);
+  assert.equal(schoolOwnerProfileId({ ...pawel, role: 'parent' }), null);
+  assert.deepEqual(schoolSourcesForProfile({ ...pawel, archived: true }), []);
+  assert.deepEqual(schoolSourcesForProfile({ ...nikodem, schoolEnabled: false }), []);
+});
+
+test('plan ownership persists with the student while old unbound records remain readable for explicit parent binding', () => {
+  const day = createOkruszekDays('Paweł', 'actual-pawel-profile')[0];
+  const record = okruszekDayEntry(day);
+  assert.equal(record.ownerProfileId, 'actual-pawel-profile');
+  assert.deepEqual(parseOkruszekDay('stable-id', record), { ...day, id: 'stable-id' });
+  const legacy = okruszekDayEntry(createOkruszekDays('Paweł')[0]);
+  assert.equal(parseOkruszekDay('old-id', legacy)?.ownerProfileId, undefined);
+  assert.equal(parseOkruszekDay('bad-id', { ...record, ownerProfileId: 'legacy:Paweł' }), null);
+  const mixed = createOkruszekDays('Paweł', 'actual-pawel-profile');
+  mixed[1].ownerProfileId = 'another-profile';
+  assert.throws(() => validateOkruszekDays(mixed));
 });
 
 test('whole-day plan uses existing manual school information without unconditional lesson events', () => {

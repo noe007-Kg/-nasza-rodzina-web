@@ -5,7 +5,7 @@ import { commitCalendarPlan, subscribeCalendar } from '../calendar-store';
 import { describeRecurrence, type RecurrenceUnit } from '../calendar-utils';
 import { useFamilyDirectory } from '../family-directory';
 import { memberPersonKey } from '../family-members';
-import { projectSchoolCalendar } from '../calendar-source-projections';
+import { projectOkruszekCalendar, projectSchoolCalendar } from '../calendar-source-projections';
 import { useCalendarSchoolSources } from '../useCalendarSchoolSources';
 import { calendarSourceDisplayEvent, canChangeGoogleVisibility } from '../calendar-source-metadata';
 import { calendarRequest } from '../calendars/calendar-client';
@@ -31,9 +31,10 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
   currentCalendarUid.current = user.uid;
   const schoolSources = useCalendarSchoolSources(user.uid, member);
   const schoolProjection = useMemo(() => projectSchoolCalendar(schoolSources.rows, events, schoolSources.access), [schoolSources.rows, schoolSources.scope, events]);
+  const okruszekEvents = useMemo(() => projectOkruszekCalendar(schoolSources.rows, events, schoolSources.access, activeProfiles), [schoolSources.rows, schoolSources.scope, events, activeProfiles]);
   const healthSources = useCalendarHealthSources({ uid: user.uid, member });
   const birthdayEvents = useMemo(() => projectFamilyBirthdays(activeProfiles), [activeProfiles]);
-  const projectionEvents = useMemo(() => [...schoolProjection.events, ...healthSources.events, ...birthdayEvents], [schoolProjection.events, healthSources.events, birthdayEvents]);
+  const projectionEvents = useMemo(() => [...schoolProjection.events, ...okruszekEvents, ...healthSources.events, ...birthdayEvents], [schoolProjection.events, okruszekEvents, healthSources.events, birthdayEvents]);
   const projectionScope = `${schoolSources.scope}|${user.uid}`;
   const displayEvents = useMemo(() => [...events.map(calendarSourceDisplayEvent), ...projectionEvents], [events, projectionEvents]);
   const own = ownPerson(member);
@@ -343,7 +344,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
         <article className="calendar-lower-card"><header><strong>🔔 Twoje przypomnienia</strong></header><p>Sprawdź nadchodzące wydarzenia tutaj, a przypomnienia o lekach w zakładce Zdrowie.</p><button className="secondary-button" onClick={()=>goTo('Ustawienia')}>Ustawienia przypomnień</button></article>
         <article className="calendar-lower-card"><header><strong>⚡ Szybkie akcje</strong></header><div className="calendar-actions"><button onClick={()=>openNewEvent(new Date())}>＋ Wydarzenie</button><button onClick={()=>openNewEvent(new Date(),'12:00',true)}>☀️ Cały dzień</button><button onClick={()=>setFocusDate(new Date())}>📍 Dzisiaj</button></div></article>
       </section>
-      <section className="connected-calendars-footer"><header><div><strong>🔗 Połączone kalendarze</strong><small>Nasza Rodzina jest kalendarzem domyślnym.</small></div></header><div><span className="connected active">● Nasza Rodzina</span>{schoolProjection.events.length > 0 && <span>SP4 — podgląd danych szkolnych</span>}<button type="button" onClick={() => goTo('Ustawienia')}>Google Calendar — {events.some(event => event.source === 'google') ? 'zapisane wydarzenia' : 'połącz w Ustawieniach'}</button><span>Apple / iCloud — ICS</span><span>Outlook — import ICS</span></div></section>
+      <section className="connected-calendars-footer"><header><div><strong>🔗 Połączone kalendarze</strong><small>Nasza Rodzina jest kalendarzem domyślnym.</small></div></header><div><span className="connected active">● Nasza Rodzina</span>{schoolProjection.events.length > 0 && <span>SP4 — podgląd danych szkolnych</span>}{okruszekEvents.length > 0 && <span>Okruszek — plan Pawła</span>}<button type="button" onClick={() => goTo('Ustawienia')}>Google Calendar — {events.some(event => event.source === 'google') ? 'zapisane wydarzenia' : 'połącz w Ustawieniach'}</button><span>Apple / iCloud — ICS</span><span>Outlook — import ICS</span></div></section>
 
       {showTransfer && <Modal title="Import i eksport kalendarza" subtitle="Pliki .ics" onClose={() => setShowTransfer(false)} wide>
         <div className="form-grid calendar-transfer-form">
@@ -371,14 +372,14 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
         <Modal title={visibleDisplayEvent?.title || selectedEvent.title} subtitle={selectedEvent.readOnly ? `${calendarSourceLabel(selectedEvent)} · Dane źródłowe` : selectedEvent.repeat !== 'none' ? 'Wydarzenie cykliczne' : 'Wydarzenie'} onClose={() => setSelectedEvent(null)} wide>
           {(!editing || selectedEvent.readOnly) ? (
             <>
-              {selectedEvent.readOnly && visibleDisplayEvent && <div className="calendar-source-detail"><CalendarSourceBadges event={visibleDisplayEvent} />{schoolSelection ? <><p>Dane pochodzą z {selectedEvent.source === 'health' ? 'modułu Zdrowie' : selectedEvent.source === 'sp4' ? 'modułu Szkoła' : 'zapisanego profilu'}. Podgląd nie zmienia danych źródłowych.</p><button className="secondary-button" type="button" onClick={() => goTo(selectedEvent.source === 'health' ? 'Zdrowie' : selectedEvent.source === 'sp4' ? 'Szkoła' : 'Ustawienia')}>Otwórz źródło</button></> : <><p>Treść wydarzenia pochodzi z Google Calendar. Zmień ją w kalendarzu źródłowym; kolejne pobranie zachowa lokalną widoczność.</p><button className="secondary-button" type="button" onClick={() => goTo('Ustawienia')}>Połączone kalendarze</button></>}</div>}
+              {selectedEvent.readOnly && visibleDisplayEvent && <div className="calendar-source-detail"><CalendarSourceBadges event={visibleDisplayEvent} />{schoolSelection ? <><p>Dane pochodzą z {selectedEvent.source === 'health' ? 'modułu Zdrowie' : ['sp4', 'okruszek'].includes(selectedEvent.source || '') ? 'modułu Szkoła' : 'zapisanego profilu'}. Podgląd nie zmienia danych źródłowych.</p><button className="secondary-button" type="button" onClick={() => goTo(selectedEvent.source === 'health' ? 'Zdrowie' : ['sp4', 'okruszek'].includes(selectedEvent.source || '') ? 'Szkoła' : 'Ustawienia')}>Otwórz źródło</button></> : <><p>Treść wydarzenia pochodzi z Google Calendar. Zmień ją w kalendarzu źródłowym; kolejne pobranie zachowa lokalną widoczność.</p><button className="secondary-button" type="button" onClick={() => goTo('Ustawienia')}>Połączone kalendarze</button></>}</div>}
               <div className="details-grid">
                 <DetailRow label="Osoba" value={personLabel((visibleDisplayEvent || selectedEvent).person)} />
                 <DetailRow label="Termin wydarzenia" value={capitalize((visibleDisplayEvent?.date || selectedOccurrenceDate || selectedEvent.date).toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))} />
                 <DetailRow label="Godzina" value={(visibleDisplayEvent || selectedEvent).allDay ? 'Cały dzień' : `${formatTime((visibleDisplayEvent || selectedEvent).date)} – ${formatTime((visibleDisplayEvent || selectedEvent).endDate)}`} />
                 <DetailRow label="Powtarzanie" value={describeRecurrence(selectedEvent)} />
                 {selectedEvent.repeatUntil && <DetailRow label="Powtarzaj do" value={selectedEvent.repeatUntil.toLocaleDateString('pl-PL')} />}
-                {(visibleDisplayEvent || selectedEvent).private ? <DetailRow label="Widoczność" value="Prywatny — tylko Ty" /> : selectedEvent.source === 'google' ? <DetailRow label="Widoczność" value="Rodzinny" /> : null}
+                {(visibleDisplayEvent || selectedEvent).private ? <DetailRow label="Widoczność" value="Prywatny — tylko Ty" /> : ['google', 'okruszek'].includes(selectedEvent.source || '') ? <DetailRow label="Widoczność" value="Rodzinny" /> : null}
                 {(visibleDisplayEvent || selectedEvent).location && <DetailRow label="Lokalizacja" value={(visibleDisplayEvent || selectedEvent).location!} />}
                 {selectedEvent.repeatCount && <DetailRow label="Liczba wystąpień" value={String(selectedEvent.repeatCount)} />}
                 {(visibleDisplayEvent || selectedEvent).description && <DetailRow label="Notatka" value={(visibleDisplayEvent || selectedEvent).description} />}
@@ -488,7 +489,7 @@ export function CalendarEventButton({ occurrence, onClick }: { occurrence: Calen
 }
 
 function calendarSourceLabel(event: CalendarEventData): string {
-  return { google: 'Google Calendar', sp4: 'SP4', health: 'Zdrowie', fryderyk: 'Fryderyk', ics: 'ICS', manual: 'Profil rodziny' }[event.source || 'manual'];
+  return { google: 'Google Calendar', sp4: 'SP4', okruszek: 'Okruszek', health: 'Zdrowie', fryderyk: 'Fryderyk', ics: 'ICS', manual: 'Profil rodziny' }[event.source || 'manual'];
 }
 
 function CalendarSourceBadges({ event }: { event: CalendarEventData }) {

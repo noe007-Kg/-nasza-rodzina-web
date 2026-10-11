@@ -94,7 +94,7 @@ export type CalendarEventData = {
   location?: string;
   timeZone?: string;
   /** Local read-only views; school projections are never written as calendar documents. */
-  source?: 'manual' | 'sp4' | 'google' | 'health' | 'fryderyk' | 'ics';
+  source?: 'manual' | 'sp4' | 'google' | 'health' | 'fryderyk' | 'ics' | 'okruszek';
   important?: boolean;
   sourceRecurrence?: string[];
   externalOriginalStart?: string | null;

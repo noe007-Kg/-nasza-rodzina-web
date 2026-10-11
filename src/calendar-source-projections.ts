@@ -1,5 +1,8 @@
 import type { CalendarEventData } from './app-shared';
 import type { SchoolReadAccess } from './school/read-access';
+import { memberPersonKey, type FamilyMemberProfile } from './family-members';
+import { OKRUSZEK_PLAN_ID, OKRUSZEK_START, OKRUSZEK_END, okruszekDateStatus, parseOkruszekDay } from './school/okruszek-plan';
+import { schoolOwnerProfileId, schoolSourcesForProfile } from './school/profile-schools';
 
 export type CalendarSchoolRecord = {
   id: string;
@@ -14,6 +17,11 @@ export type CalendarSchoolRecord = {
   note?: string;
   calendarEventId?: string;
   createdBy?: string;
+  weekday?: number;
+  schoolPlanId?: string;
+  schoolPlanRevision?: number;
+  ownerProfileId?: string;
+  manualDayPlan?: unknown;
 };
 
 const SCHOOL_TIME_ZONE = 'Europe/Warsaw';
@@ -106,4 +114,57 @@ export function projectSchoolCalendar(
   }
   events.sort((a, b) => a.date.getTime() - b.date.getTime() || a.id.localeCompare(b.id));
   return { events, incomplete };
+}
+
+/** One dated calendar view of the saved weekly Okruszek plan; no copies or writes. */
+export function projectOkruszekCalendar(
+  records: readonly CalendarSchoolRecord[],
+  existingCalendar: readonly Pick<CalendarEventData, 'id'>[],
+  access: SchoolReadAccess | null,
+  profiles: readonly FamilyMemberProfile[],
+): CalendarEventData[] {
+  if (!access) return [];
+  const actualCalendarIds = new Set(existingCalendar.map(event => event.id));
+  const seenDays = new Set<string>();
+  const events: CalendarEventData[] = [];
+  // A malformed duplicate weekday cannot create a second school-day occurrence.
+  // Prefer the most recent revision without mutating the Firestore snapshot.
+  const ordered = [...records].sort((a, b) => (b.schoolPlanRevision || 0) - (a.schoolPlanRevision || 0) || a.id.localeCompare(b.id));
+  for (const record of ordered) {
+    if (!record.id || record.schoolPlanId !== OKRUSZEK_PLAN_ID || !record.ownerProfileId
+      || (access.scope === 'student' && record.person !== access.person)) continue;
+    const profile = profiles.find(candidate => schoolOwnerProfileId(candidate) === record.ownerProfileId
+      && schoolSourcesForProfile(candidate).includes('okruszek') && memberPersonKey(candidate) === record.person);
+    if (!profile) continue;
+    const day = parseOkruszekDay(record.id, { ...record });
+    if (!day || day.ownerProfileId !== profile.id) continue;
+    const weekdayKey = `${profile.id}:${day.weekday}`;
+    if (seenDays.has(weekdayKey)) continue;
+    seenDays.add(weekdayKey);
+    const start = day.periodStart < OKRUSZEK_START ? OKRUSZEK_START : day.periodStart;
+    const end = day.periodEnd > OKRUSZEK_END ? OKRUSZEK_END : day.periodEnd;
+    const cursor = new Date(`${start}T12:00:00Z`);
+    while (cursor.toISOString().slice(0, 10) <= end) {
+      const dateKey = cursor.toISOString().slice(0, 10);
+      if (cursor.getUTCDay() === day.weekday && okruszekDateStatus(dateKey, day).kind === 'planned') {
+        const id = `school:okruszek:${record.id}:${dateKey}`;
+        const date = schoolDate(dateKey, day.time), endDate = schoolDate(dateKey, day.endTime);
+        if (!actualCalendarIds.has(id) && matchesSchoolClock(date, dateKey, day.time)
+          && matchesSchoolClock(endDate, dateKey, day.endTime) && endDate > date) {
+          const name = profile.name || record.person;
+          events.push({
+            id, title: `Okruszek — ${name}`, person: memberPersonKey(profile), ownerProfileId: profile.id,
+            date, endDate, allDay: false, createdBy: record.createdBy || '',
+            description: [`Uczeń: ${name}`, `Pobyt w szkole: ${day.time}–${day.endTime}`,
+              'Zajęcia w kolejności (godziny poszczególnych zajęć nie są znane):',
+              ...day.lessons.map((lesson, index) => `${index + 1}. ${/^[-—]$/.test(lesson.trim()) ? '— (pusta pozycja; nie jest zajęciem)' : lesson}`)].join('\n'),
+            location: 'Okruszek, Kołobrzeg', repeat: 'none', repeatUntil: null, private: false,
+            timeZone: SCHOOL_TIME_ZONE, source: 'okruszek', sourceRecordId: record.id, readOnly: true,
+          });
+        }
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+  }
+  return events.sort((a, b) => a.date.getTime() - b.date.getTime() || a.id.localeCompare(b.id));
 }

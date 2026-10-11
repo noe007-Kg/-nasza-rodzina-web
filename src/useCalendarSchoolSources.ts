@@ -4,6 +4,7 @@ import { db } from './firebase';
 import type { Member } from './app-shared';
 import type { CalendarSchoolRecord } from './calendar-source-projections';
 import { schoolReadAccess, schoolReadAccessKey } from './school/read-access';
+import { parseOkruszekDay } from './school/okruszek-plan';
 
 type ScopedSchoolRecords = { scope: string; rows: CalendarSchoolRecord[]; error: boolean };
 
@@ -22,12 +23,17 @@ export function useCalendarSchoolSources(uid: string, member: Member | null) {
       : query(collection(db, 'schoolItems'), where('person', '==', access.person));
     const stop = onSnapshot(target, snapshot => {
       if (!active || currentScope.current !== scope) return;
-      const rows = snapshot.docs.flatMap(document => {
+      const rows = snapshot.docs.flatMap<CalendarSchoolRecord>(document => {
         const data = document.data();
-        if (data.source !== 'eduvulcan' || !['lesson', 'activity'].includes(data.type)
-          || typeof data.person !== 'string'
+        if (typeof data.person !== 'string'
           || (access.scope === 'student' && data.person !== access.person)) return [];
         const text = (value: unknown) => typeof value === 'string' ? value : '';
+        const manualDay = parseOkruszekDay(document.id, data);
+        if (manualDay) return [{ id: document.id, person: data.person, type: 'message',
+          title: text(data.title), date: '', weekday: 0, time: manualDay.time, endTime: manualDay.endTime,
+          note: text(data.note), createdBy: text(data.createdBy), schoolPlanId: text(data.schoolPlanId),
+          schoolPlanRevision: manualDay.revision, ownerProfileId: text(data.ownerProfileId), manualDayPlan: data.manualDayPlan }];
+        if (data.source !== 'eduvulcan' || !['lesson', 'activity'].includes(data.type)) return [];
         return [{ id: document.id, person: data.person, type: data.type,
           source: 'eduvulcan', title: text(data.title), subject: text(data.subject),
           date: text(data.date), time: text(data.time), endTime: text(data.endTime),
