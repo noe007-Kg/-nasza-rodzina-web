@@ -6,6 +6,7 @@ import { Card, Icon, PrimaryButton, SecondaryButton, StatusPill } from '../ui';
 import {
   createOkruszekDays, OKRUSZEK_END, OKRUSZEK_PLAN_ID, OKRUSZEK_START, OKRUSZEK_WEEKDAYS,
   okruszekDateStatus, okruszekDayEntry, okruszekDayId, parseOkruszekDay, validateOkruszekDays,
+  OKRUSZEK_BELL_SOURCE, okruszekLessonRows, okruszekBreakAfter, okruszekOutsideBellHours,
 } from './okruszek-plan';
 import type { OkruszekDay } from './okruszek-plan';
 import { memberPersonKey, type FamilyMemberProfile } from '../family-members';
@@ -184,7 +185,7 @@ export function OkruszekPlan({ user, parent, person, ownerProfileId }: { user: F
     <Card as="section" tone="blue" className="okruszek-intro">
       <div><span className="school-eyebrow">Ręczny plan tygodniowy · {person}</span><h2>Okruszek</h2><p>Kołobrzeg · {OKRUSZEK_START.split('-').reverse().join('.')}–{OKRUSZEK_END.split('-').reverse().join('.')}</p></div>
       <StatusPill tone={persisted ? 'success' : 'neutral'}>{!loaded ? 'Sprawdzanie zapisu…' : persisted ? 'Plan zapisany' : saved.length === 5 ? 'Plan wymaga przypisania do profilu' : saved.length ? `Plan częściowo zapisany: ${saved.length}/5 dni` : 'Plan przygotowany — niezapisany'}</StatusPill>
-      <p className="okruszek-explanation">Godziny dotyczą całego dnia w szkole. Kolejność i skróty zajęć są zachowane; godzin poszczególnych lekcji nie podano.</p>
+      <p className="okruszek-explanation">Godziny pobytu są zachowane. Poszczególne lekcje i przerwy rozpisano według numerów pozycji i tabeli godzin Okruszka; zajęcia poza tą tabelą wymagają potwierdzenia.</p>
       {parent && <div className="okruszek-actions">
         <PrimaryButton icon="check" disabled={busy || !loaded || !!loadError || !!editing || !ownerProfileId} onClick={() => void writePlan('import')}>{busy ? 'Zapisywanie…' : 'Zapisz plan Okruszka'}</PrimaryButton>
         {persisted && <SecondaryButton icon="settings" disabled={busy || !!editing} onClick={openEditor}>Edytuj plan</SecondaryButton>}
@@ -198,12 +199,20 @@ export function OkruszekPlan({ user, parent, person, ownerProfileId }: { user: F
       <label>Sprawdź dzień<input type="date" value={selectedDate} onChange={event => setSelectedDate(event.target.value || todayInWarsaw())}/></label>
       <div aria-live="polite" data-testid="okruszek-date-status"><strong>{statusLabels[dateStatus.kind]}</strong><p>{dateStatus.reason}</p>{dateStatus.kind === 'planned' && dateDay && <span><Icon name="clock" size={16}/> Cały dzień: {dateDay.time}–{dateDay.endTime}</span>}</div>
     </Card>
-    <div className="okruszek-week" aria-label="Tygodniowy wzorzec zajęć">{days.map(day => <Card as="article" tone="violet" className="okruszek-day" key={day.weekday} data-testid={`okruszek-day-${day.weekday}`}>
+    <div className="okruszek-week" aria-label="Tygodniowy wzorzec zajęć">{days.map(day => { const rows = okruszekLessonRows(day); return <Card as="article" tone="violet" className="okruszek-day" key={day.weekday} data-testid={`okruszek-day-${day.weekday}`}>
       <h3>{OKRUSZEK_WEEKDAYS[day.weekday - 1]}</h3><p className="okruszek-day-time"><Icon name="clock" size={18}/><strong>{day.time}–{day.endTime}</strong><small>cały dzień</small></p>
-      <ol>{day.lessons.map((lesson, index) => <li key={`${index}:${lesson}`}>{['-', '—'].includes(lesson.trim()) ? <span aria-label="Pusta pozycja — bez zajęć">—</span> : lesson}</li>)}</ol>
-    </Card>)}</div>
+      <ol>{rows.map((row, index) => <li key={`${row.position}:${row.lesson}`}>
+        {row.empty ? <span aria-label="Pusta pozycja — bez zajęć">—</span> : <>
+          <strong className="okruszek-lesson-time">{row.time && row.endTime ? `${row.time}–${row.endTime}` : row.individual ? 'Godziny indywidualne — do potwierdzenia' : 'Godziny niepotwierdzone'}</strong>
+          <span className="okruszek-lesson-name">{row.lesson}</span>
+        </>}
+        {okruszekBreakAfter(rows, index) && <small className="okruszek-lesson-break">{okruszekBreakAfter(rows, index)}</small>}
+      </li>)}</ol>
+      {okruszekOutsideBellHours(day).map(note => <p className="okruszek-outside-hours" key={note}>{note}</p>)}
+    </Card>; })}</div>
     <p className="okruszek-holidays-note">To wzorzec tygodniowy, a nie potwierdzenie zajęć w każdy dzień roboczy. Uwzględniamy potwierdzone dni wolne; dodatkowe odwołania można dopisać przy edycji planu.</p>
     <div className="okruszek-holiday-sources"><span>Źródła dni wolnych:</span><a href="https://soswokruszek.pl/dni-wolne.html" target="_blank" rel="noopener noreferrer">Okruszek</a><a href="https://www.gov.pl/web/edukacja/ministerstwo-edukacji-narodowej-oglosilo-kalendarz-roku-szkolnego-20262027" target="_blank" rel="noopener noreferrer">Kalendarz MEN 2026/2027</a></div>
+    <div className="okruszek-holiday-sources"><span>Źródło godzin:</span><a href={OKRUSZEK_BELL_SOURCE} target="_blank" rel="noopener noreferrer">Okruszek — godziny zajęć i przerw obiadowych</a></div>
     {editing && <Card as="section" tone="neutral" className="okruszek-editor">
       <h3>Edytuj plan Okruszka</h3><p>Każde zajęcie wpisz w osobnym wierszu. „—” oznacza pustą pozycję, bez zajęć.</p>
       <form onSubmit={event => { event.preventDefault(); void writePlan('edit'); }}>

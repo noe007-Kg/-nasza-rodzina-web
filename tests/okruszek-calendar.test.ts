@@ -36,8 +36,15 @@ test('saved Okruszek plan projects one whole stay per school day, with its actua
   assert.equal(monday.readOnly, true);
   assert.equal(monday.private, false);
   assert.equal(calendarOwnerProfile(monday, profiles)?.id, pawel.id);
-  assert.match(monday.description, /1\. Rewalidacja\n2\. Rewalidacja\n3\. f\.os i społ/);
-  assert.match(monday.description, /godziny poszczególnych zajęć nie są znane/);
+  assert.match(monday.description, /1\. Godziny indywidualne — do potwierdzenia — Rewalidacja/);
+  assert.doesNotMatch(monday.description, /1\. 08:00–08:45/);
+  assert.match(monday.description, /2\. 08:50–09:35 — Rewalidacja/);
+  assert.match(monday.description, /3\. 09:40–10:25 — f\.os i społ/);
+  assert.match(monday.description, /Przerwa obiadowa 12:55–13:35/);
+  assert.match(monday.description, /07:30–08:00 — czas poza siatką dzwonków; pełne godziny zajęć indywidualnych do potwierdzenia/);
+  const wednesday = events.find(event => warsawDate(event.date) === '2026-10-21')!;
+  assert.match(wednesday.description, /9\. Godziny indywidualne — do potwierdzenia — rewalidacja/);
+  assert.doesNotMatch(wednesday.description, /9\. 15:15–16:00/);
   assert.equal(events.filter(event => warsawDate(event.date) === '2026-10-12').length, 1);
   assert.equal(new Set(events.map(event => warsawDate(event.date))).size, events.length);
 });
@@ -109,8 +116,11 @@ test('parent edits change the projected time and holidays without changing occur
 
 test('blank slots are retained as blank slots, not named lessons or invented lesson times', () => {
   const tuesday = projectOkruszekCalendar(savedPlan(), [], parent, profiles).find(event => warsawDate(event.date) === '2026-10-13')!;
-  assert.match(tuesday.description, /1\. — \(pusta pozycja; nie jest zajęciem\)\n2\. Zaj\. k\. kreat\n3\. Zaj\. k\. kreat\n4\. religia/);
-  assert.equal((tuesday.description.match(/\d\d:\d\d/g) || []).length, 2);
+  assert.match(tuesday.description, /1\. — \(pusta pozycja; nie jest zajęciem\)\n2\. 08:50–09:35 — Zaj\. k\. kreat/);
+  assert.match(tuesday.description, /3\. 09:40–10:25 — Zaj\. k\. kreat/);
+  assert.match(tuesday.description, /4\. 10:30–11:15 — religia/);
+  assert.match(tuesday.description, /9\. 15:15–16:00 — Z\.r\.k/);
+  assert.doesNotMatch(tuesday.description, /1\. 08:00–08:45/);
 });
 
 test('Okruszek dates keep Warsaw school hours across both clock changes and device time zones', () => {

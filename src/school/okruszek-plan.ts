@@ -14,14 +14,81 @@ export type OkruszekDay = {
   lessons: string[]; periodStart: string; periodEnd: string; extraDaysOff: string[]; revision: number;
 };
 
+/** Published by Okruszek; these are bell slots, not inferred 45-minute lessons. */
+export const OKRUSZEK_BELL_SOURCE = 'https://soswokruszek.pl/godziny-zaj---i-przerw-obiadowych.html';
+export const OKRUSZEK_BELL_SCHEDULE = [
+  { time: '08:00', endTime: '08:45' },
+  { time: '08:50', endTime: '09:35' },
+  { time: '09:40', endTime: '10:25' },
+  { time: '10:30', endTime: '11:15' },
+  { time: '11:20', endTime: '12:05' },
+  { time: '12:10', endTime: '12:55' },
+  { time: '13:35', endTime: '14:20' },
+  { time: '14:25', endTime: '15:10' },
+  { time: '15:15', endTime: '16:00' },
+] as const;
+
+export type OkruszekLessonRow = {
+  position: number; lesson: string; empty: boolean; individual: boolean; time: string | null; endTime: string | null;
+};
+
 // User-supplied whole-day bounds. There are no inferred lesson start/end times.
 const suppliedDays = [
-  { time: '07:30', endTime: '15:10', lessons: ['Rewalidacja', 'Rewalidacja', 'f.os i społ', 'f.os i społ', 'PDP/kuchnia', 'Z.R.Z', 'PDP', 'PDP'] },
+  { time: '07:30', endTime: '15:10', lessons: ['Rewalidacja', 'Rewalidacja', 'f.os i społ', 'f.os i społ', 'PDP/ kuchnia', 'Z.R.Z', 'PDP', 'PDP'] },
   { time: '08:50', endTime: '16:00', lessons: ['—', 'Zaj. k. kreat', 'Zaj. k. kreat', 'religia', 'PDP', 'PDP', 'PDP', 'Z.r.k', 'Z.r.k'] },
-  { time: '08:50', endTime: '16:30', lessons: ['—', 'PDP/kuchnia', 'PDP/kuchnia', 'WF', 'WF', 'WF', 'PDP/kuchnia', 'rewalidacja', 'rewalidacja'] },
-  { time: '08:00', endTime: '16:00', lessons: ['PDP', 'PDP', 'PDP/praktyki', 'PDP/praktyki', 'PDP/praktyki', 'PDP/praktyki', 'rewalidacja', 'PDP', 'logopedia'] },
-  { time: '08:00', endTime: '16:00', lessons: ['Z.k.k', 'Z.k.k', 'PDP/praktyki', 'PDP/praktyki', 'PDP/praktyki', 'PDP/praktyki', 'f.os i społ', 'f.os i społ', 'f.os i społ'] },
+  { time: '08:50', endTime: '16:30', lessons: ['—', 'PDP/ kuchnia', 'PDP/ kuchnia', 'WF', 'WF', 'WF', 'PDP/ kuchnia', 'rewalidacja', 'rewalidacja'] },
+  { time: '08:00', endTime: '16:00', lessons: ['PDP', 'PDP', 'PDP/ praktyki', 'PDP/ praktyki', 'PDP/ praktyki', 'PDP/ praktyki', 'rewalidacja', 'PDP', 'logopedia'] },
+  { time: '08:00', endTime: '16:00', lessons: ['Z.k.k.', 'Z.k.k.', 'PDP/ praktyki', 'PDP/ praktyki', 'PDP/ praktyki', 'PDP/ praktyki', 'f.os i społ', 'f.os i społ', 'f.os i społ'] },
 ];
+
+/** Old saved plans get the published hours without a migration or another import.
+ * Blank slots retain their number. Edited/shifted rows and out-of-stay hours are
+ * explicitly unknown; neither the parent's edits nor whole-day bounds change.
+ */
+export function okruszekLessonRows(day: OkruszekDay): OkruszekLessonRow[] {
+  const original = suppliedDays[day.weekday - 1]?.lessons;
+  // Keep older saved abbreviations readable; do not rewrite the parent's text.
+  const sameAbbreviation = (text: string) => text.trim().replace(/\s*\/\s*/g, '/').replace(/\.$/, '');
+  return day.lessons.map((lesson, index) => {
+    const empty = /^[-—]$/.test(lesson.trim());
+    const originalLesson = original?.[index];
+    const unchangedPosition = !!originalLesson && (sameAbbreviation(lesson) === sameAbbreviation(originalLesson) || empty && originalLesson === '—');
+    const bell = OKRUSZEK_BELL_SCHEDULE[index];
+    // The photo gives whole-stay bounds, not the individual revalidation times.
+    // The parent confirmed additional classes outside the published bell table.
+    const individual = !empty && unchangedPosition && /rewalidacja/i.test(lesson)
+      && (day.weekday === 1 && index === 0 && day.time < '08:00'
+        || day.weekday === 3 && index === 8 && day.endTime > '16:00');
+    const known = !empty && !individual && unchangedPosition && bell && bell.time >= day.time && bell.endTime <= day.endTime;
+    return { position: index + 1, lesson, empty, individual, time: known ? bell.time : null, endTime: known ? bell.endTime : null };
+  });
+}
+
+export function okruszekBreakAfter(rows: readonly OkruszekLessonRow[], index: number): string | null {
+  const row = rows[index], next = rows[index + 1];
+  if (!row?.endTime || !next?.time) return null;
+  return row.endTime === '12:55' && next.time === '13:35'
+    ? 'Przerwa obiadowa 12:55–13:35 · tury: 12:55–13:15 i 13:15–13:35; tura Pawła niepotwierdzona'
+    : `Przerwa ${row.endTime}–${next.time}`;
+}
+
+/** A school's bell table does not identify individual activities outside it. */
+export function okruszekOutsideBellHours(day: OkruszekDay): string[] {
+  const intervals: string[] = [];
+  if (day.time < '08:00') intervals.push(`${day.time}–08:00`);
+  if (day.endTime > '16:00') intervals.push(`16:00–${day.endTime}`);
+  return intervals.map(interval => `${interval} — czas poza siatką dzwonków; pełne godziny zajęć indywidualnych do potwierdzenia`);
+}
+
+export function okruszekLessonDetails(day: OkruszekDay): string[] {
+  const rows = okruszekLessonRows(day);
+  return [...rows.flatMap((row, index) => {
+    const lesson = row.empty ? `${row.position}. — (pusta pozycja; nie jest zajęciem)`
+      : `${row.position}. ${row.time && row.endTime ? `${row.time}–${row.endTime}` : row.individual ? 'Godziny indywidualne — do potwierdzenia' : 'Godziny niepotwierdzone'} — ${row.lesson}`;
+    const pause = okruszekBreakAfter(rows, index);
+    return pause ? [lesson, pause] : [lesson];
+  }), ...okruszekOutsideBellHours(day)];
+}
 
 export const OKRUSZEK_DAYS_OFF = [
   { start: '2026-10-14', end: '2026-10-14', reason: 'Dzień bez zajęć dydaktycznych; dostępność opieki według informacji szkoły.' },

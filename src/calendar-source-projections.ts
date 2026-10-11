@@ -1,7 +1,7 @@
 import type { CalendarEventData } from './app-shared';
 import type { SchoolReadAccess } from './school/read-access';
 import { memberPersonKey, type FamilyMemberProfile } from './family-members';
-import { OKRUSZEK_PLAN_ID, OKRUSZEK_START, OKRUSZEK_END, okruszekDateStatus, parseOkruszekDay } from './school/okruszek-plan';
+import { OKRUSZEK_PLAN_ID, OKRUSZEK_START, OKRUSZEK_END, okruszekDateStatus, parseOkruszekDay, okruszekLessonDetails, OKRUSZEK_BELL_SOURCE } from './school/okruszek-plan';
 import { schoolOwnerProfileId, schoolSourcesForProfile } from './school/profile-schools';
 
 export type CalendarSchoolRecord = {
@@ -156,8 +156,8 @@ export function projectOkruszekCalendar(
             id, title: `Okruszek — ${name}`, person: memberPersonKey(profile), ownerProfileId: profile.id,
             date, endDate, allDay: false, createdBy: record.createdBy || '',
             description: [`Uczeń: ${name}`, `Pobyt w szkole: ${day.time}–${day.endTime}`,
-              'Zajęcia w kolejności (godziny poszczególnych zajęć nie są znane):',
-              ...day.lessons.map((lesson, index) => `${index + 1}. ${/^[-—]$/.test(lesson.trim()) ? '— (pusta pozycja; nie jest zajęciem)' : lesson}`)].join('\n'),
+              'Zajęcia według numerów pozycji i tabeli godzin Okruszka:',
+              ...okruszekLessonDetails(day), `Źródło godzin: ${OKRUSZEK_BELL_SOURCE}`].join('\n'),
             location: 'Okruszek, Kołobrzeg', repeat: 'none', repeatUntil: null, private: false,
             timeZone: SCHOOL_TIME_ZONE, source: 'okruszek', sourceRecordId: record.id, readOnly: true,
           });

@@ -89,8 +89,16 @@ test('rodzic przypisuje Okruszek Pawłowi, zachowuje poprawki i jeden plan w kal
   await expect(page.locator('.school-sp4-content')).not.toBeVisible();
   const plan = page.getByTestId('okruszek-plan');
   await expect(plan).toContainText('Plan przygotowany — niezapisany');
-  await expect(plan.getByTestId('okruszek-day-1').locator('li')).toHaveText(['Rewalidacja', 'Rewalidacja', 'f.os i społ', 'f.os i społ', 'PDP/kuchnia', 'Z.R.Z', 'PDP', 'PDP']);
+  await expect(plan.getByTestId('okruszek-day-1').locator('.okruszek-lesson-name')).toHaveText(['Rewalidacja', 'Rewalidacja', 'f.os i społ', 'f.os i społ', 'PDP/ kuchnia', 'Z.R.Z', 'PDP', 'PDP']);
+  await expect(plan.getByTestId('okruszek-day-1').locator('.okruszek-lesson-time')).toHaveText(['Godziny indywidualne — do potwierdzenia', '08:50–09:35', '09:40–10:25', '10:30–11:15', '11:20–12:05', '12:10–12:55', '13:35–14:20', '14:25–15:10']);
+  await expect(plan.getByTestId('okruszek-day-1')).toContainText('Przerwa obiadowa 12:55–13:35');
+  await expect(plan.getByTestId('okruszek-day-1')).toContainText('07:30–08:00 — czas poza siatką dzwonków; pełne godziny zajęć indywidualnych do potwierdzenia');
+  await expect(plan.getByTestId('okruszek-day-3')).toContainText('16:00–16:30 — czas poza siatką dzwonków; pełne godziny zajęć indywidualnych do potwierdzenia');
+  await expect(plan.getByTestId('okruszek-day-3').locator('.okruszek-lesson-time').last()).toHaveText('Godziny indywidualne — do potwierdzenia');
+  await expect(plan.getByTestId('okruszek-day-5').locator('.okruszek-lesson-name').first()).toHaveText('Z.k.k.');
   await expect(plan.getByTestId('okruszek-day-2').locator('li').first()).toContainText('—');
+  await expect(plan.getByTestId('okruszek-day-2').locator('li').first().locator('.okruszek-lesson-time')).toHaveCount(0);
+  await expect(plan.getByTestId('okruszek-day-2').locator('.okruszek-lesson-time').first()).toHaveText('08:50–09:35');
   await expect(plan.getByTestId('okruszek-day-1')).toContainText('07:30–15:10');
   await plan.getByRole('button', { name: 'Zapisz plan Okruszka', exact: true }).click();
   await expect(plan).toContainText('Plan zapisany');
@@ -173,6 +181,10 @@ test('rodzic przypisuje Okruszek Pawłowi, zachowuje poprawki i jeden plan w kal
   await expect(details).toContainText('PDP/kuchnia');
   await expect(details).toContainText('Z.R.Z');
   await expect(details).toContainText('PDP — zmiana testowa');
+  await expect(details).toContainText('Godziny indywidualne — do potwierdzenia — Rewalidacja');
+  await expect(details).toContainText('08:50–09:35 — Rewalidacja');
+  await expect(details).toContainText('Przerwa obiadowa 12:55–13:35');
+  await expect(details).toContainText('Godziny niepotwierdzone — PDP — zmiana testowa');
   await expect(details.getByRole('button', { name: /Edytuj|Usuń/ })).toHaveCount(0);
   await details.getByRole('button', { name: 'Zamknij', exact: true }).click();
   await selectCalendarPerson(page, 'Cała rodzina');
