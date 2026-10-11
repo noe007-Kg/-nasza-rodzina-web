@@ -43,7 +43,8 @@ test('family time uses every active dynamic profile, including members without l
 
 test('empty visible plans and an empty directory stay unknown instead of claiming everyone is free', () => {
   const result = buildFamilyTime([profile('p')], [], [], now);
-  assert.deepEqual(result.members[0], { profile: profile('p'), endAt: null, incomplete: true, hasPlan: false });
+  assert.deepEqual(result.members[0], { profile: profile('p'), endAt: null, incomplete: true, hasPlan: false,
+    currentStatus: { kind: 'idle', title: 'Brak aktualnego wydarzenia', endAt: null, estimated: false } });
   assert.equal(result.endAt, null);
   assert.equal(result.incomplete, true);
   assert.deepEqual(buildFamilyTime([], [], [], now), { members: [], endAt: null, incomplete: true });

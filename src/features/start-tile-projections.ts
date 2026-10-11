@@ -1,11 +1,14 @@
 import type { ChatMessage } from '../app-shared';
 import { orderedFamilyProfiles } from '../family-directory';
 import { memberPersonKey, type FamilyMemberProfile } from '../family-members';
+import { formatWarsawTime, warsawCalendarDayRange, warsawDayKey } from '../calendar-timeline';
 
 /** Already generated occurrences: recurring events are never expanded here. */
 export type StartCalendarOccurrence = {
   key?: string;
-  source: { id?: string; person: string; allDay?: boolean; cancelled?: boolean };
+  source: { id?: string; person: string; title?: string; allDay?: boolean; cancelled?: boolean;
+    eventKind?: 'event' | 'lesson' | 'break'; timingConfidence?: 'confirmed' | 'estimated';
+    source?: string; private?: boolean; ownerUid?: string; createdBy?: string };
   date?: Date;
   endDate?: Date;
 };
@@ -28,7 +31,81 @@ export type FamilyTimeMember = {
   endAt: Date | null;
   incomplete: boolean;
   hasPlan: boolean;
+  currentStatus: FamilyCurrentStatus;
 };
+
+export type FamilyCurrentStatus = {
+  kind: 'active' | 'break' | 'idle';
+  title: string;
+  endAt: Date | null;
+  estimated: boolean;
+};
+
+export type FamilyStatusViewer = { uid: string; person: string };
+
+/** The status day follows Warsaw, even when the browser uses another zone. */
+export function warsawCalendarDay(now: Date) {
+  const key = warsawDayKey(now);
+  return { key, weekday: new Date(`${key}T12:00:00Z`).getUTCDay() || 7, ...warsawCalendarDayRange(now) };
+}
+
+export function formatFamilyStatusTime(date: Date): string {
+  return validDate(date) ? formatWarsawTime(date) : '—';
+}
+
+function statusEventVisible(source: StartCalendarOccurrence['source'], viewer?: FamilyStatusViewer) {
+  return source.private !== true || (!!viewer?.uid && (source.person === viewer.person || source.person === 'family')
+    && (source.ownerUid || source.createdBy) === viewer.uid);
+}
+
+function statusEventForPerson(source: StartCalendarOccurrence['source'], identity: string, viewer?: FamilyStatusViewer) {
+  // Legacy private events may keep the form's 'family' person value. Their
+  // authenticated owner still sees them personally; they never apply to others.
+  return source.private === true ? !!viewer && identity === viewer.person
+    && statusEventVisible(source, viewer) : forPerson(source.person, identity);
+}
+
+function usableStatusOccurrence(occurrence: StartCalendarOccurrence, viewer?: FamilyStatusViewer) {
+  return statusEventVisible(occurrence.source, viewer) && occurrence.source.cancelled !== true
+    && occurrence.source.allDay !== true
+    && !(occurrence.source.source === 'fryderyk' && occurrence.source.timingConfidence !== 'confirmed')
+    && validDate(occurrence.date) && validDate(occurrence.endDate) && occurrence.endDate > occurrence.date;
+}
+
+/** Exact half-open intervals; only an explicit break event can become yellow. */
+export function currentFamilyStatus(
+  identity: string, occurrences: readonly StartCalendarOccurrence[], now: Date, viewer?: FamilyStatusViewer,
+): FamilyCurrentStatus {
+  const idle: FamilyCurrentStatus = { kind: 'idle', title: 'Brak aktualnego wydarzenia', endAt: null, estimated: false };
+  if (!validDate(now)) return idle;
+  const active = occurrences.filter(occurrence => usableStatusOccurrence(occurrence, viewer)
+    && statusEventForPerson(occurrence.source, identity, viewer) && occurrence.date! <= now && now < occurrence.endDate!);
+  if (!active.length) return idle;
+  const events = active.filter(occurrence => occurrence.source.eventKind !== 'break');
+  const selected = (events.length ? events : active).slice().sort((a, b) => a.endDate!.getTime() - b.endDate!.getTime()
+    || (a.key || a.source.id || '').localeCompare(b.key || b.source.id || ''));
+  return { kind: events.length ? 'active' : 'break',
+    title: [...new Set(selected.map(occurrence => {
+      const title = occurrence.source.title?.trim() || (events.length ? 'Zaplanowane wydarzenie' : 'Przerwa');
+      return selected.length > 1 ? `${title} (do ${formatFamilyStatusTime(occurrence.endDate!)})` : title;
+    }))].join(' · '),
+    endAt: selected.length === 1 ? selected[0].endDate! : null,
+    estimated: selected.some(occurrence => occurrence.source.timingConfidence === 'estimated') };
+}
+
+/** Local UI updates at exact event boundaries; no network polling is involved. */
+export function familyStatusRefreshDelay(occurrences: readonly StartCalendarOccurrence[], now: Date, viewer?: FamilyStatusViewer): number {
+  if (!validDate(now)) return 60_000;
+  let delay = 60_000 - (now.getTime() % 60_000);
+  for (const occurrence of occurrences) {
+    if (!usableStatusOccurrence(occurrence, viewer)) continue;
+    for (const boundary of [occurrence.date!, occurrence.endDate!]) {
+      const remaining = boundary.getTime() - now.getTime();
+      if (remaining > 0) delay = Math.min(delay, remaining);
+    }
+  }
+  return Math.max(1, delay);
+}
 
 export type FamilyTimeProjection = {
   members: FamilyTimeMember[];
@@ -110,10 +187,12 @@ export function buildFamilyTime(
   todayOccurrences: readonly StartCalendarOccurrence[],
   schoolRecords: readonly StartSchoolRecord[],
   now: Date,
+  viewer?: FamilyStatusViewer,
 ): FamilyTimeProjection {
   const roster = uniqueProfiles(profiles);
   if (!validDate(now)) {
-    return { members: roster.map(profile => ({ profile, endAt: null, incomplete: true, hasPlan: false })), endAt: null, incomplete: true };
+    return { members: roster.map(profile => ({ profile, endAt: null, incomplete: true, hasPlan: false,
+      currentStatus: currentFamilyStatus(memberPersonKey(profile), [], now, viewer) })), endAt: null, incomplete: true };
   }
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const weekday = now.getDay() || 7;
@@ -126,14 +205,17 @@ export function buildFamilyTime(
     const identity = memberPersonKey(profile) || profile.uid || profile.id;
     const ownSchool = todaySchool.filter(record => forPerson(record.person, identity));
     const cancelled = ownSchool.filter(isCancelledLesson);
-    const occurrences = todayOccurrences.filter(occurrence => occurrence.source.cancelled !== true && forPerson(occurrence.source.person, identity)
+    const occurrences = todayOccurrences.filter(occurrence => statusEventVisible(occurrence.source, viewer)
+      && occurrence.source.cancelled !== true && statusEventForPerson(occurrence.source, identity, viewer)
       && !cancelled.some(record => record.calendarEventId && record.calendarEventId === occurrence.source.id));
     let endAt: Date | null = null;
     let hasPlan = false;
     let incomplete = false;
     for (const occurrence of occurrences) {
       hasPlan = true;
-      if (occurrence.source.allDay || !validDate(occurrence.date) || !validDate(occurrence.endDate) || occurrence.endDate <= occurrence.date) {
+      if (occurrence.source.allDay
+        || occurrence.source.source === 'fryderyk' && occurrence.source.timingConfidence !== 'confirmed'
+        || !validDate(occurrence.date) || !validDate(occurrence.endDate) || occurrence.endDate <= occurrence.date) {
         incomplete = true;
       } else {
         endAt = latestEnd(endAt, occurrence.endDate);
@@ -149,7 +231,8 @@ export function buildFamilyTime(
       if (!start || !end || end <= start) incomplete = true;
       else endAt = latestEnd(endAt, end);
     }
-    return { profile, endAt, hasPlan, incomplete: incomplete || !hasPlan };
+    return { profile, endAt, hasPlan, incomplete: incomplete || !hasPlan,
+      currentStatus: currentFamilyStatus(identity, occurrences, now, viewer) };
   });
   return {
     members,

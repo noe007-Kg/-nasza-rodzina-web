@@ -5,18 +5,17 @@ import { collection, query, where, Timestamp } from 'firebase/firestore';
 import { DndContext, DragOverlay, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { db } from '../firebase';
 import { onSnapshot } from '../feedback';
-import { AppIcon, capitalize, formatShortDate, formatTime, isAdultMember, isParent, isPersonKey, ownPerson, personLabel, schoolQuery, isSchoolType, type CalendarEventData, type Member, type Page, type SchoolRecord, type TaskItem, type QuickProduct, type CalendarOccurrence, Modal, DetailRow } from '../app-shared';
-import { addDays, endOfDay, formatDateInput, generateOccurrences, startOfDay } from '../calendar-utils';
+import { AppIcon, capitalize, formatShortDate, formatTime, isAdultMember, isParent, isPersonKey, ownPerson, personLabel, type CalendarEventData, type Member, type Page, type TaskItem, type QuickProduct, Modal, DetailRow } from '../app-shared';
 import { subscribeCalendar } from '../calendar-store';
 import { Icon } from '../ui';
 import { useDashboardOrder } from './useDashboardOrder';
 import { reorderDashboardCards, type StartCardId } from './start-layout';
 import './start-dashboard.css';
-import { schoolReadAccess, schoolReadAccessKey } from '../school/read-access';
+import { useCalendarSchoolSources } from '../useCalendarSchoolSources';
 import { useFamilyDirectory, orderedFamilyProfiles } from '../family-directory';
 import { useNotifications } from '../notifications';
 import { DEFAULT_QUICK_PRODUCTS, categorizeProduct, isShoppingCategory } from './ShoppingPage';
-import { buildFamilyTime, latestConversations, shoppingPreview, type StartChatMessage, type StartShoppingItem, type StartSchoolRecord } from './start-tile-projections';
+import { buildFamilyTime, familyStatusRefreshDelay, latestConversations, shoppingPreview, warsawCalendarDay, type StartChatMessage, type StartShoppingItem } from './start-tile-projections';
 import { ChatDetails, FamilyTimeDetails, ShoppingDetails } from './StartTileDetails';
 import { useStartTileColors } from './useStartTileColors';
 import { getStartTileColorStyle, selectedStartTileColorId, type StartTileColors } from './start-tile-colors';
@@ -25,7 +24,9 @@ import { useStartTileSizes } from './useStartTileSizes';
 import { selectedStartTileSize, type StartTileSizes } from './start-tile-sizes';
 import { familyCalendarEvents, calendarOwnerColor, projectFamilyBirthdays } from '../calendar-v2';
 import { CalendarOwnerBadge } from '../CalendarOwnerBadge';
-import { projectSchoolCalendar } from '../calendar-source-projections';
+import { projectOkruszekCalendar, projectSchoolCalendar } from '../calendar-source-projections';
+import { projectManualSchoolCalendar } from '../calendar-school-display';
+import { calendarRangeDisplaySources } from '../calendar-timeline';
 import { calendarSourceDisplayEvent } from '../calendar-source-metadata';
 import { generateCalendarOccurrencesFromSources } from '../calendars/google-occurrences';
 import { useCalendarHealthSources } from '../health/useCalendarHealthSources';
@@ -71,16 +72,16 @@ function TileContents({ tile, overlay = false, headingOnly = false }: { tile: Ti
 export function StartPage({ user, member, goTo }: { user: User; member: Member | null; goTo: (page: Page) => void }) {
   const name = member?.name || 'Rodzina';
   const parent = isParent(member); const own = ownPerson(member);
-  const profiles = orderedFamilyProfiles(useFamilyDirectory(), user.uid);
+  const directory = useFamilyDirectory();
+  const profiles = useMemo(() => orderedFamilyProfiles(directory, user.uid), [directory, user.uid]);
   const { items: notifications } = useNotifications();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [calendarData, setCalendarData] = useState<{ uid: string; rows: CalendarEventData[] }>({ uid: user.uid, rows: [] });
   const events = calendarData.uid === user.uid ? calendarData.rows : [];
   const [calendarDetail, setCalendarDetail] = useState<{ uid: string; key: string } | null>(null);
   const healthSources = useCalendarHealthSources({ uid: user.uid, member });
-  const schoolScope = schoolReadAccessKey(user.uid, schoolReadAccess(member));
-  const [schoolData, setSchoolData] = useState<{ scope: string; rows: (SchoolRecord & StartSchoolRecord)[] }>({ scope: '', rows: [] });
-  const schoolRecords = schoolData.scope === schoolScope ? schoolData.rows : [];
+  const schoolSources = useCalendarSchoolSources(user.uid, member);
+  const schoolRecords = schoolSources.rows;
   const [shopping, setShopping] = useState<StartShoppingItem[]>([]);
   const [quickProducts, setQuickProducts] = useState<QuickProduct[]>([]);
   const [messages, setMessages] = useState<StartChatMessage[]>([]);
@@ -98,7 +99,6 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
     useSensor(TouchSensor, { activationConstraint: { delay: 550, tolerance: 8 } }),
     useSensor(KeyboardSensor),
   );
-  useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 60_000); return () => window.clearInterval(timer); }, []);
   useEffect(() => onSnapshot(collection(db, 'tasks'), snap => {
     setTasks(snap.docs.map(d => {
       const x = d.data();
@@ -119,24 +119,6 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
       adultOnly: typeof x.adultOnly === 'boolean' ? x.adultOnly : undefined, hidden: x.hidden === true, defaultQuantity: String(x.defaultQuantity || '1'), defaultUnit: String(x.defaultUnit || 'szt.') };
   }))), [user.uid]);
   useEffect(() => { let active = true; const uid = user.uid; const stop = subscribeCalendar(uid, rows => { if (active) setCalendarData({ uid, rows }); }); return () => { active = false; stop(); }; }, [user.uid]);
-  useEffect(() => {
-    setSchoolData({ scope: schoolScope, rows: [] });
-    const target = schoolQuery(member);
-    if (!target) return;
-    let active = true;
-    const stop = onSnapshot(target, snap => {
-      if (!active) return;
-      setSchoolData({ scope: schoolScope, rows: snap.docs.flatMap(d => {
-        const x = d.data();
-        if (!isPersonKey(x.person) || !isSchoolType(x.type)) return [];
-        return [{ id: d.id, title: String(x.title || ''), person: x.person, type: x.type,
-          subject: typeof x.subject === 'string' ? x.subject : '', date: typeof x.date === 'string' ? x.date : '', time: typeof x.time === 'string' ? x.time : '',
-          endTime: typeof x.endTime === 'string' ? x.endTime : '', weekday: Number(x.weekday || 0), note: typeof x.note === 'string' ? x.note : '',
-          source: typeof x.source === 'string' ? x.source : undefined, calendarEventId: typeof x.calendarEventId === 'string' ? x.calendarEventId : undefined, createdAt: timestampDate(x.createdAt) }];
-      }) });
-    }, () => { if (active) setSchoolData({ scope: schoolScope, rows: [] }); });
-    return () => { active = false; stop(); };
-  }, [schoolScope]);
   useEffect(() => {
     const groups: Record<string, StartChatMessage[]> = { family: [], private: [] };
     const load = (group: string, snap: import('firebase/firestore').QuerySnapshot) => {
@@ -166,13 +148,30 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
     return () => { controller.abort(); window.clearInterval(timer); };
   }, []);
 
-  const todayKey = formatDateInput(now); const todayWeekday = now.getDay() === 0 ? 7 : now.getDay();
-  const schoolProjection = useMemo(() => projectSchoolCalendar(schoolRecords, events, schoolReadAccess(member)), [schoolRecords, events, schoolScope]);
-  const sharedEvents = useMemo(() => familyCalendarEvents([...events.map(calendarSourceDisplayEvent), ...schoolProjection.events, ...healthSources.events, ...projectFamilyBirthdays(profiles)]), [events, schoolProjection.events, healthSources.events, profiles]);
-  const todayOccurrences = useMemo(() => generateCalendarOccurrencesFromSources(sharedEvents, startOfDay(now), endOfDay(now)), [sharedEvents, todayKey]);
+  const statusDay = warsawCalendarDay(now); const todayKey = statusDay.key; const todayWeekday = statusDay.weekday;
+  const schoolProjection = useMemo(() => projectSchoolCalendar(schoolRecords, events, schoolSources.access, profiles), [schoolRecords, events, schoolSources.scope, profiles]);
+  const okruszekEvents = useMemo(() => projectOkruszekCalendar(schoolRecords, events, schoolSources.access, profiles), [schoolRecords, events, schoolSources.scope, profiles]);
+  const manualSchoolProjection = useMemo(() => projectManualSchoolCalendar(schoolRecords, events, schoolSources.access), [schoolRecords, events, schoolSources.scope]);
+  const calendarSources = useMemo(() => [...events.map(calendarSourceDisplayEvent), ...schoolProjection.events, ...okruszekEvents,
+    ...manualSchoolProjection.events, ...healthSources.events, ...projectFamilyBirthdays(profiles)], [events, schoolProjection.events, okruszekEvents, manualSchoolProjection.events, healthSources.events, profiles]);
+  const sharedEvents = useMemo(() => familyCalendarEvents(calendarSources), [calendarSources]);
+  const todayOccurrences = useMemo(() => generateCalendarOccurrencesFromSources(calendarRangeDisplaySources(sharedEvents, statusDay.start, statusDay.end), statusDay.start, statusDay.end), [sharedEvents, todayKey]);
+  const statusViewer = useMemo(() => ({ uid: user.uid, person: own }), [user.uid, own]);
+  const statusEvents = useMemo(() => calendarSources.filter(event => !event.private || ((event.person === own || event.person === 'family')
+    && (event.ownerUid || event.createdBy) === user.uid)), [calendarSources, own, user.uid]);
+  const statusOccurrences = useMemo(() => generateCalendarOccurrencesFromSources(calendarRangeDisplaySources(statusEvents, statusDay.start, statusDay.end), statusDay.start, statusDay.end), [statusEvents, todayKey]);
+  const nextStatusRefreshAt = now.getTime() + familyStatusRefreshDelay(statusOccurrences, now, statusViewer);
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState !== 'hidden') setNow(new Date()); };
+    // A snapshot rerender must not move the boundary into the future. Use an
+    // absolute deadline and account for time since React's last clock update.
+    const timer = window.setTimeout(refresh, Math.max(0, nextStatusRefreshAt - Date.now()));
+    window.addEventListener('focus', refresh); document.addEventListener('visibilitychange', refresh);
+    return () => { window.clearTimeout(timer); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
+  }, [nextStatusRefreshAt, user.uid]);
   const openedCalendarOccurrence = calendarDetail?.uid === user.uid ? todayOccurrences.find(item => item.key === calendarDetail.key) : null;
   const todaySchoolItems = useMemo(() => schoolRecords.filter(record => (record.type === 'lesson' || record.type === 'activity') && (record.weekday === todayWeekday || (!!record.date && record.date === todayKey))).sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99')), [schoolRecords, todayWeekday, todayKey]);
-  const familyTime = buildFamilyTime(profiles, todayOccurrences, schoolRecords, now);
+  const familyTime = buildFamilyTime(profiles, statusOccurrences, [], now, statusViewer);
   const openTasks = tasks.filter(item => !item.done).sort((a, b) => ({ high: 0, normal: 1, low: 2 }[a.priority] - { high: 0, normal: 1, low: 2 }[b.priority] || (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99')));
   const openShopping = shopping.filter(item => !item.done);
   const conversations = latestConversations(messages, profiles, user.uid);

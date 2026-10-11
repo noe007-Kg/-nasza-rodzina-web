@@ -21,32 +21,34 @@ function warsawDate(date: Date): string {
   return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
-test('saved Okruszek plan projects one whole stay per school day, with its actual pupil owner', () => {
+test('saved Okruszek plan projects each named lesson separately with its actual pupil owner and explicit breaks', () => {
   const events = projectOkruszekCalendar(savedPlan(), [], parent, profiles);
-  const monday = events.find(event => warsawDate(event.date) === '2026-10-12')!;
-  assert.ok(monday);
-  assert.equal(monday.person, 'Paweł');
-  assert.equal(monday.ownerProfileId, pawel.id);
-  assert.equal(monday.title, 'Okruszek — Paweł');
-  assert.equal(monday.date.toISOString(), '2026-10-12T05:30:00.000Z');
-  assert.equal(monday.endDate.toISOString(), '2026-10-12T13:10:00.000Z');
-  assert.equal(monday.source, 'okruszek');
-  assert.equal(monday.timeZone, 'Europe/Warsaw');
-  assert.equal(monday.repeat, 'none');
-  assert.equal(monday.readOnly, true);
-  assert.equal(monday.private, false);
-  assert.equal(calendarOwnerProfile(monday, profiles)?.id, pawel.id);
-  assert.match(monday.description, /1\. Godziny indywidualne — do potwierdzenia — Rewalidacja/);
-  assert.doesNotMatch(monday.description, /1\. 08:00–08:45/);
-  assert.match(monday.description, /2\. 08:50–09:35 — Rewalidacja/);
-  assert.match(monday.description, /3\. 09:40–10:25 — f\.os i społ/);
-  assert.match(monday.description, /Przerwa obiadowa 12:55–13:35/);
-  assert.match(monday.description, /07:30–08:00 — czas poza siatką dzwonków; pełne godziny zajęć indywidualnych do potwierdzenia/);
-  const wednesday = events.find(event => warsawDate(event.date) === '2026-10-21')!;
-  assert.match(wednesday.description, /9\. Godziny indywidualne — do potwierdzenia — rewalidacja/);
-  assert.doesNotMatch(wednesday.description, /9\. 15:15–16:00/);
-  assert.equal(events.filter(event => warsawDate(event.date) === '2026-10-12').length, 1);
-  assert.equal(new Set(events.map(event => warsawDate(event.date))).size, events.length);
+  const monday = events.filter(event => warsawDate(event.date) === '2026-10-12');
+  const lessons = monday.filter(event => event.eventKind === 'lesson');
+  assert.equal(lessons.length, 8);
+  assert.equal(monday.filter(event => event.eventKind === 'break').length, 7);
+  assert.equal(lessons[0].title, 'Rewalidacja');
+  assert.equal(lessons[0].date.toISOString(), '2026-10-12T05:30:00.000Z');
+  assert.equal(lessons[0].endDate.toISOString(), '2026-10-12T05:55:00.000Z');
+  assert.equal(lessons[0].timingConfidence, 'confirmed');
+  assert.equal(lessons[1].date.toISOString(), '2026-10-12T06:00:00.000Z');
+  assert.equal(lessons[1].endDate.toISOString(), '2026-10-12T06:45:00.000Z');
+  assert.equal(lessons[1].timingConfidence, 'estimated');
+  assert.equal(monday[1].title, 'Przerwa');
+  assert.equal(monday[1].date.toISOString(), '2026-10-12T05:55:00.000Z');
+  assert.equal(monday[1].endDate.toISOString(), '2026-10-12T06:00:00.000Z');
+  assert.ok(monday.every(event => event.person === 'Paweł' && event.ownerProfileId === pawel.id
+    && event.source === 'okruszek' && event.timeZone === 'Europe/Warsaw' && event.repeat === 'none'
+    && event.readOnly === true && event.private === false && calendarOwnerProfile(event, profiles)?.id === pawel.id));
+  assert.equal(monday.some(event => event.date.getTime() === lessons[0].date.getTime()
+    && event.endDate.toISOString() === '2026-10-12T13:10:00.000Z'), false);
+  assert.match(lessons[0].description, /godziny potwierdzone przez rodzica/);
+  assert.match(lessons[1].description, /godziny orientacyjne/);
+  assert.equal(new Set(events.map(event => event.id)).size, events.length);
+  const wednesday = events.filter(event => warsawDate(event.date) === '2026-10-21');
+  assert.equal(wednesday.filter(event => event.title === 'WF').length, 3);
+  assert.ok(wednesday.some(event => event.title === 'rewalidacja' && event.date.toISOString() === '2026-10-21T14:05:00.000Z'
+    && event.endDate.toISOString() === '2026-10-21T14:30:00.000Z' && event.timingConfidence === 'estimated'));
 });
 
 test('the same projected event is visible in Pawel and family views, never in other personal calendars', () => {
@@ -103,24 +105,27 @@ test('reimport, repeated snapshots and duplicated weekdays retain one identity p
   assert.deepEqual(actual, [{ id: first[0].id }, { id: 'unrelated-calendar-event' }]);
 });
 
-test('parent edits change the projected time and holidays without changing occurrence IDs', () => {
+test('saved parent lesson edits change all projections without changing stable occurrence IDs', () => {
   const first = projectOkruszekCalendar(savedPlan(), [], parent, profiles);
   const changed = projectOkruszekCalendar(savedPlan(day => ({ ...day, revision: 1,
-    ...(day.weekday === 1 ? { endTime: '16:00', extraDaysOff: ['2026-10-19'] } : {}) })), [], parent, profiles);
-  const initialMonday = first.find(event => warsawDate(event.date) === '2026-10-12')!;
-  const changedMonday = changed.find(event => warsawDate(event.date) === '2026-10-12')!;
+    ...(day.weekday === 1 ? { lessonTimings: [{ position: 1, time: '07:35', endTime: '07:55', confidence: 'confirmed' }], extraDaysOff: ['2026-10-19'] } : {}) })), [], parent, profiles);
+  const initialMonday = first.find(event => warsawDate(event.date) === '2026-10-12' && event.eventKind === 'lesson')!;
+  const changedMonday = changed.find(event => event.id === initialMonday.id)!;
   assert.equal(initialMonday.id, changedMonday.id);
-  assert.equal(changedMonday.endDate.toISOString(), '2026-10-12T14:00:00.000Z');
+  assert.equal(changedMonday.date.toISOString(), '2026-10-12T05:35:00.000Z');
+  assert.equal(changedMonday.endDate.toISOString(), '2026-10-12T05:55:00.000Z');
+  assert.equal(changedMonday.timingConfidence, 'confirmed');
   assert.equal(changed.some(event => warsawDate(event.date) === '2026-10-19'), false);
 });
 
-test('blank slots are retained as blank slots, not named lessons or invented lesson times', () => {
-  const tuesday = projectOkruszekCalendar(savedPlan(), [], parent, profiles).find(event => warsawDate(event.date) === '2026-10-13')!;
-  assert.match(tuesday.description, /1\. — \(pusta pozycja; nie jest zajęciem\)\n2\. 08:50–09:35 — Zaj\. k\. kreat/);
-  assert.match(tuesday.description, /3\. 09:40–10:25 — Zaj\. k\. kreat/);
-  assert.match(tuesday.description, /4\. 10:30–11:15 — religia/);
-  assert.match(tuesday.description, /9\. 15:15–16:00 — Z\.r\.k/);
-  assert.doesNotMatch(tuesday.description, /1\. 08:00–08:45/);
+test('blank paper positions never become calendar lessons or unnamed attendance blocks', () => {
+  const tuesday = projectOkruszekCalendar(savedPlan(), [], parent, profiles).filter(event => warsawDate(event.date) === '2026-10-13');
+  const lessons = tuesday.filter(event => event.eventKind === 'lesson');
+  assert.equal(lessons.length, 8);
+  assert.equal(lessons[0].title, 'Zaj. k. kreat');
+  assert.equal(lessons[0].date.toISOString(), '2026-10-13T06:50:00.000Z');
+  assert.equal(lessons.at(-1)?.endDate.toISOString(), '2026-10-13T14:00:00.000Z');
+  assert.equal(tuesday.some(event => ['—', '-'].includes(event.title) || event.id.endsWith(':lesson:1')), false);
 });
 
 test('Okruszek dates keep Warsaw school hours across both clock changes and device time zones', () => {
@@ -135,7 +140,9 @@ test('Okruszek dates keep Warsaw school hours across both clock changes and devi
       const afterSpring = events.find(event => warsawDate(event.date) === '2027-03-31')!;
       assert.equal(beforeSpring.date.toISOString(), '2027-03-24T07:50:00.000Z', timeZone);
       assert.equal(afterSpring.date.toISOString(), '2027-03-31T06:50:00.000Z', timeZone);
-      assert.equal(afterSpring.endDate.toISOString(), '2027-03-31T14:30:00.000Z', timeZone);
+      assert.equal(afterSpring.endDate.toISOString(), '2027-03-31T07:35:00.000Z', timeZone);
+      const lastWednesday = events.filter(event => warsawDate(event.date) === '2027-03-31' && event.eventKind === 'lesson').at(-1)!;
+      assert.equal(lastWednesday.endDate.toISOString(), '2027-03-31T14:30:00.000Z', timeZone);
     }
   } finally { if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous; }
 });

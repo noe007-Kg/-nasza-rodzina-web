@@ -2,7 +2,9 @@ import { formatTime, memberEmoji } from '../app-shared';
 import type { FamilyMemberProfile } from '../family-members';
 import { Icon } from '../ui';
 import type { FamilyNotification } from '../notifications/model';
-import { countdownText, type FamilyTimeProjection, type latestConversations, type shoppingPreview } from './start-tile-projections';
+import { countdownText, formatFamilyStatusTime, type FamilyTimeProjection, type latestConversations, type shoppingPreview } from './start-tile-projections';
+import { calendarOwnerColor } from '../calendar-v2';
+import { memberPersonKey } from '../family-members';
 import { SHOPPING_META } from './ShoppingPage';
 
 function PreviewAvatar({ profile, fallback = '👤' }: { profile?: FamilyMemberProfile; fallback?: string }) {
@@ -12,13 +14,15 @@ function PreviewAvatar({ profile, fallback = '👤' }: { profile?: FamilyMemberP
 
 export function FamilyTimeDetails({ summary, now }: { summary: FamilyTimeProjection; now: Date }) {
   return <>
-    <span className="start-family-time-summary"><span><span className="start-card-status">Wolni według widocznego planu od</span><span className="start-card-value">{summary.endAt ? (summary.endAt <= now ? 'Teraz' : formatTime(summary.endAt)) : '—'}</span></span>
+    <span className="start-family-time-summary"><span><span className="start-card-status">Wolni według widocznego planu od</span><span className="start-card-value">{summary.endAt ? (summary.endAt <= now ? 'Teraz' : formatFamilyStatusTime(summary.endAt)) : '—'}</span></span>
       {summary.endAt && <span className="start-family-countdown"><Icon name="clock" size={15}/>{countdownText(summary.endAt, now)}</span>}</span>
     <span className="start-card-preview start-family-time-details">
       <span className="start-family-plan-note">{summary.incomplete ? 'Niepełny plan — tylko dostępne godziny.' : 'Praca, szkoła i zajęcia.'}</span>
-      <span className="start-family-mini-profiles" data-testid="start-family-time-profiles">{summary.members.map(({ profile, endAt, hasPlan, incomplete }) => <span key={profile.id} className="start-family-mini-profile" data-profile-id={profile.id}>
+      <span className="start-family-mini-profiles" data-testid="start-family-time-profiles">{summary.members.map(({ profile, endAt, currentStatus }) => <span key={profile.id} className="start-family-mini-profile" data-profile-id={profile.id} style={{ '--calendar-owner-color': calendarOwnerColor(memberPersonKey(profile), profile) } as import('react').CSSProperties}>
         <PreviewAvatar profile={profile}/><strong>{profile.name || 'Członek rodziny'}</strong>
-        <time>{endAt ? formatTime(endAt) : '—'}</time><small>{!hasPlan ? 'brak planu' : incomplete ? 'niepełny plan' : endAt && endAt <= now ? 'zakończone' : endAt ? `do ${formatTime(endAt)}` : 'brak godzin'}</small>
+        <time>{endAt ? formatFamilyStatusTime(endAt) : '—'}</time><small className="start-family-current-status" data-status-kind={currentStatus.kind} data-status-estimated={currentStatus.estimated} aria-live="polite" aria-atomic="true">
+          <span className="start-family-status-dot" aria-hidden="true"/><span>{currentStatus.estimated ? 'Orientacyjnie: ' : ''}{currentStatus.title}{currentStatus.endAt ? ` — do ${formatFamilyStatusTime(currentStatus.endAt)}` : ''}</span>
+        </small>
       </span>)}</span>
       {summary.members.length === 0 && <span>Oczekiwanie na profile rodziny.</span>}
     </span>

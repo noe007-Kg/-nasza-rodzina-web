@@ -61,6 +61,17 @@ test('parent can project multiple actual students without hardcoding family size
   assert.equal(result.events.length, 3);
 });
 
+test('display assignment excludes SP4 from Pawel without changing Nikodem provider data', () => {
+  const rows = [lesson(), lesson({ id: 'wrong-pupil', person: 'Paweł' })];
+  const profiles = [{ id: 'pawel-profile', name: 'Paweł', personKey: 'Paweł', role: 'child', active: true, schoolEnabled: true },
+    { id: 'nikodem-profile', name: 'Nikodem', personKey: 'Nikodem', role: 'child', active: true, schoolEnabled: true }];
+  const nikodem = Object.freeze(rows[0]);
+  const result = projectSchoolCalendar(rows, [], parent, profiles);
+  assert.deepEqual(result.events.map(event => event.person), ['Nikodem']);
+  assert.deepEqual(result, projectSchoolCalendar([nikodem], [], parent));
+  assert.equal(rows.length, 2);
+});
+
 test('only eduVULCAN lessons and activities are projected; messages and grades are not calendar inputs', () => {
   const result = projectSchoolCalendar([
     lesson({ id: 'activity', type: 'activity' }),

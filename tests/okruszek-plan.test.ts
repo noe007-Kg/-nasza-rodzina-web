@@ -3,7 +3,7 @@ import test from 'node:test';
 import { validateSchoolEntry } from '../src/school-import.ts';
 import {
   createOkruszekDays, OKRUSZEK_END, OKRUSZEK_PLAN_ID, OKRUSZEK_START,
-  okruszekDateStatus, okruszekDayEntry, okruszekDayId, okruszekLessonRows, parseOkruszekDay, validateOkruszekDays,
+  okruszekDateStatus, okruszekDayEntry, okruszekDayId, okruszekLessonRows, okruszekScheduleBreaks, parseOkruszekDay, validateOkruszekDays,
 } from '../src/school/okruszek-plan.ts';
 import { schoolOwnerProfileId, schoolSourcesForProfile } from '../src/school/profile-schools.ts';
 
@@ -124,131 +124,114 @@ test('parent edits validate five unique days, increasing bounds, original string
   assert.throws(() => validateOkruszekDays(days.map(day => ({ ...day, endTime: '' }))));
 });
 
-test('individual Okruszek lesson rows use all nine official school bell slots', () => {
-  const day = createOkruszekDays('Paweł')[3];
-  const rows = okruszekLessonRows(day);
-  assert.deepEqual(rows.map(row => [row.position, row.lesson, row.empty, row.time, row.endTime]), [
-    [1, 'PDP', false, '08:00', '08:45'],
-    [2, 'PDP', false, '08:50', '09:35'],
-    [3, 'PDP/ praktyki', false, '09:40', '10:25'],
-    [4, 'PDP/ praktyki', false, '10:30', '11:15'],
-    [5, 'PDP/ praktyki', false, '11:20', '12:05'],
-    [6, 'PDP/ praktyki', false, '12:10', '12:55'],
-    [7, 'rewalidacja', false, '13:35', '14:20'],
-    [8, 'PDP', false, '14:25', '15:10'],
-    [9, 'logopedia', false, '15:15', '16:00'],
+test('the school bell template remains available but all unsaved assignments are clearly estimates', () => {
+  const rows = okruszekLessonRows(createOkruszekDays('Paweł')[3]);
+  assert.deepEqual(rows.map(row => [row.time, row.endTime]), [
+    ['08:00', '08:45'], ['08:50', '09:35'], ['09:40', '10:25'], ['10:30', '11:15'],
+    ['11:20', '12:05'], ['12:10', '12:55'], ['13:35', '14:20'], ['14:25', '15:10'], ['15:15', '16:00'],
   ]);
+  assert.ok(rows.every(row => row.confidence === 'estimated'));
 });
 
-test('the official lunch break stays a gap between sixth and seventh lessons', () => {
-  const rows = okruszekLessonRows(createOkruszekDays('Paweł')[4]);
-  assert.equal(rows.length, 9);
-  assert.equal(rows[5].endTime, '12:55');
-  assert.equal(rows[6].time, '13:35');
-  assert.equal(rows.some(row => ['12:55', '13:15'].includes(row.time || '')), false);
-  assert.ok(rows.every(row => !/obiad|przerwa/i.test(row.lesson)));
+test('Monday uses the parent-confirmed first lesson and five-minute break, with next lesson at 08:00', () => {
+  const day = createOkruszekDays('Paweł')[0];
+  const rows = okruszekLessonRows(day);
+  assert.deepEqual([rows[0].time, rows[0].endTime, rows[0].confidence], ['07:30', '07:55', 'confirmed']);
+  assert.deepEqual([rows[1].time, rows[1].endTime, rows[1].confidence], ['08:00', '08:45', 'estimated']);
+  assert.deepEqual(okruszekScheduleBreaks(rows)[0], { afterPosition: 1, time: '07:55', endTime: '08:00', lunch: false, confidence: 'confirmed' });
+  assert.equal(rows.length, 8);
+  assert.ok(rows.every((row, index) => !index || row.time! >= rows[index - 1].endTime!));
+  assert.equal(day.endTime, '15:10');
+  assert.equal(rows.at(-1)?.endTime, '14:20'); // No invented class fills unspecified attendance.
 });
 
-test('blank first positions retain their slot number without becoming a lesson or acquiring a time', () => {
+test('Wednesday has all three distinct WF lessons and a five-minute break before the final additional draft lesson', () => {
+  const day = createOkruszekDays('Paweł')[2];
+  const rows = okruszekLessonRows(day);
+  assert.equal(rows.filter(row => !row.empty && row.lesson === 'WF').length, 3);
+  assert.deepEqual([rows[7].time, rows[7].endTime], ['15:15', '16:00']);
+  assert.deepEqual([rows[8].time, rows[8].endTime, rows[8].confidence], ['16:05', '16:30', 'estimated']);
+  assert.ok(okruszekScheduleBreaks(rows).some(pause => pause.time === '16:00' && pause.endTime === '16:05' && pause.confidence === 'estimated'));
+  assert.ok(rows.filter(row => !row.empty).every(row => row.time! >= day.time && row.endTime! <= day.endTime));
+});
+
+test('blank positions never acquire a time or become a break or lesson', () => {
   for (const weekdayIndex of [1, 2]) {
     const day = createOkruszekDays('Paweł')[weekdayIndex];
     for (const blank of ['—', '-']) {
       day.lessons[0] = blank;
       const rows = okruszekLessonRows(day);
-      assert.equal(rows[0].position, 1);
-      assert.equal(rows[0].empty, true);
-      assert.equal(rows[0].time, null);
-      assert.equal(rows[0].endTime, null);
-      assert.equal(rows[1].position, 2);
+      assert.deepEqual([rows[0].position, rows[0].empty, rows[0].time, rows[0].endTime], [1, true, null, null]);
       assert.equal(rows[1].time, '08:50');
-      assert.equal(rows[1].endTime, '09:35');
-      assert.deepEqual(rows.map(row => row.lesson), day.lessons);
+      assert.equal(okruszekScheduleBreaks(rows).some(pause => pause.afterPosition === 1), false);
     }
   }
 });
 
-test('additional revalidation outside regular bells retains whole-stay bounds without a false lesson time', () => {
-  const monday = createOkruszekDays('Paweł')[0];
-  const wednesday = createOkruszekDays('Paweł')[2];
-  const mondayRows = okruszekLessonRows(monday);
-  const wednesdayRows = okruszekLessonRows(wednesday);
-  assert.equal(monday.time, '07:30');
-  assert.equal(monday.endTime, '15:10');
-  assert.equal(mondayRows[0].individual, true);
-  assert.deepEqual([mondayRows[0].time, mondayRows[0].endTime], [null, null]);
-  assert.equal(mondayRows[1].individual, false);
-  assert.deepEqual([mondayRows[1].time, mondayRows[1].endTime], ['08:50', '09:35']);
-  assert.equal(mondayRows.at(-1)?.endTime, '15:10');
-  assert.equal(wednesday.time, '08:50');
-  assert.equal(wednesday.endTime, '16:30');
-  assert.equal(wednesdayRows.at(-1)?.individual, true);
-  assert.deepEqual([wednesdayRows.at(-1)?.time, wednesdayRows.at(-1)?.endTime], [null, null]);
-  assert.equal(wednesdayRows[7].individual, false);
-  assert.deepEqual([wednesdayRows[7].time, wednesdayRows[7].endTime], ['14:25', '15:10']);
-  assert.equal(mondayRows.some(row => row.time === '07:30'), false);
-  assert.equal(wednesdayRows.some(row => row.endTime === '16:30'), false);
+test('only planned five-minute and lunch breaks are inferred, never every empty calendar gap', () => {
+  const day = createOkruszekDays('Paweł')[3];
+  let rows = okruszekLessonRows(day);
+  assert.ok(okruszekScheduleBreaks(rows).some(pause => pause.time === '12:55' && pause.endTime === '13:35' && pause.lunch));
+  day.lessonTimings = [{ position: 1, time: '08:00', endTime: '08:20', confidence: 'confirmed' }];
+  rows = okruszekLessonRows(day);
+  assert.equal(okruszekScheduleBreaks(rows).some(pause => pause.afterPosition === 1), false);
+  day.lessonTimings[0].breakAfter = true;
+  assert.ok(okruszekScheduleBreaks(okruszekLessonRows(day)).some(pause => pause.time === '08:20' && pause.endTime === '08:50'));
+  day.lessonTimings[0].breakAfter = false;
+  assert.equal(okruszekScheduleBreaks(okruszekLessonRows(day)).some(pause => pause.afterPosition === 1), false);
 });
 
-test('renamed or newly added parent entries do not silently inherit a confirmed bell time', () => {
+test('saved exact lesson times and confidence override the legacy draft without changing the source text', () => {
+  const days = createOkruszekDays('Paweł', 'actual-pawel-profile');
+  days[3].lessonTimings = [{ position: 1, time: '08:05', endTime: '08:40', confidence: 'confirmed', breakAfter: false }];
+  const checked = validateOkruszekDays(days);
+  const entry = okruszekDayEntry(checked[3]);
+  assert.deepEqual(entry.manualDayPlan.lessonTimings, days[3].lessonTimings);
+  const restored = parseOkruszekDay('stored', entry)!;
+  assert.deepEqual(restored, { ...days[3], id: 'stored' });
+  assert.deepEqual([okruszekLessonRows(restored)[0].time, okruszekLessonRows(restored)[0].endTime, okruszekLessonRows(restored)[0].confidence], ['08:05', '08:40', 'confirmed']);
+  checked[3].lessonTimings![0].time = '08:10';
+  assert.equal(days[3].lessonTimings[0].time, '08:05');
+  assert.equal(entry.manualDayPlan.lessonTimings![0].time, '08:05');
+});
+
+test('overlapping, out-of-bounds, duplicate and blank-slot individual times are rejected', () => {
+  for (const timings of [
+    [{ position: 1, time: '08:00', endTime: '09:00', confidence: 'confirmed' }],
+    [{ position: 1, time: '07:55', endTime: '08:45', confidence: 'confirmed' }],
+    [{ position: 1, time: '08:00', endTime: '08:45', confidence: 'invented' }],
+    [{ position: 1, time: '08:00', endTime: '08:45', confidence: 'confirmed' }, { position: 1, time: '08:00', endTime: '08:45', confidence: 'confirmed' }],
+    [{ position: 10, time: '08:00', endTime: '08:45', confidence: 'confirmed' }],
+  ]) {
+    const days = createOkruszekDays('Paweł');
+    days[3].lessonTimings = timings as typeof days[3]['lessonTimings'];
+    assert.throws(() => validateOkruszekDays(days));
+    const entry = okruszekDayEntry(days[3]);
+    assert.equal(parseOkruszekDay('malformed', entry), null);
+  }
+  const days = createOkruszekDays('Paweł');
+  days[1].lessonTimings = [{ position: 1, time: '08:50', endTime: '09:35', confidence: 'confirmed' }];
+  assert.throws(() => validateOkruszekDays(days));
+});
+
+test('parent edits and appended subjects retain their text and are never labelled officially confirmed', () => {
   const day = createOkruszekDays('Paweł')[3];
-  day.lessons[0] = 'Ręczna poprawka rodzica';
-  day.lessons.push('Dodatkowe zajęcie rodzica');
+  day.lessons[0] = 'Ręczna poprawka rodzica'; day.lessons.push('Dodatkowy wpis rodzica');
   const rows = okruszekLessonRows(day);
-  assert.deepEqual(rows.map(row => row.lesson), day.lessons);
-  assert.deepEqual([rows[0].time, rows[0].endTime], [null, null]);
-  assert.equal(rows.at(-1)?.position, 10);
+  assert.equal(rows[0].confidence, 'estimated');
+  assert.equal(rows[0].lesson, 'Ręczna poprawka rodzica');
   assert.deepEqual([rows.at(-1)?.time, rows.at(-1)?.endTime], [null, null]);
-  assert.deepEqual([rows[1].time, rows[1].endTime], ['08:50', '09:35']);
+  assert.equal(rows.at(-1)?.lesson, 'Dodatkowy wpis rodzica');
 });
 
-test('moving distinct lessons to different positions leaves their times unconfirmed', () => {
-  const day = createOkruszekDays('Paweł')[3];
-  [day.lessons[0], day.lessons[2]] = [day.lessons[2], day.lessons[0]];
-  const rows = okruszekLessonRows(day);
-  assert.equal(rows[0].lesson, 'PDP/ praktyki');
-  assert.equal(rows[2].lesson, 'PDP');
-  for (const index of [0, 2]) assert.deepEqual([rows[index].time, rows[index].endTime], [null, null]);
-  assert.deepEqual([rows[1].time, rows[1].endTime], ['08:50', '09:35']);
-});
-
-test('a bell slot outside the saved whole-day stay is not confirmed or truncated', () => {
-  const day = createOkruszekDays('Paweł')[3];
-  day.time = '08:10'; day.endTime = '15:50';
-  const rows = okruszekLessonRows(day);
-  assert.deepEqual([rows[0].time, rows[0].endTime], [null, null]);
-  assert.deepEqual([rows[8].time, rows[8].endTime], [null, null]);
-  assert.deepEqual([rows[1].time, rows[1].endTime], ['08:50', '09:35']);
-  assert.deepEqual([rows[7].time, rows[7].endTime], ['14:25', '15:10']);
-  assert.equal(day.time, '08:10'); assert.equal(day.endTime, '15:50');
-});
-
-test('lesson-time projection does not mutate saved legacy data or introduce Firestore fields', () => {
+test('projection leaves saved legacy documents unchanged and never silently persists draft timings', () => {
   const day = createOkruszekDays('Paweł', 'actual-pawel-profile')[0];
   day.revision = 2; day.extraDaysOff = ['2026-10-15'];
-  const original = structuredClone(day);
-  const originalRecord = okruszekDayEntry(day);
+  const original = structuredClone(day); const entry = okruszekDayEntry(day);
   Object.freeze(day.lessons); Object.freeze(day.extraDaysOff); Object.freeze(day);
-  const rows = okruszekLessonRows(day);
-  assert.ok(rows.length);
+  okruszekLessonRows(day);
   assert.deepEqual(day, original);
-  assert.deepEqual(okruszekDayEntry(day), originalRecord);
-  assert.deepEqual(parseOkruszekDay('saved-day', originalRecord), { ...original, id: 'saved-day' });
-});
-
-test('legacy spellings still match the published bell positions without rewriting saved abbreviations', () => {
-  const days = createOkruszekDays('Paweł', 'actual-pawel-profile').map(day => ({ ...day,
-    lessons: day.lessons.map(lesson => lesson.replace('PDP/ kuchnia', 'PDP/kuchnia')
-      .replace('PDP/ praktyki', 'PDP/praktyki').replace(/^Z\.k\.k\.$/, 'Z.k.k')) }));
-  const original = structuredClone(days);
-  const records = days.map(okruszekDayEntry);
-  const rows = days.map(okruszekLessonRows);
-  assert.deepEqual([rows[0][4].lesson, rows[0][4].time, rows[0][4].endTime], ['PDP/kuchnia', '11:20', '12:05']);
-  assert.deepEqual([rows[2][1].lesson, rows[2][1].time, rows[2][1].endTime], ['PDP/kuchnia', '08:50', '09:35']);
-  assert.deepEqual([rows[3][2].lesson, rows[3][2].time, rows[3][2].endTime], ['PDP/praktyki', '09:40', '10:25']);
-  assert.deepEqual([rows[4][0].lesson, rows[4][0].time, rows[4][0].endTime], ['Z.k.k', '08:00', '08:45']);
-  assert.deepEqual([rows[4][1].lesson, rows[4][1].time, rows[4][1].endTime], ['Z.k.k', '08:50', '09:35']);
-  assert.equal(rows[0][0].individual, true);
-  assert.equal(rows[2][8].individual, true);
-  assert.deepEqual(days, original);
-  assert.deepEqual(days.map(okruszekDayEntry), records);
+  assert.deepEqual(okruszekDayEntry(day), entry);
+  assert.equal(Object.hasOwn(entry.manualDayPlan, 'lessonTimings'), false);
+  assert.deepEqual(parseOkruszekDay('saved-day', entry), { ...original, id: 'saved-day' });
 });

@@ -40,6 +40,8 @@ export type Member = {
   id?: string;
   personKey?: string;
   birthDate?: string;
+  calendarColor?: string;
+  color?: string;
   adult?: boolean;
   name?: string;
   role?: string;
@@ -111,6 +113,9 @@ export type CalendarEventData = {
   ownerProfileId?: string;
   readOnly?: boolean;
   cancelled?: boolean;
+  /** Display-only school timing metadata; never a provider/session setting. */
+  eventKind?: 'lesson' | 'break';
+  timingConfidence?: 'confirmed' | 'estimated';
 };
 
 export type CalendarOccurrence = {

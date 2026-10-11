@@ -16,8 +16,13 @@ export function familyCalendarEvents(events: readonly CalendarEventData[]): Cale
 }
 
 /** Owner colours are stable identifiers, independent of Start tile preferences. */
-export function calendarOwnerColor(person: string): string {
+export function calendarOwnerColor(person: string, profile?: { calendarColor?: string; color?: string; personKey?: string; name?: string }): string {
+  const saved = profile?.calendarColor || profile?.color;
+  if (typeof saved === 'string' && /^(?:#[\da-f]{3,4}|#[\da-f]{6}|#[\da-f]{8}|(?:rgb|hsl)a?\([\d.,%\s/+-]+\))$/i.test(saved.trim())) return saved.trim();
   if (!person || person === 'family') return '#7c5cfc';
+  const defaults: Record<string, string> = { Sebastian: '#2584e8', Dominika: '#e83e9f', Paweł: '#8459db', Nikodem: '#ed8b25', Layla: '#39a96b', Lajla: '#39a96b' };
+  const fallback = defaults[profile?.personKey || profile?.name || person];
+  if (fallback) return fallback;
   let hash = 2166136261;
   for (const character of person.normalize('NFC')) hash = Math.imul(hash ^ character.codePointAt(0)!, 16777619);
   return `hsl(${((hash >>> 16) ^ (hash & 0xffff)) % 360} 68% 43%)`;

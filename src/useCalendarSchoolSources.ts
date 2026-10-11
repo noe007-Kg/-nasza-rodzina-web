@@ -1,12 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, Timestamp } from 'firebase/firestore';
 import { db } from './firebase';
-import type { Member } from './app-shared';
+import { isSchoolType, type Member } from './app-shared';
 import type { CalendarSchoolRecord } from './calendar-source-projections';
 import { schoolReadAccess, schoolReadAccessKey } from './school/read-access';
 import { parseOkruszekDay } from './school/okruszek-plan';
 
-type ScopedSchoolRecords = { scope: string; rows: CalendarSchoolRecord[]; error: boolean };
+export type CalendarSchoolDisplayRecord = CalendarSchoolRecord & {
+  createdAt?: Date;
+  eventKind?: 'lesson' | 'break';
+  timingConfidence?: 'confirmed' | 'estimated';
+};
+type ScopedSchoolRecords = { scope: string; rows: CalendarSchoolDisplayRecord[]; error: boolean };
 
 /** One existing schoolItems listener. Parent mailboxes and personal messages are never queried. */
 export function useCalendarSchoolSources(uid: string, member: Member | null) {
@@ -23,7 +28,7 @@ export function useCalendarSchoolSources(uid: string, member: Member | null) {
       : query(collection(db, 'schoolItems'), where('person', '==', access.person));
     const stop = onSnapshot(target, snapshot => {
       if (!active || currentScope.current !== scope) return;
-      const rows = snapshot.docs.flatMap<CalendarSchoolRecord>(document => {
+      const rows = snapshot.docs.flatMap<CalendarSchoolDisplayRecord>(document => {
         const data = document.data();
         if (typeof data.person !== 'string'
           || (access.scope === 'student' && data.person !== access.person)) return [];
@@ -33,11 +38,15 @@ export function useCalendarSchoolSources(uid: string, member: Member | null) {
           title: text(data.title), date: '', weekday: 0, time: manualDay.time, endTime: manualDay.endTime,
           note: text(data.note), createdBy: text(data.createdBy), schoolPlanId: text(data.schoolPlanId),
           schoolPlanRevision: manualDay.revision, ownerProfileId: text(data.ownerProfileId), manualDayPlan: data.manualDayPlan }];
-        if (data.source !== 'eduvulcan' || !['lesson', 'activity'].includes(data.type)) return [];
+        if (!isSchoolType(data.type)) return [];
         return [{ id: document.id, person: data.person, type: data.type,
-          source: 'eduvulcan', title: text(data.title), subject: text(data.subject),
+          ...(typeof data.source === 'string' ? { source: data.source } : {}), title: text(data.title), subject: text(data.subject),
           date: text(data.date), time: text(data.time), endTime: text(data.endTime),
-          note: text(data.note), calendarEventId: text(data.calendarEventId), createdBy: text(data.createdBy) }];
+          weekday: Number.isInteger(data.weekday) ? data.weekday : undefined,
+          note: text(data.note), calendarEventId: text(data.calendarEventId), createdBy: text(data.createdBy),
+          createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : undefined,
+          ...(data.eventKind === 'lesson' || data.eventKind === 'break' ? { eventKind: data.eventKind } : {}),
+          ...(data.timingConfidence === 'confirmed' || data.timingConfidence === 'estimated' ? { timingConfidence: data.timingConfidence } : {}) }];
       });
       setState({ scope, rows, error: false });
     }, () => {

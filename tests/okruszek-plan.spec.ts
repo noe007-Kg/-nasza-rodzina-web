@@ -22,7 +22,7 @@ async function openCalendar(page: Page) {
   await expect(page.locator('.calendar-day-view')).toBeVisible();
 }
 
-const calendarPlan = (page: Page) => page.locator('.calendar-day-view .calendar-event[data-source="okruszek"]');
+const calendarPlan = (page: Page) => page.locator('.calendar-day-view .calendar-event[data-source="okruszek"][data-event-kind="lesson"]');
 
 async function selectCalendarPerson(page: Page, name: string) {
   await page.locator('.person-filters').getByRole('button', { name, exact: true }).click();
@@ -90,11 +90,14 @@ test('rodzic przypisuje Okruszek Pawłowi, zachowuje poprawki i jeden plan w kal
   const plan = page.getByTestId('okruszek-plan');
   await expect(plan).toContainText('Plan przygotowany — niezapisany');
   await expect(plan.getByTestId('okruszek-day-1').locator('.okruszek-lesson-name')).toHaveText(['Rewalidacja', 'Rewalidacja', 'f.os i społ', 'f.os i społ', 'PDP/ kuchnia', 'Z.R.Z', 'PDP', 'PDP']);
-  await expect(plan.getByTestId('okruszek-day-1').locator('.okruszek-lesson-time')).toHaveText(['Godziny indywidualne — do potwierdzenia', '08:50–09:35', '09:40–10:25', '10:30–11:15', '11:20–12:05', '12:10–12:55', '13:35–14:20', '14:25–15:10']);
+  await expect(plan.getByTestId('okruszek-day-1').locator('.okruszek-lesson-time')).toHaveText(['07:30–07:55', '08:00–08:45', '08:50–09:35', '09:40–10:25', '10:30–11:15', '11:20–12:05', '12:10–12:55', '13:35–14:20']);
+  await expect(plan.getByTestId('okruszek-day-1')).toContainText('Przerwa 07:55–08:00');
   await expect(plan.getByTestId('okruszek-day-1')).toContainText('Przerwa obiadowa 12:55–13:35');
-  await expect(plan.getByTestId('okruszek-day-1')).toContainText('07:30–08:00 — czas poza siatką dzwonków; pełne godziny zajęć indywidualnych do potwierdzenia');
-  await expect(plan.getByTestId('okruszek-day-3')).toContainText('16:00–16:30 — czas poza siatką dzwonków; pełne godziny zajęć indywidualnych do potwierdzenia');
-  await expect(plan.getByTestId('okruszek-day-3').locator('.okruszek-lesson-time').last()).toHaveText('Godziny indywidualne — do potwierdzenia');
+  await expect(plan.getByTestId('okruszek-day-1')).toContainText('14:20–15:10 — pobyt w szkole; brak przypisanego przedmiotu');
+  await expect(plan.getByTestId('okruszek-day-1').locator('.okruszek-timing-confidence').first()).toHaveText('Godziny potwierdzone');
+  await expect(plan.getByTestId('okruszek-day-1').locator('.okruszek-timing-confidence').nth(1)).toHaveText('Godziny orientacyjne');
+  await expect(plan.getByTestId('okruszek-day-3')).toContainText('Przerwa 16:00–16:05');
+  await expect(plan.getByTestId('okruszek-day-3').locator('.okruszek-lesson-time').last()).toHaveText('16:05–16:30');
   await expect(plan.getByTestId('okruszek-day-5').locator('.okruszek-lesson-name').first()).toHaveText('Z.k.k.');
   await expect(plan.getByTestId('okruszek-day-2').locator('li').first()).toContainText('—');
   await expect(plan.getByTestId('okruszek-day-2').locator('li').first().locator('.okruszek-lesson-time')).toHaveCount(0);
@@ -166,31 +169,32 @@ test('rodzic przypisuje Okruszek Pawłowi, zachowuje poprawki i jeden plan w kal
   await openCalendar(page);
   await expect(calendarPlan(page)).toHaveCount(0);
   await selectCalendarPerson(page, 'Paweł');
-  await expect(calendarPlan(page)).toHaveCount(1);
-  await expect(calendarPlan(page)).toContainText('Okruszek');
-  await expect(calendarPlan(page).locator('.calendar-owner-badge')).toContainText('Paweł');
-  await expect(calendarPlan(page).getByTestId('calendar-source-badge')).toHaveText('Okruszek');
-  const ownerColour = await calendarPlan(page).evaluate(element => (element as HTMLElement).style.getPropertyValue('--calendar-owner-color'));
+  await expect(calendarPlan(page)).toHaveCount(8);
+  await expect(calendarPlan(page).first().getByTestId('calendar-source-badge')).toHaveText('Okruszek');
+  await expect(calendarPlan(page).first().locator('.calendar-owner-badge')).toContainText('Paweł');
+  await expect(calendarPlan(page).first().getByTestId('calendar-source-badge')).toHaveText('Okruszek');
+  const ownerColour = await calendarPlan(page).first().evaluate(element => (element as HTMLElement).style.getPropertyValue('--calendar-owner-color'));
   expect(ownerColour).toBeTruthy();
-  const personalLabel = await calendarPlan(page).innerText();
-  await calendarPlan(page).click();
+  const personalLabels = await calendarPlan(page).allInnerTexts();
+  await expect(page.locator('.calendar-day-view .calendar-event[data-source="okruszek"][data-event-kind="break"]')).toHaveCount(7);
+  await calendarPlan(page).first().click();
   const details = page.getByRole('dialog');
-  await expect(details).toContainText('07:30 – 15:20');
+  await expect(details).toContainText('07:30 – 07:55');
   await expect(details).toContainText('Paweł');
-  await expect(details).toContainText('f.os i społ');
-  await expect(details).toContainText('PDP/kuchnia');
-  await expect(details).toContainText('Z.R.Z');
+  await expect(details).toContainText('Rewalidacja');
+  await expect(details).toContainText('godziny potwierdzone przez rodzica');
+  await expect(details).toContainText('Pobyt w szkole: 07:30–15:20');
+  await details.getByRole('button', { name: 'Zamknij', exact: true }).click();
+  await calendarPlan(page).last().click();
+  await expect(details).toContainText('13:35 – 14:20');
   await expect(details).toContainText('PDP — zmiana testowa');
-  await expect(details).toContainText('Godziny indywidualne — do potwierdzenia — Rewalidacja');
-  await expect(details).toContainText('08:50–09:35 — Rewalidacja');
-  await expect(details).toContainText('Przerwa obiadowa 12:55–13:35');
-  await expect(details).toContainText('Godziny niepotwierdzone — PDP — zmiana testowa');
+  await expect(details).toContainText('godziny orientacyjne');
   await expect(details.getByRole('button', { name: /Edytuj|Usuń/ })).toHaveCount(0);
   await details.getByRole('button', { name: 'Zamknij', exact: true }).click();
   await selectCalendarPerson(page, 'Cała rodzina');
-  await expect(calendarPlan(page)).toHaveCount(1);
-  expect(await calendarPlan(page).innerText()).toBe(personalLabel);
-  expect(await calendarPlan(page).evaluate(element => (element as HTMLElement).style.getPropertyValue('--calendar-owner-color'))).toBe(ownerColour);
+  await expect(calendarPlan(page)).toHaveCount(8);
+  expect(await calendarPlan(page).allInnerTexts()).toEqual(personalLabels);
+  expect(await calendarPlan(page).first().evaluate(element => (element as HTMLElement).style.getPropertyValue('--calendar-owner-color'))).toBe(ownerColour);
   for (const person of ['Nikodem', 'Dominika', 'Moje wydarzenia']) {
     await selectCalendarPerson(page, person);
     await expect(calendarPlan(page)).toHaveCount(0);
@@ -214,8 +218,8 @@ test('Paweł widzi plan bez przycisków zarządzania, Nikodem zachowuje własną
   await expect(plan).toContainText('Plan zapisany');
   await expect(plan.getByRole('button', { name: /Zapisz plan|Edytuj plan/ })).toHaveCount(0);
   await openCalendar(page);
-  await expect(calendarPlan(page)).toHaveCount(1);
-  await expect(calendarPlan(page).locator('.calendar-owner-badge')).toContainText('Paweł');
+  await expect(calendarPlan(page)).toHaveCount(8);
+  await expect(calendarPlan(page).first().locator('.calendar-owner-badge')).toContainText('Paweł');
   expect((await savedPlan()).size).toBe(5);
   const otherContext = await page.context().browser()!.newContext({ baseURL: 'http://127.0.0.1:5173', timezoneId: 'Europe/Warsaw', locale: 'pl-PL' });
   try {
@@ -265,9 +269,10 @@ test('zapis istniejącego starszego planu przypina UID Pawła bez nowych dokumen
   const calendarBefore = await calendarDocuments();
   await openCalendar(page);
   await selectCalendarPerson(page, 'Paweł');
-  await expect(calendarPlan(page)).toHaveCount(1);
-  await calendarPlan(page).click();
-  await expect(page.getByRole('dialog')).toContainText('07:30 – 15:25');
+  await expect(calendarPlan(page)).toHaveCount(9);
+  await calendarPlan(page).last().click();
+  await expect(page.getByRole('dialog')).toContainText('14:25 – 15:10');
+  await expect(page.getByRole('dialog')).toContainText('Pobyt w szkole: 07:30–15:25');
   await expect(page.getByRole('dialog')).toContainText('Zachowana poprawka rodzica');
   expect(await calendarDocuments()).toEqual(calendarBefore);
 });

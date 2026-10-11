@@ -39,6 +39,8 @@ export function readCalendarEvent(id: string, data: DocumentData, privateRecord 
     private: privateRecord, ownerUid: typeof data.ownerUid === 'string' ? data.ownerUid : data.createdBy,
     seriesId: typeof data.seriesId === 'string' ? data.seriesId : id,
     ...(typeof data.timeZone === 'string' ? { timeZone: data.timeZone } : {}),
+    ...(data.eventKind === 'lesson' || data.eventKind === 'break' ? { eventKind: data.eventKind } : {}),
+    ...(data.timingConfidence === 'confirmed' || data.timingConfidence === 'estimated' ? { timingConfidence: data.timingConfidence } : {}),
     ...readCalendarSourceMetadata(data),
   };
 }

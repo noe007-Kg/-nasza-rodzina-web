@@ -96,6 +96,11 @@ html:root .start-card-overlay { min-height: 100%; height: 100%; transform: scale
 .start-family-mini-profile > strong { width: 100%; white-space: normal; overflow-wrap: anywhere; font-size: 10px; color: #171B4B; }
 .start-family-mini-profile > time { font-size: 14px; font-weight: 750; color: #171B4B; }
 .start-family-mini-profile > small { font-size: 9px; line-height: 1.2; }
+.start-family-mini-profile > .start-detail-avatar { border-color: var(--calendar-owner-color, #f4d9fa); }
+.start-family-current-status { display: flex; align-items: flex-start; justify-content: center; gap: 4px; width: 100%; overflow-wrap: anywhere; }
+.start-family-status-dot { flex: 0 0 6px; width: 6px; height: 6px; margin-top: 2px; border-radius: 50%; background: #94a0ac; }
+.start-family-current-status[data-status-kind="active"] .start-family-status-dot { background: #2ab46e; }
+.start-family-current-status[data-status-kind="break"] .start-family-status-dot { background: #e5af18; }
 .start-detail-avatar { position: relative; display: grid; flex: 0 0 auto; place-items: center; width: 34px; height: 34px; overflow: hidden; border: 2px solid #f4d9fa; border-radius: 50%; background: #fff2fc; font-size: 23px; }
 .start-detail-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .start-shopping-summary, .start-chat-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 12px 0 10px; }

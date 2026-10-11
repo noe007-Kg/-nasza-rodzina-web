@@ -6,9 +6,9 @@ import { Card, Icon, PrimaryButton, SecondaryButton, StatusPill } from '../ui';
 import {
   createOkruszekDays, OKRUSZEK_END, OKRUSZEK_PLAN_ID, OKRUSZEK_START, OKRUSZEK_WEEKDAYS,
   okruszekDateStatus, okruszekDayEntry, okruszekDayId, parseOkruszekDay, validateOkruszekDays,
-  OKRUSZEK_BELL_SOURCE, okruszekLessonRows, okruszekBreakAfter, okruszekOutsideBellHours,
+  OKRUSZEK_BELL_SOURCE, okruszekLessonRows, okruszekBreakAfter, okruszekOutsideBellHours, okruszekScheduleBreaks,
 } from './okruszek-plan';
-import type { OkruszekDay } from './okruszek-plan';
+import type { OkruszekDay, OkruszekLessonTiming, OkruszekLessonRow } from './okruszek-plan';
 import { memberPersonKey, type FamilyMemberProfile } from '../family-members';
 import { schoolSourcesForProfile } from './profile-schools';
 import './okruszek-plan.css';
@@ -18,12 +18,12 @@ function todayInWarsaw(): string {
 }
 
 function copyDays(days: readonly OkruszekDay[]): OkruszekDay[] {
-  return days.map(day => ({ ...day, lessons: [...day.lessons], extraDaysOff: [...day.extraDaysOff] }));
+  return days.map(day => ({ ...day, ...(day.lessonTimings ? { lessonTimings: day.lessonTimings.map(timing => ({ ...timing })) } : {}), lessons: [...day.lessons], extraDaysOff: [...day.extraDaysOff] }));
 }
 
 function dayFingerprint(day: OkruszekDay): string {
   return JSON.stringify([day.person, day.ownerProfileId, day.weekday, day.time, day.endTime, day.lessons,
-    day.periodStart, day.periodEnd, day.extraDaysOff, day.revision]);
+    day.periodStart, day.periodEnd, day.extraDaysOff, day.revision, day.lessonTimings]);
 }
 
 function userMessage(error: unknown): string {
@@ -164,13 +164,25 @@ export function OkruszekPlan({ user, parent, person, ownerProfileId }: { user: F
   function openEditor() {
     if (busy || saved.length !== 5 || loadError || !ownerProfileId || saved.some(day => day.ownerProfileId !== ownerProfileId)) return;
     baseline.current = copyDays(saved);
-    setEditing(copyDays(saved));
+    setEditing(copyDays(saved).map(day => ({ ...day, lessonTimings: okruszekLessonRows(day)
+      .filter(row => !row.empty && row.time && row.endTime)
+      .map(row => ({ position: row.position, time: row.time!, endTime: row.endTime!, confidence: row.confidence,
+        ...(row.breakAfter !== undefined ? { breakAfter: row.breakAfter } : {}) })) })));
     setExtraDaysOff([...new Set(saved.flatMap(day => day.extraDaysOff))].sort().join('\n'));
     setActionError(''); setNotice('');
   }
 
   function changeDay(index: number, changes: Partial<OkruszekDay>) {
     setEditing(days => days?.map((day, current) => current === index ? { ...day, ...changes } : day) || null);
+  }
+
+  function changeLessonTiming(dayIndex: number, row: OkruszekLessonRow, changes: Partial<OkruszekLessonTiming>) {
+    setEditing(days => days?.map((day, index) => index === dayIndex ? { ...day,
+      lessonTimings: [...(day.lessonTimings || []).filter(timing => timing.position !== row.position), {
+        position: row.position, time: row.time || '', endTime: row.endTime || '', confidence: row.confidence,
+        ...day.lessonTimings?.find(timing => timing.position === row.position), ...changes,
+      }].sort((a, b) => a.position - b.position),
+    } : day) || null);
   }
 
   const supplied = createOkruszekDays(person, ownerProfileId || undefined);
@@ -185,7 +197,7 @@ export function OkruszekPlan({ user, parent, person, ownerProfileId }: { user: F
     <Card as="section" tone="blue" className="okruszek-intro">
       <div><span className="school-eyebrow">Ręczny plan tygodniowy · {person}</span><h2>Okruszek</h2><p>Kołobrzeg · {OKRUSZEK_START.split('-').reverse().join('.')}–{OKRUSZEK_END.split('-').reverse().join('.')}</p></div>
       <StatusPill tone={persisted ? 'success' : 'neutral'}>{!loaded ? 'Sprawdzanie zapisu…' : persisted ? 'Plan zapisany' : saved.length === 5 ? 'Plan wymaga przypisania do profilu' : saved.length ? `Plan częściowo zapisany: ${saved.length}/5 dni` : 'Plan przygotowany — niezapisany'}</StatusPill>
-      <p className="okruszek-explanation">Godziny pobytu są zachowane. Poszczególne lekcje i przerwy rozpisano według numerów pozycji i tabeli godzin Okruszka; zajęcia poza tą tabelą wymagają potwierdzenia.</p>
+      <p className="okruszek-explanation">Pobyt w szkole pozostaje bez zmian. Pierwsza poniedziałkowa rewalidacja 07:30–07:55, przerwa do 08:00 i początek kolejnych zajęć są ustalone przez rodzica. Pozostałe przypisania godzin są orientacyjnym harmonogramem roboczym według dzwonków, dopóki rodzic ich nie potwierdzi.</p>
       {parent && <div className="okruszek-actions">
         <PrimaryButton icon="check" disabled={busy || !loaded || !!loadError || !!editing || !ownerProfileId} onClick={() => void writePlan('import')}>{busy ? 'Zapisywanie…' : 'Zapisz plan Okruszka'}</PrimaryButton>
         {persisted && <SecondaryButton icon="settings" disabled={busy || !!editing} onClick={openEditor}>Edytuj plan</SecondaryButton>}
@@ -203,8 +215,8 @@ export function OkruszekPlan({ user, parent, person, ownerProfileId }: { user: F
       <h3>{OKRUSZEK_WEEKDAYS[day.weekday - 1]}</h3><p className="okruszek-day-time"><Icon name="clock" size={18}/><strong>{day.time}–{day.endTime}</strong><small>cały dzień</small></p>
       <ol>{rows.map((row, index) => <li key={`${row.position}:${row.lesson}`}>
         {row.empty ? <span aria-label="Pusta pozycja — bez zajęć">—</span> : <>
-          <strong className="okruszek-lesson-time">{row.time && row.endTime ? `${row.time}–${row.endTime}` : row.individual ? 'Godziny indywidualne — do potwierdzenia' : 'Godziny niepotwierdzone'}</strong>
-          <span className="okruszek-lesson-name">{row.lesson}</span>
+          <strong className="okruszek-lesson-time">{row.time && row.endTime ? `${row.time}–${row.endTime}` : 'Godziny niepotwierdzone'}</strong>
+          <span className="okruszek-lesson-name">{row.lesson}</span><small className="okruszek-timing-confidence">{row.confidence === 'confirmed' ? 'Godziny potwierdzone' : 'Godziny orientacyjne'}</small>
         </>}
         {okruszekBreakAfter(rows, index) && <small className="okruszek-lesson-break">{okruszekBreakAfter(rows, index)}</small>}
       </li>)}</ol>
@@ -214,12 +226,26 @@ export function OkruszekPlan({ user, parent, person, ownerProfileId }: { user: F
     <div className="okruszek-holiday-sources"><span>Źródła dni wolnych:</span><a href="https://soswokruszek.pl/dni-wolne.html" target="_blank" rel="noopener noreferrer">Okruszek</a><a href="https://www.gov.pl/web/edukacja/ministerstwo-edukacji-narodowej-oglosilo-kalendarz-roku-szkolnego-20262027" target="_blank" rel="noopener noreferrer">Kalendarz MEN 2026/2027</a></div>
     <div className="okruszek-holiday-sources"><span>Źródło godzin:</span><a href={OKRUSZEK_BELL_SOURCE} target="_blank" rel="noopener noreferrer">Okruszek — godziny zajęć i przerw obiadowych</a></div>
     {editing && <Card as="section" tone="neutral" className="okruszek-editor">
-      <h3>Edytuj plan Okruszka</h3><p>Każde zajęcie wpisz w osobnym wierszu. „—” oznacza pustą pozycję, bez zajęć.</p>
+      <h3>Edytuj plan Okruszka</h3><p>Każde zajęcie wpisz w osobnym wierszu. „—” oznacza pustą pozycję, bez zajęć. Ustaw dokładne godziny i zaznacz potwierdzenie tylko wtedy, gdy masz rzeczywiste ustalenie ze szkołą.</p>
       <form onSubmit={event => { event.preventDefault(); void writePlan('edit'); }}>
         <div className="okruszek-editor-days">{editing.map((day, index) => <fieldset key={day.weekday} disabled={busy}><legend>{OKRUSZEK_WEEKDAYS[day.weekday - 1]}</legend>
           <label>Początek całego dnia<input type="time" required value={day.time} onChange={event => changeDay(index, { time: event.target.value })}/></label>
           <label>Koniec całego dnia<input type="time" required value={day.endTime} onChange={event => changeDay(index, { endTime: event.target.value })}/></label>
-          <label>Zajęcia — po jednym w wierszu<textarea required rows={9} value={day.lessons.join('\n')} onChange={event => changeDay(index, { lessons: event.target.value.split('\n') })}/></label>
+          <label>Zajęcia — po jednym w wierszu<textarea required rows={9} value={day.lessons.join('\n')} onChange={event => { const lessons = event.target.value.split('\n'); changeDay(index, { lessons, lessonTimings: day.lessonTimings?.filter(timing => timing.position <= lessons.length && !/^[-—]$/.test(lessons[timing.position - 1].trim())) }); }}/></label>
+          <div className="okruszek-editor-timings">{okruszekLessonRows(day).filter(row => !row.empty).map(row => {
+            const timing = day.lessonTimings?.find(value => value.position === row.position);
+            const hasNext = day.lessons.slice(row.position).some(lesson => !/^[-—]$/.test(lesson.trim()));
+            const pause = okruszekScheduleBreaks(okruszekLessonRows(day)).find(value => value.afterPosition === row.position);
+            return <div className="okruszek-editor-lesson" key={row.position}>
+              <strong>{row.position}. {row.lesson || 'Nazwa zajęć'}</strong>
+              <div className="okruszek-editor-clocks">
+                <label>Od<input type="time" required aria-label={`${OKRUSZEK_WEEKDAYS[day.weekday - 1]} zajęcia ${row.position} od`} value={timing?.time ?? row.time ?? ''} onChange={event => changeLessonTiming(index, row, { time: event.target.value })}/></label>
+                <label>Do<input type="time" required aria-label={`${OKRUSZEK_WEEKDAYS[day.weekday - 1]} zajęcia ${row.position} do`} value={timing?.endTime ?? row.endTime ?? ''} onChange={event => changeLessonTiming(index, row, { endTime: event.target.value })}/></label>
+              </div>
+              <label className="okruszek-editor-confirmed"><input type="checkbox" checked={row.confidence === 'confirmed'} onChange={event => changeLessonTiming(index, row, { confidence: event.target.checked ? 'confirmed' : 'estimated' })}/>Godziny potwierdzone</label>
+              {hasNext && <label className="okruszek-editor-confirmed"><input type="checkbox" checked={timing?.breakAfter ?? !!pause} onChange={event => changeLessonTiming(index, row, { breakAfter: event.target.checked })}/>Przerwa do następnych zajęć</label>}
+            </div>;
+          })}</div>
         </fieldset>)}</div>
         <label className="okruszek-extra-days">Dodatkowe dni wolne — daty RRRR-MM-DD, po jednej w wierszu<textarea rows={3} disabled={busy} placeholder="RRRR-MM-DD" value={extraDaysOff} onChange={event => setExtraDaysOff(event.target.value)}/></label>
         <div className="okruszek-actions"><PrimaryButton type="submit" icon="check" disabled={busy}>{busy ? 'Zapisywanie…' : 'Zapisz zmiany planu'}</PrimaryButton><SecondaryButton disabled={busy} onClick={() => { setEditing(null); setActionError(''); }}>Anuluj edycję</SecondaryButton></div>

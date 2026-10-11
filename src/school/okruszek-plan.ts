@@ -9,9 +9,13 @@ export const OKRUSZEK_HOLIDAY_SOURCES = [
   { title: 'MEN — kalendarz 2026/2027', url: 'https://www.gov.pl/web/edukacja/ministerstwo-edukacji-narodowej-oglosilo-kalendarz-roku-szkolnego-20262027' },
 ] as const;
 
+export type OkruszekLessonTiming = {
+  position: number; time: string; endTime: string; confidence: 'confirmed' | 'estimated'; breakAfter?: boolean;
+};
+
 export type OkruszekDay = {
   id?: string; person: string; ownerProfileId?: string; weekday: number; time: string; endTime: string;
-  lessons: string[]; periodStart: string; periodEnd: string; extraDaysOff: string[]; revision: number;
+  lessons: string[]; lessonTimings?: OkruszekLessonTiming[]; periodStart: string; periodEnd: string; extraDaysOff: string[]; revision: number;
 };
 
 /** Published by Okruszek; these are bell slots, not inferred 45-minute lessons. */
@@ -30,9 +34,11 @@ export const OKRUSZEK_BELL_SCHEDULE = [
 
 export type OkruszekLessonRow = {
   position: number; lesson: string; empty: boolean; individual: boolean; time: string | null; endTime: string | null;
+  confidence: 'confirmed' | 'estimated'; breakAfter?: boolean;
 };
 
-// User-supplied whole-day bounds. There are no inferred lesson start/end times.
+// The paper plan provides names and attendance bounds. Only the parent's new
+// Monday 07:30–07:55 instruction confirms a whole individual lesson interval.
 const suppliedDays = [
   { time: '07:30', endTime: '15:10', lessons: ['Rewalidacja', 'Rewalidacja', 'f.os i społ', 'f.os i społ', 'PDP/ kuchnia', 'Z.R.Z', 'PDP', 'PDP'] },
   { time: '08:50', endTime: '16:00', lessons: ['—', 'Zaj. k. kreat', 'Zaj. k. kreat', 'religia', 'PDP', 'PDP', 'PDP', 'Z.r.k', 'Z.r.k'] },
@@ -40,53 +46,82 @@ const suppliedDays = [
   { time: '08:00', endTime: '16:00', lessons: ['PDP', 'PDP', 'PDP/ praktyki', 'PDP/ praktyki', 'PDP/ praktyki', 'PDP/ praktyki', 'rewalidacja', 'PDP', 'logopedia'] },
   { time: '08:00', endTime: '16:00', lessons: ['Z.k.k.', 'Z.k.k.', 'PDP/ praktyki', 'PDP/ praktyki', 'PDP/ praktyki', 'PDP/ praktyki', 'f.os i społ', 'f.os i społ', 'f.os i społ'] },
 ];
+const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
+const minutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
 
-/** Old saved plans get the published hours without a migration or another import.
- * Blank slots retain their number. Edited/shifted rows and out-of-stay hours are
- * explicitly unknown; neither the parent's edits nor whole-day bounds change.
+/** Draft assignment to bell slots is not a confirmation from the school.
+ * Saved individual times take precedence; legacy records stay read-only until
+ * the parent explicitly saves an edit. No inferred attendance-only event exists.
  */
 export function okruszekLessonRows(day: OkruszekDay): OkruszekLessonRow[] {
-  const original = suppliedDays[day.weekday - 1]?.lessons;
-  // Keep older saved abbreviations readable; do not rewrite the parent's text.
-  const sameAbbreviation = (text: string) => text.trim().replace(/\s*\/\s*/g, '/').replace(/\.$/, '');
   return day.lessons.map((lesson, index) => {
     const empty = /^[-—]$/.test(lesson.trim());
-    const originalLesson = original?.[index];
-    const unchangedPosition = !!originalLesson && (sameAbbreviation(lesson) === sameAbbreviation(originalLesson) || empty && originalLesson === '—');
-    const bell = OKRUSZEK_BELL_SCHEDULE[index];
-    // The photo gives whole-stay bounds, not the individual revalidation times.
-    // The parent confirmed additional classes outside the published bell table.
-    const individual = !empty && unchangedPosition && /rewalidacja/i.test(lesson)
+    const individual = !empty && /rewalidacja/i.test(lesson)
       && (day.weekday === 1 && index === 0 && day.time < '08:00'
         || day.weekday === 3 && index === 8 && day.endTime > '16:00');
-    const known = !empty && !individual && unchangedPosition && bell && bell.time >= day.time && bell.endTime <= day.endTime;
-    return { position: index + 1, lesson, empty, individual, time: known ? bell.time : null, endTime: known ? bell.endTime : null };
+    const saved = day.lessonTimings?.find(timing => timing.position === index + 1);
+    let candidate: { time: string; endTime: string } | undefined = OKRUSZEK_BELL_SCHEDULE[index];
+    let confidence: 'confirmed' | 'estimated' = 'estimated';
+    if (day.weekday === 1 && day.time === '07:30' && /rewalidacja/i.test(day.lessons[0] || '')) {
+      candidate = index === 0 ? { time: '07:30', endTime: '07:55' } : OKRUSZEK_BELL_SCHEDULE[index - 1];
+      if (index === 0) confidence = 'confirmed';
+    }
+    if (day.weekday === 3 && day.endTime === '16:30' && /rewalidacja/i.test(day.lessons[8] || '')) {
+      if (index === 7) candidate = { time: '15:15', endTime: '16:00' };
+      if (index === 8) candidate = { time: '16:05', endTime: '16:30' };
+    }
+    const selected = saved || candidate;
+    const valid = !empty && selected && CLOCK.test(selected.time) && CLOCK.test(selected.endTime)
+      && selected.time >= day.time && selected.endTime <= day.endTime && selected.endTime > selected.time;
+    return { position: index + 1, lesson, empty, individual,
+      time: valid ? selected.time : null, endTime: valid ? selected.endTime : null,
+      confidence: valid ? saved?.confidence || confidence : 'estimated', ...(saved?.breakAfter !== undefined ? { breakAfter: saved.breakAfter } : {}) };
+  });
+}
+
+export type OkruszekBreakRow = {
+  afterPosition: number; time: string; endTime: string; lunch: boolean; confidence: 'confirmed' | 'estimated';
+};
+
+/** Only explicit parent breaks, five-minute draft breaks and the school's lunch
+ * template become breaks. Other gaps remain empty rather than implying activity.
+ */
+export function okruszekScheduleBreaks(rows: readonly OkruszekLessonRow[]): OkruszekBreakRow[] {
+  const lessons = rows.filter(row => !row.empty);
+  return lessons.flatMap((row, index) => {
+    const next = lessons[index + 1];
+    if (!row.endTime || !next?.time || next.time <= row.endTime || row.breakAfter === false) return [];
+    const lunch = row.endTime === '12:55' && next.time === '13:35';
+    if (row.breakAfter !== true && minutes(next.time) - minutes(row.endTime) !== 5 && !lunch) return [];
+    return [{ afterPosition: row.position, time: row.endTime, endTime: next.time, lunch,
+      confidence: row.confidence === 'confirmed' && next.confidence === 'confirmed'
+        || row.time === '07:30' && row.endTime === '07:55' && next.time === '08:00' ? 'confirmed' : 'estimated' }];
   });
 }
 
 export function okruszekBreakAfter(rows: readonly OkruszekLessonRow[], index: number): string | null {
-  const row = rows[index], next = rows[index + 1];
-  if (!row?.endTime || !next?.time) return null;
-  return row.endTime === '12:55' && next.time === '13:35'
-    ? 'Przerwa obiadowa 12:55–13:35 · tury: 12:55–13:15 i 13:15–13:35; tura Pawła niepotwierdzona'
-    : `Przerwa ${row.endTime}–${next.time}`;
+  const pause = okruszekScheduleBreaks(rows).find(value => value.afterPosition === rows[index]?.position);
+  if (!pause) return null;
+  const interval = `${pause.time}–${pause.endTime}`;
+  const note = pause.confidence === 'estimated' ? ' · godziny orientacyjne' : '';
+  return pause.lunch ? `Przerwa obiadowa ${interval}${note} · tura Pawła niepotwierdzona` : `Przerwa ${interval}${note}`;
 }
 
-/** A school's bell table does not identify individual activities outside it. */
 export function okruszekOutsideBellHours(day: OkruszekDay): string[] {
-  const intervals: string[] = [];
-  if (day.time < '08:00') intervals.push(`${day.time}–08:00`);
-  if (day.endTime > '16:00') intervals.push(`16:00–${day.endTime}`);
-  return intervals.map(interval => `${interval} — czas poza siatką dzwonków; pełne godziny zajęć indywidualnych do potwierdzenia`);
+  const rows = okruszekLessonRows(day).filter(row => row.time && row.endTime && !row.empty);
+  const last = rows.at(-1);
+  return last?.endTime && last.endTime < day.endTime
+    ? [`${last.endTime}–${day.endTime} — pobyt w szkole; brak przypisanego przedmiotu, nie jest to potwierdzona przerwa`] : [];
 }
 
 export function okruszekLessonDetails(day: OkruszekDay): string[] {
   const rows = okruszekLessonRows(day);
   return [...rows.flatMap((row, index) => {
-    const lesson = row.empty ? `${row.position}. — (pusta pozycja; nie jest zajęciem)`
-      : `${row.position}. ${row.time && row.endTime ? `${row.time}–${row.endTime}` : row.individual ? 'Godziny indywidualne — do potwierdzenia' : 'Godziny niepotwierdzone'} — ${row.lesson}`;
+    if (row.empty) return [];
+    const interval = row.time && row.endTime ? `${row.time}–${row.endTime}` : 'Godziny niepotwierdzone';
+    const lesson = `${row.position}. ${interval} — ${row.lesson}${row.confidence === 'estimated' ? ' (godziny orientacyjne)' : ' (godziny potwierdzone)'}`;
     const pause = okruszekBreakAfter(rows, index);
-    return pause ? [lesson, pause] : [lesson];
+    return pause ? [lesson.trim(), pause] : [lesson.trim()];
   }), ...okruszekOutsideBellHours(day)];
 }
 
@@ -126,15 +161,30 @@ export function validateOkruszekDays(days: readonly OkruszekDay[]): OkruszekDay[
       || day.lessons.some(lesson => typeof lesson !== 'string' || !lesson.trim() || lesson.length > 120)
       || !Array.isArray(day.extraDaysOff) || day.extraDaysOff.length > 100 || day.extraDaysOff.some(date => !validSchoolDate(date))
       || !Number.isInteger(day.revision) || day.revision < 0) throw new Error('Sprawdź godziny, okres i listę zajęć planu Okruszka.');
+    if (day.lessonTimings !== undefined) {
+      if (!Array.isArray(day.lessonTimings) || day.lessonTimings.length > day.lessons.length
+        || new Set(day.lessonTimings.map(timing => timing?.position)).size !== day.lessonTimings.length
+        || day.lessonTimings.some(timing => !timing || Object.keys(timing).some(key => !['position', 'time', 'endTime', 'confidence', 'breakAfter'].includes(key)) || !Number.isInteger(timing.position) || timing.position < 1 || timing.position > day.lessons.length
+          || /^[-—]$/.test(day.lessons[timing.position - 1].trim()) || typeof timing.time !== 'string' || !CLOCK.test(timing.time)
+          || typeof timing.endTime !== 'string' || !CLOCK.test(timing.endTime) || timing.endTime <= timing.time
+          || timing.time < day.time || timing.endTime > day.endTime || !['confirmed', 'estimated'].includes(timing.confidence)
+          || timing.breakAfter !== undefined && typeof timing.breakAfter !== 'boolean')) {
+        throw new Error('Sprawdź godziny poszczególnych zajęć; muszą mieścić się w pobycie w szkole.');
+      }
+    }
+    const timed = okruszekLessonRows(day).filter(row => !row.empty && row.time && row.endTime);
+    if (timed.some((row, index) => index > 0 && row.time! < timed[index - 1].endTime!)) {
+      throw new Error('Zajęcia nie mogą nakładać się w czasie ani zmieniać kolejności.');
+    }
     validateSchoolEntry({ person: day.person, type: 'message', title: 'Okruszek — plan całego dnia', subject: 'Plan dnia',
       date: '', weekday: 0, time: day.time, endTime: day.endTime, note: day.lessons.join('; ') }, [day.person]);
   }
-  return days.map(day => ({ ...day, lessons: [...day.lessons], extraDaysOff: [...new Set(day.extraDaysOff)].sort() })).sort((a, b) => a.weekday - b.weekday);
+  return days.map(day => ({ ...day, ...(day.lessonTimings ? { lessonTimings: day.lessonTimings.map(timing => ({ ...timing })) } : {}), lessons: [...day.lessons], extraDaysOff: [...new Set(day.extraDaysOff)].sort() })).sort((a, b) => a.weekday - b.weekday);
 }
 
 export function okruszekDayEntry(day: OkruszekDay): SchoolEntry & {
   schoolPlanId: string; schoolName: string; schoolPlanRevision: number; ownerProfileId?: string;
-  manualDayPlan: { weekday: number; periodStart: string; periodEnd: string; lessons: string[]; extraDaysOff: string[];
+  manualDayPlan: { weekday: number; periodStart: string; periodEnd: string; lessons: string[]; extraDaysOff: string[]; lessonTimings?: OkruszekLessonTiming[];
     wholeDay: true; holidayCalendar: string; confirmedDaysOff: typeof OKRUSZEK_DAYS_OFF[number][] };
 } {
   // Keep one weekly source, not unconditional recurring lesson copies. The calendar
@@ -145,6 +195,7 @@ export function okruszekDayEntry(day: OkruszekDay): SchoolEntry & {
   return { ...entry, schoolPlanId: OKRUSZEK_PLAN_ID, schoolName: 'Okruszek, Kołobrzeg', schoolPlanRevision: day.revision,
     ...(day.ownerProfileId !== undefined ? { ownerProfileId: day.ownerProfileId } : {}),
     manualDayPlan: { weekday: day.weekday, periodStart: day.periodStart, periodEnd: day.periodEnd, lessons: [...day.lessons],
+      ...(day.lessonTimings ? { lessonTimings: day.lessonTimings.map(timing => ({ ...timing })) } : {}),
       extraDaysOff: [...day.extraDaysOff], wholeDay: true, holidayCalendar: OKRUSZEK_PLAN_ID,
       confirmedDaysOff: OKRUSZEK_DAYS_OFF.map(range => ({ ...range })) } };
 }
@@ -158,6 +209,7 @@ export function parseOkruszekDay(id: string, data: Record<string, unknown>): Okr
     || typeof details.weekday !== 'number' || !Number.isInteger(details.weekday) || details.weekday < 1 || details.weekday > 5) return null;
   const day = { id, person: data.person, weekday: details.weekday, time: data.time, endTime: data.endTime,
     ...(Object.hasOwn(data, 'ownerProfileId') ? { ownerProfileId: data.ownerProfileId } : {}),
+    ...(Object.hasOwn(details, 'lessonTimings') ? { lessonTimings: details.lessonTimings } : {}),
     lessons: details.lessons, periodStart: details.periodStart, periodEnd: details.periodEnd,
     extraDaysOff: details.extraDaysOff, revision: data.schoolPlanRevision ?? 0 } as OkruszekDay;
   try {

@@ -1,7 +1,7 @@
 import type { CalendarEventData } from './app-shared';
 import type { SchoolReadAccess } from './school/read-access';
 import { memberPersonKey, type FamilyMemberProfile } from './family-members';
-import { OKRUSZEK_PLAN_ID, OKRUSZEK_START, OKRUSZEK_END, okruszekDateStatus, parseOkruszekDay, okruszekLessonDetails, OKRUSZEK_BELL_SOURCE } from './school/okruszek-plan';
+import { OKRUSZEK_PLAN_ID, OKRUSZEK_START, OKRUSZEK_END, okruszekDateStatus, parseOkruszekDay, okruszekLessonRows, okruszekScheduleBreaks, OKRUSZEK_BELL_SOURCE } from './school/okruszek-plan';
 import { schoolOwnerProfileId, schoolSourcesForProfile } from './school/profile-schools';
 
 export type CalendarSchoolRecord = {
@@ -77,6 +77,7 @@ export function projectSchoolCalendar(
   records: readonly CalendarSchoolRecord[],
   existingCalendar: readonly Pick<CalendarEventData, 'id'>[],
   access: SchoolReadAccess | null,
+  profiles?: readonly FamilyMemberProfile[],
 ): { events: CalendarEventData[]; incomplete: number } {
   if (!access) return { events: [], incomplete: 0 };
   const actualCalendarIds = new Set(existingCalendar.map(event => event.id));
@@ -86,6 +87,8 @@ export function projectSchoolCalendar(
   for (const record of records) {
     if (record.source !== 'eduvulcan' || !['lesson', 'activity'].includes(record.type)
       || !record.id || seen.has(record.id) || !record.person
+      || (profiles && !profiles.some(profile => memberPersonKey(profile) === record.person
+        && schoolSourcesForProfile(profile).includes('sp4')))
       || (access.scope === 'student' && record.person !== access.person)) continue;
     seen.add(record.id);
     // A stale link alone does not prove there is a calendar copy to display.
@@ -116,7 +119,7 @@ export function projectSchoolCalendar(
   return { events, incomplete };
 }
 
-/** One dated calendar view of the saved weekly Okruszek plan; no copies or writes. */
+/** Individual dated lessons and explicit breaks from one saved weekly source; no calendar writes. */
 export function projectOkruszekCalendar(
   records: readonly CalendarSchoolRecord[],
   existingCalendar: readonly Pick<CalendarEventData, 'id'>[],
@@ -147,19 +150,33 @@ export function projectOkruszekCalendar(
     while (cursor.toISOString().slice(0, 10) <= end) {
       const dateKey = cursor.toISOString().slice(0, 10);
       if (cursor.getUTCDay() === day.weekday && okruszekDateStatus(dateKey, day).kind === 'planned') {
-        const id = `school:okruszek:${record.id}:${dateKey}`;
-        const date = schoolDate(dateKey, day.time), endDate = schoolDate(dateKey, day.endTime);
-        if (!actualCalendarIds.has(id) && matchesSchoolClock(date, dateKey, day.time)
-          && matchesSchoolClock(endDate, dateKey, day.endTime) && endDate > date) {
+        const rows = okruszekLessonRows(day);
+        const intervals = [
+          ...rows.filter(row => !row.empty && row.time && row.endTime).map(row => ({
+            kind: 'lesson' as const, position: row.position, time: row.time!, endTime: row.endTime!, title: row.lesson,
+            confidence: row.confidence,
+          })),
+          ...okruszekScheduleBreaks(rows).map(pause => ({
+            kind: 'break' as const, position: pause.afterPosition, time: pause.time, endTime: pause.endTime,
+            title: pause.lunch ? 'Przerwa obiadowa' : 'Przerwa', confidence: pause.confidence,
+          })),
+        ];
+        for (const interval of intervals) {
+          const id = `school:okruszek:${record.id}:${dateKey}:${interval.kind}:${interval.position}`;
+          const date = schoolDate(dateKey, interval.time), endDate = schoolDate(dateKey, interval.endTime);
+          if (actualCalendarIds.has(id) || !matchesSchoolClock(date, dateKey, interval.time)
+            || !matchesSchoolClock(endDate, dateKey, interval.endTime) || endDate <= date) continue;
           const name = profile.name || record.person;
           events.push({
-            id, title: `Okruszek — ${name}`, person: memberPersonKey(profile), ownerProfileId: profile.id,
+            id, title: interval.title, person: memberPersonKey(profile), ownerProfileId: profile.id,
             date, endDate, allDay: false, createdBy: record.createdBy || '',
-            description: [`Uczeń: ${name}`, `Pobyt w szkole: ${day.time}–${day.endTime}`,
-              'Zajęcia według numerów pozycji i tabeli godzin Okruszka:',
-              ...okruszekLessonDetails(day), `Źródło godzin: ${OKRUSZEK_BELL_SOURCE}`].join('\n'),
+            description: [`Uczeń: ${name}`, 'Szkoła: Okruszek, Kołobrzeg',
+              `${interval.time}–${interval.endTime} · ${interval.confidence === 'confirmed' ? 'godziny potwierdzone przez rodzica' : 'godziny orientacyjne — edytowalny harmonogram roboczy'}`,
+              `Pobyt w szkole: ${day.time}–${day.endTime}`,
+              `Wzorzec dzwonków: ${OKRUSZEK_BELL_SOURCE}`].join('\n'),
             location: 'Okruszek, Kołobrzeg', repeat: 'none', repeatUntil: null, private: false,
             timeZone: SCHOOL_TIME_ZONE, source: 'okruszek', sourceRecordId: record.id, readOnly: true,
+            eventKind: interval.kind, timingConfidence: interval.confidence,
           });
         }
       }

@@ -36,3 +36,10 @@
 .okruszek-extra-days { max-width: 540px; }
 [data-theme="dark"] .okruszek-plan input, [data-theme="dark"] .okruszek-plan textarea { background: #24243d; border-color: #535273; }
 @media (max-width: 480px) { .okruszek-intro h2 { font-size: 1.35rem; } .okruszek-week { grid-template-columns: repeat(2, minmax(0, 1fr)); } .okruszek-day { padding: 14px 10px; } .okruszek-day ol { font-size: .8rem; } .okruszek-actions .family-button { width: auto; max-width: 100%; } }
+
+.okruszek-timing-confidence { display: block; font-size: .71rem; opacity: .76; line-height: 1.35; }
+.okruszek-editor-timings { display: grid; gap: 10px; }
+.okruszek-editor-lesson { padding-top: 9px; border-top: 1px solid #ddd6f4; display: grid; gap: 6px; font-size: .8rem; }
+.okruszek-editor-clocks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.okruszek-plan .okruszek-editor-confirmed { display: flex; align-items: center; gap: 6px; font-size: .75rem; }
+.okruszek-plan .okruszek-editor-confirmed input { width: 16px; height: 16px; padding: 0; flex: 0 0 16px; }

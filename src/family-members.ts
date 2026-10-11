@@ -15,6 +15,9 @@ export type FamilyMemberProfile = {
   canLogin?: boolean;
   schoolEnabled?: boolean;
   birthDate?: string;
+  /** Existing stored owner colours take precedence over calendar fallbacks. */
+  calendarColor?: string;
+  color?: string;
 };
 
 /** This is an aggregate view, never a member or an Authentication account. */

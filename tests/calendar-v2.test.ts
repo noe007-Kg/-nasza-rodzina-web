@@ -60,3 +60,18 @@ test('owner colour and avatar resolve dynamic identity and remain independent of
   assert.equal(calendarOwnerProfile({ person: 'dynamic-key' }, [profile]), profile);
   assert.equal(calendarOwnerProfile({ person: 'renamed', ownerProfileId: 'new-profile' }, [profile]), profile);
 });
+
+test('owner colours preserve saved profile choices before requested compatibility defaults', () => {
+  assert.equal(calendarOwnerColor('Sebastian'), '#2584e8');
+  assert.equal(calendarOwnerColor('Dominika'), '#e83e9f');
+  assert.equal(calendarOwnerColor('Paweł'), '#8459db');
+  assert.equal(calendarOwnerColor('Nikodem'), '#ed8b25');
+  assert.equal(calendarOwnerColor('Layla'), '#39a96b');
+  assert.equal(calendarOwnerColor('Lajla'), '#39a96b');
+  assert.equal(calendarOwnerColor('uid-profile', { name: 'Paweł' }), '#8459db');
+  const profile = { name: 'Paweł', calendarColor: '#123ABC', color: '#abc' };
+  assert.equal(calendarOwnerColor('Paweł', profile), '#123ABC');
+  assert.equal(calendarOwnerColor('Nikodem', { color: '#019abc' }), '#019abc');
+  assert.equal(calendarOwnerColor('Nikodem', { calendarColor: 'url(https://example.invalid)' }), '#ed8b25');
+  assert.equal(profile.calendarColor, '#123ABC');
+});
