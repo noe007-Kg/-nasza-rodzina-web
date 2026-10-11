@@ -309,7 +309,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
       </section>
 
       <section className="person-filters">
-        {personOptions.map((person) => <button key={person} type="button" className={selectedPerson === person ? 'active' : ''} onClick={() => setSelectedPerson(person)}><span style={{ background: calendarOwnerColor(person, activeProfiles.find(profile => memberPersonKey(profile) === person)) }} />{person === own ? 'Moje wydarzenia' : activeProfiles.find(profile => memberPersonKey(profile) === person)?.name || personLabel(person)}</button>)}
+        {personOptions.map((person) => <button key={person} type="button" className={selectedPerson === person ? 'active' : ''} onClick={() => setSelectedPerson(person)}><span style={{ background: calendarOwnerColor(person, activeProfiles.find(profile => memberPersonKey(profile) === person)) }} />{activeProfiles.find(profile => memberPersonKey(profile) === person)?.name || personLabel(person)}</button>)}
       </section>
       <CalendarGoogleBulkSharing user={user} events={events} />
       {schoolSources.error && <p className="calendar-source-notice" role="status">Nie udało się odczytać zajęć SP4. Pozostałe wydarzenia nadal są dostępne.</p>}
