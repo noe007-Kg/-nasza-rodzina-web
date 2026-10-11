@@ -2,13 +2,14 @@ import { useState } from 'react';
 import { Card, Icon, SecondaryButton, StatusPill } from '../ui';
 import './school-sources.css';
 
-export type SchoolSourceView = 'sp4' | 'fryderyk';
+export type SchoolSourceView = 'sp4' | 'fryderyk' | 'okruszek';
 
 /** Provider choices do not assign a school to a profile or create a connection. */
-export function SchoolSourceSelector({ value, onChange }: { value: SchoolSourceView; onChange: (source: SchoolSourceView) => void }) {
+export function SchoolSourceSelector({ value, onChange, okruszek = false }: { value: SchoolSourceView; onChange: (source: SchoolSourceView) => void; okruszek?: boolean }) {
   return <div className="school-source-selector" role="group" aria-label="Źródło szkolne" data-testid="school-source-selector">
     <button type="button" aria-pressed={value === 'sp4'} onClick={() => onChange('sp4')}><Icon name="school"/><span><strong>SP4 — eduVULCAN</strong><small>Szkoła podstawowa</small></span></button>
     <button type="button" aria-pressed={value === 'fryderyk'} onClick={() => onChange('fryderyk')}><span className="school-music-symbol" aria-hidden="true">🎵</span><span><strong>Fryderyk</strong><small>Szkoła muzyczna · niepołączono</small></span></button>
+    {okruszek && <button type="button" aria-pressed={value === 'okruszek'} onClick={() => onChange('okruszek')}><Icon name="book"/><span><strong>Okruszek</strong><small>Kołobrzeg · plan tygodniowy</small></span></button>}
   </div>;
 }
 

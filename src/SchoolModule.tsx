@@ -16,6 +16,8 @@ import { schoolReadAccess, SCHOOL_PROFILE_UNBOUND } from './school/read-access';
 import { SchoolGrades } from './school/SchoolGrades';
 import { SchoolExpandableList } from './school/SchoolExpandableList';
 import { FryderykPreparation, SchoolSourceSelector, type SchoolSourceView } from './school/SchoolSources';
+import { OkruszekPlan } from './school/OkruszekPlan';
+import { OKRUSZEK_PLAN_ID } from './school/okruszek-plan';
 import { isPeriodGrade, parseGradeMetadata, sortGradesNewest } from './school/grade-projections';
 import './school.css';
 import './school-enhancements.css';
@@ -24,7 +26,7 @@ type SchoolMember = { name?: string; role?: string; personKey?: string; photoURL
 type SchoolRecord = SchoolEntry & {
   id: string; calendarEventId?: string; calendarCreatedBy?: string; createdBy?: string; createdAt?: Date;
   source?: string; syncedAt?: Date; parentOnly?: boolean;
-  sourceRecordId?: string; sourceProfileId?: string; providerScopeId?: string;
+  sourceRecordId?: string; sourceProfileId?: string; providerScopeId?: string; schoolPlanId?: string;
 };
 type SchoolForm = SchoolEntry & { scheduleMode: 'weekly' | 'date'; addToCalendar: boolean; calendarDate: string };
 const META: Record<SchoolType, { title: string; singular: string; icon: IconName }> = {
@@ -85,6 +87,7 @@ function readSchoolRecord(id: string, data: Record<string, unknown>, parentOnly 
     sourceRecordId: typeof data.sourceRecordId === 'string' ? data.sourceRecordId : undefined,
     sourceProfileId: typeof data.sourceProfileId === 'string' ? data.sourceProfileId : undefined,
     providerScopeId: typeof data.providerScopeId === 'string' ? data.providerScopeId : undefined,
+    schoolPlanId: typeof data.schoolPlanId === 'string' ? data.schoolPlanId : undefined,
   };
 }
 function importantMessageId(row: SchoolRecord): string {
@@ -210,8 +213,10 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
   }, [parent, ownStudent, member, familyMembers, user.uid]);
   const students = useMemo(() => studentProfiles.map(memberPersonKey), [studentProfiles]);
   const person = parent ? (students.includes(selectedPerson) ? selectedPerson : students[0]) : students[0];
+  const hasOkruszek = person === 'Paweł' || studentProfiles.some(profile => memberPersonKey(profile) === person && profile.name === 'Paweł')
+    || records.some(row => row.person === person && row.schoolPlanId === OKRUSZEK_PLAN_ID);
   const sourceView = sourceSelection && sourceSelection.person === person ? sourceSelection.source : 'sp4';
-  const ownRecords = useMemo(() => allRecords.filter((row) => row.person === person), [allRecords, person]);
+  const ownRecords = useMemo(() => allRecords.filter((row) => row.person === person && row.schoolPlanId !== OKRUSZEK_PLAN_ID), [allRecords, person]);
   const monday = moveDate(selectedDate, 1 - weekdayOf(selectedDate));
   const week = Array.from({ length: 7 }, (_, index) => moveDate(monday, index));
   const dayRecords = ownRecords.filter((row) => (row.type === 'lesson' || row.type === 'activity') && matchesDay(row, selectedDate)).sort((a, b) => a.time.localeCompare(b.time));
@@ -412,10 +417,11 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
       {person && <PrimaryButton icon="plus" onClick={() => openAdd()}>Dodaj wpis</PrimaryButton>}
     </>} />
     <p className="school-access-note"><Icon name="shield" />{parent ? 'Widok rodzica · szkolne sprawy wszystkich dzieci.' : ownStudent ? `Twój szkolny widok · ${ownStudent}.` : 'Konto nie ma przypisanej osoby. Rodzic może uzupełnić profil w ustawieniach.'}</p>
-    {person && <SchoolSourceSelector value={sourceView} onChange={source => {
+    {person && <SchoolSourceSelector value={sourceView} okruszek={hasOkruszek} onChange={source => {
       setSourceSelection({ person, source }); setDetail(null); setForm(null); setDeleting(null); setImportOpen(false);
     }} />}
     {person && sourceView === 'fryderyk' && <FryderykPreparation key={`${identity}:${person}`} student={studentProfiles.find(profile => memberPersonKey(profile) === person)?.name || person} parent={parent} onBack={() => setSourceSelection({ person, source: 'sp4' })} />}
+    {person && hasOkruszek && sourceView === 'okruszek' && <OkruszekPlan key={`${identity}:${person}`} user={user} parent={parent} person={person} />}
     <div className="school-sp4-content" data-testid="school-sp4-content" hidden={sourceView !== 'sp4'}>
     {notice && <div className="school-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Zamknij komunikat"><Icon name="close" /></button></div>}
     {loadError && <div className="school-error" role="alert"><span>{loadError}</span><SecondaryButton onClick={() => setRetry((value) => value + 1)}>Spróbuj ponownie</SecondaryButton></div>}
