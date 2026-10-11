@@ -1,4 +1,8 @@
-import { addDoc, collection, db, deleteDoc, doc, EmptyState, errorMessage, getDownloadURL, isAdultMember, type Member, Modal, ModuleHeader, notify, onSnapshot, type QuickProduct, React, setDoc, type ShoppingCategory, type ShoppingItem, storage, storageRef, Timestamp, updateDoc, uploadBytes, useEffect, useMemo, type User, useRef, useState, writeBatch } from "../app-shared";
+import { addDoc, collection, db, deleteDoc, doc, EmptyState, errorMessage, getDownloadURL, isAdultMember, isParent, type Member, Modal, ModuleHeader, notify, onSnapshot, type QuickProduct, React, setDoc, type ShoppingCategory, type ShoppingItem, storage, storageRef, Timestamp, updateDoc, uploadBytes, useEffect, useMemo, type User, useRef, useState, writeBatch } from "../app-shared";
+import { onSnapshot as subscribe } from 'firebase/firestore';
+import { normalizeShopIds, productsForStore, remainingForStore, shoppingStores, type ShoppingStore } from './shopping-stores';
+import { ShoppingStorePicker } from './ShoppingStorePicker';
+import { assertFamilyV2WriteAllowed } from '../family-v2-client';
 import './shopping-cards.css';
 
 
@@ -120,7 +124,20 @@ export function categorizeProduct(title: string): ShoppingCategory {
 }
 
 export function ShoppingPage({ user, member }: { user: User; member: Member | null }) {
-  const [items, setItems] = useState<ShoppingItem[]>([]);
+  type StoreShoppingItem = ShoppingItem & { shopIds: string[] };
+  const [items, setItems] = useState<StoreShoppingItem[]>([]);
+  const [customStores, setCustomStores] = useState<ShoppingStore[]>([]);
+  const [selectedStore, setSelectedStore] = useState('all');
+  const [draftShopIds, setDraftShopIds] = useState<string[]>([]);
+  const [storesOpen, setStoresOpen] = useState(false);
+  const [storeName, setStoreName] = useState('');
+  const [editingStore, setEditingStore] = useState<ShoppingStore | null>(null);
+  const [savingStore, setSavingStore] = useState(false);
+  const storeSavingRef = useRef(false);
+  const [storesError, setStoresError] = useState('');
+  const [editingItemStores, setEditingItemStores] = useState<StoreShoppingItem | null>(null);
+  const [itemShopIds, setItemShopIds] = useState<string[]>([]);
+  const [savingItemStores, setSavingItemStores] = useState(false);
   const [customQuick, setCustomQuick] = useState<QuickProduct[]>([]);
   const [title, setTitle] = useState('');
   const [quantity, setQuantity] = useState('1');
@@ -142,14 +159,30 @@ export function ShoppingPage({ user, member }: { user: User; member: Member | nu
   const quickInflight = useRef(new Set<string>());
 
   useEffect(() => onSnapshot(collection(db, 'shoppingItems'), (snap) => {
-    const next = snap.docs.map((d): ShoppingItem => {
+    const next = snap.docs.map((d): StoreShoppingItem => {
       const x = d.data();
       const titleValue = String(x.title || '');
-      return { id: d.id, title: titleValue, done: x.done === true, category: isShoppingCategory(x.category) ? x.category : categorizeProduct(titleValue), quantity: typeof x.quantity === 'string' ? x.quantity : '', unit: typeof x.unit === 'string' ? x.unit : '', createdAt: x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
+      return { id: d.id, title: titleValue, done: x.done === true, category: isShoppingCategory(x.category) ? x.category : categorizeProduct(titleValue), quantity: typeof x.quantity === 'string' ? x.quantity : '', unit: typeof x.unit === 'string' ? x.unit : '', shopIds: normalizeShopIds(x.shopIds), createdAt: x.createdAt instanceof Timestamp ? x.createdAt.toDate() : undefined };
     });
     next.sort((a, b) => Number(a.done) - Number(b.done) || (a.createdAt?.getTime() || 0) - (b.createdAt?.getTime() || 0));
     setItems(next);
   }), []);
+
+  useEffect(() => subscribe(collection(db, 'shoppingStores'), snapshot => {
+    setCustomStores(snapshot.docs.map(row => {
+      const value = row.data();
+      return { id: row.id, name: String(value.name || 'Sklep'), createdBy: String(value.createdBy || ''), archived: value.archived === true };
+    }).filter(store => normalizeShopIds([store.id]).length > 0).sort((a, b) => a.name.localeCompare(b.name, 'pl')));
+    setStoresError('');
+  }, () => setStoresError('Własne sklepy wymagają aktualnych reguł Firebase. Wspólna lista nadal działa.')), []);
+
+  const allStores = useMemo(() => shoppingStores(customStores), [customStores]);
+  const activeStores = allStores.filter(store => !store.archived);
+  const visibleItems = productsForStore(items, selectedStore);
+  const selectedStoreName = activeStores.find(store => store.id === selectedStore)?.name;
+  useEffect(() => {
+    if (selectedStore !== 'all' && !allStores.some(store => store.id === selectedStore && !store.archived)) setSelectedStore('all');
+  }, [allStores, selectedStore]);
 
   useEffect(() => onSnapshot(collection(db, 'quickProducts'), (snap) => {
     setCustomQuick(snap.docs.map((d) => {
@@ -167,7 +200,8 @@ export function ShoppingPage({ user, member }: { user: User; member: Member | nu
 
   async function addItem(productTitle: string, qty = '1', productUnit = 'szt.', category?: ShoppingCategory) {
     const clean = productTitle.trim(); if (!clean) return;
-    await addDoc(collection(db, 'shoppingItems'), { title: clean, done: false, category: category || categorizeProduct(clean), quantity: qty, unit: productUnit, createdBy: user.uid, createdAt: Timestamp.now() });
+    if (draftShopIds.length) assertFamilyV2WriteAllowed();
+    await addDoc(collection(db, 'shoppingItems'), { title: clean, done: false, category: category || categorizeProduct(clean), quantity: qty, unit: productUnit, ...(draftShopIds.length ? { shopIds: normalizeShopIds(draftShopIds) } : {}), createdBy: user.uid, createdAt: Timestamp.now() });
   }
 
   async function add(e: React.FormEvent) {
@@ -206,8 +240,9 @@ export function ShoppingPage({ user, member }: { user: User; member: Member | nu
     if (products.length > 200) { notify('Dodaj maksymalnie 200 produktów naraz.', 'error'); return; }
     shoppingSavingRef.current = true; setAddingShopping(true);
     try {
+      if (draftShopIds.length) assertFamilyV2WriteAllowed();
       const batch = writeBatch(db);
-      for (const product of products) batch.set(doc(collection(db,'shoppingItems')), { title:product, done:false, category:categorizeProduct(product), quantity:'1', unit:'szt.', createdBy:user.uid, createdAt:Timestamp.now() });
+      for (const product of products) batch.set(doc(collection(db,'shoppingItems')), { title:product, done:false, category:categorizeProduct(product), quantity:'1', unit:'szt.', ...(draftShopIds.length ? { shopIds: normalizeShopIds(draftShopIds) } : {}), createdBy:user.uid, createdAt:Timestamp.now() });
       await batch.commit(); setQuickNote('');
     } catch (error) { notify(errorMessage(error), 'error'); }
     finally { shoppingSavingRef.current = false; setAddingShopping(false); }
@@ -215,14 +250,50 @@ export function ShoppingPage({ user, member }: { user: User; member: Member | nu
 
   const grouped = useMemo(() => {
     const order = Object.keys(SHOPPING_META) as ShoppingCategory[];
-    return order.map((category) => ({ category, items: items.filter((item) => item.category === category) })).filter((group) => group.items.length > 0);
-  }, [items]);
+    return order.map((category) => ({ category, items: productsForStore(items, selectedStore).filter((item) => item.category === category) })).filter((group) => group.items.length > 0);
+  }, [items, selectedStore]);
 
   async function clearDone() {
-    const done = items.filter((item) => item.done);
+    const done = visibleItems.filter((item) => item.done);
     if (done.length === 0) return;
     if (!window.confirm(`Usunąć kupione produkty (${done.length})?`)) return;
     for (let i=0; i<done.length; i+=400) { const batch = writeBatch(db); done.slice(i,i+400).forEach(item=>batch.delete(doc(db,'shoppingItems',item.id))); await batch.commit(); }
+  }
+
+  async function saveStore(event: React.FormEvent) {
+    event.preventDefault();
+    const name = storeName.trim();
+    if (!name || name.length > 80 || storeSavingRef.current) return;
+    if (activeStores.some(store => store.id !== editingStore?.id && store.name.toLocaleLowerCase('pl') === name.toLocaleLowerCase('pl'))) { notify('Sklep o tej nazwie jest już na liście.', 'error'); return; }
+    storeSavingRef.current = true; setSavingStore(true);
+    try {
+      assertFamilyV2WriteAllowed();
+      if (editingStore) await updateDoc(doc(db, 'shoppingStores', editingStore.id), { name, updatedAt: Timestamp.now() });
+      else await setDoc(doc(db, 'shoppingStores', `store-${crypto.randomUUID()}`), { name, createdBy: user.uid, createdAt: Timestamp.now(), updatedAt: Timestamp.now(), archived: false });
+      setStoreName(''); setEditingStore(null);
+    } catch (error) { notify(errorMessage(error), 'error'); }
+    finally { storeSavingRef.current = false; setSavingStore(false); }
+  }
+
+  async function archiveStore(store: ShoppingStore) {
+    if (!store.archived && !window.confirm(`Usunąć sklep „${store.name}” z widoku? Produkty i ich historia pozostaną na wspólnej liście.`)) return;
+    try {
+      assertFamilyV2WriteAllowed();
+      await updateDoc(doc(db, 'shoppingStores', store.id), { archived: !store.archived, updatedAt: Timestamp.now() });
+      if (!store.archived) setDraftShopIds(previous => previous.filter(id => id !== store.id));
+    } catch (error) { notify(errorMessage(error), 'error'); }
+  }
+
+  async function saveItemStores(event: React.FormEvent) {
+    event.preventDefault();
+    if (!editingItemStores || savingItemStores) return;
+    setSavingItemStores(true);
+    try {
+      assertFamilyV2WriteAllowed();
+      await updateDoc(doc(db, 'shoppingItems', editingItemStores.id), { shopIds: normalizeShopIds(itemShopIds), updatedAt: Timestamp.now() });
+      setEditingItemStores(null);
+    } catch (error) { notify(errorMessage(error), 'error'); }
+    finally { setSavingItemStores(false); }
   }
 
   useEffect(() => () => { if (holdTimer.current) window.clearTimeout(holdTimer.current); }, []);
@@ -278,7 +349,15 @@ export function ShoppingPage({ user, member }: { user: User; member: Member | nu
 
   return (
     <div className="page-content compact-page shopping-v130">
-      <ModuleHeader icon="🛒" title="Zakupy" text="Szybkie kafelki, notatka wielu produktów i jedna wspólna lista." action={items.some((i) => i.done) ? <button className="secondary-button" onClick={clearDone}>🧹 Usuń kupione</button> : undefined} />
+      <ModuleHeader icon="🛒" title="Zakupy" text="Szybkie kafelki, notatka wielu produktów i jedna wspólna lista." action={visibleItems.some((i) => i.done) ? <button className="secondary-button" onClick={() => void clearDone().catch(error => notify(errorMessage(error), 'error'))}>🧹 Usuń kupione</button> : undefined} />
+
+      <section className="shopping-stores" aria-label="Lista według sklepu">
+        <div className="shopping-store-tabs" role="group" aria-label="Wybierz sklep">
+          <button type="button" aria-pressed={selectedStore === 'all'} onClick={() => setSelectedStore('all')}><span>Wszystkie</span><strong>{remainingForStore(items, 'all')}</strong></button>
+          {activeStores.map(store => <button key={store.id} type="button" aria-pressed={selectedStore === store.id} onClick={() => setSelectedStore(store.id)}><span>{store.name}</span><strong>{remainingForStore(items, store.id)}</strong></button>)}
+        </div>
+        <button className="secondary-button shopping-stores-manage" type="button" onClick={() => setStoresOpen(true)}>＋ Własne sklepy</button>
+      </section>
 
       <form className="shopping-bar" onSubmit={add}>
         <input className="shopping-product" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Np. jabłka, mleko, bułki…" />
@@ -288,7 +367,10 @@ export function ShoppingPage({ user, member }: { user: User; member: Member | nu
         <button className="primary-button" disabled={addingShopping}>{addingShopping ? "Zapisuję…" : "＋ Dodaj"}</button>
       </form>
 
-      <section className="quick-note-card"><header><strong>📝 Szybka notatka zakupowa</strong><small>Wpisz kilka rzeczy naraz — rozdzielimy je i dodamy do jednej listy.</small></header><div><textarea rows={2} value={quickNote} onChange={(e) => setQuickNote(e.target.value)} placeholder="Np. długopis, gumka, zeszyt, lampka, zegarek…" /><button className="primary-button" disabled={addingShopping} onClick={() => void addQuickNote()}>✨ Dodaj wszystkie</button></div></section>
+      <section className="quick-note-card"><header><strong>📝 Szybka notatka zakupowa</strong><small>Wpisz kilka rzeczy naraz — rozdzielimy je i dodamy do jednej listy.</small></header>
+        <ShoppingStorePicker stores={activeStores} value={draftShopIds} onChange={setDraftShopIds} legend="Sklepy dla nowych produktów (opcjonalnie)"/>
+        <div><textarea rows={2} value={quickNote} onChange={(e) => setQuickNote(e.target.value)} placeholder="Np. długopis, gumka, zeszyt, lampka, zegarek…" /><button className="primary-button" disabled={addingShopping} onClick={() => void addQuickNote()}>✨ Dodaj wszystkie</button></div>
+      </section>
 
       <section className="quick-products-card">
         <header><div><strong>⭐ Szybkie zakupy</strong><small>Długie przytrzymanie: zmień ikonkę lub edytuj produkt.</small></div><button onClick={() => openQuickEditor()}>＋ Własny produkt</button></header>
@@ -296,21 +378,46 @@ export function ShoppingPage({ user, member }: { user: User; member: Member | nu
         <div className="quick-products-grid">{quickProducts.map((product) => <button type="button" key={product.id} className="quick-product-tile" aria-label={product.title} data-product-id={product.id} onClick={() => { if (holdOpened.current !== product.id) void addQuick(product); }} onPointerDown={(event) => startHold(product, event)} onPointerMove={moveHold} onPointerUp={cancelHold} onPointerCancel={cancelHold} onPointerLeave={cancelHold} onContextMenu={(event) => { event.preventDefault(); holdOpened.current = product.id; setQuickMenu(product); }}><span className="quick-product-visual" aria-hidden="true">{product.imageURL ? <img src={product.imageURL} alt="" loading="lazy" draggable={false} /> : product.icon}</span><strong>{product.title}</strong>{product.adultOnly && <em>18+</em>}<i aria-hidden="true" onClick={(event) => { event.stopPropagation(); setQuickMenu(product); }}>⋯</i></button>)}</div>
       </section>
 
-      <section className="shopping-list-title"><div><strong>🛒 Lista zakupów</strong><small>{items.filter((i) => !i.done).length} do kupienia</small></div></section>
+      <section className="shopping-list-title"><div><strong>🛒 {selectedStoreName ? `Lista: ${selectedStoreName}` : 'Lista zakupów'}</strong><small>{visibleItems.filter((i) => !i.done).length} do kupienia</small></div></section>
       <section className="shopping-groups">
-        {grouped.length === 0 ? <EmptyState icon="🛍️" text="Lista zakupów jest pusta." /> : grouped.map((group) => (
+        {grouped.length === 0 ? <EmptyState icon="🛍️" text={selectedStoreName ? 'W tym sklepie nie ma przypisanych produktów.' : 'Lista zakupów jest pusta.'} /> : grouped.map((group) => (
           <article className="shopping-group" key={group.category}>
             <header><div><span>{SHOPPING_META[group.category].icon}</span><strong>{SHOPPING_META[group.category].label}</strong></div><small>{group.items.filter((i) => !i.done).length} do kupienia</small></header>
             <div>{group.items.map((item) => (
               <div className={`shopping-row ${item.done ? 'done' : ''}`} key={item.id}>
-                <button className="check-button" onClick={() => updateDoc(doc(db, 'shoppingItems', item.id), { done: !item.done, updatedAt: Timestamp.now() })}>{item.done ? '✓' : '○'}</button>
+                <button className="check-button" aria-label={`${item.done ? 'Przywróć' : 'Oznacz jako kupione'}: ${item.title}`} onClick={() => void updateDoc(doc(db, 'shoppingItems', item.id), { done: !item.done, updatedAt: Timestamp.now() }).catch(error => notify(errorMessage(error), 'error'))}>{item.done ? '✓' : '○'}</button>
                 <strong>{item.title}</strong><span>{[item.quantity, item.unit].filter(Boolean).join(' ')}</span><small>{item.done ? 'Kupione' : 'Do kupienia'}</small>
+                <button className="shopping-item-stores" type="button" aria-label={`Zmień sklepy: ${item.title}`} onClick={() => { setEditingItemStores(item); setItemShopIds(item.shopIds); }}>{item.shopIds.length ? item.shopIds.map(id => allStores.find(store => store.id === id)?.name || 'Sklep').join(', ') : 'Sklepy'}</button>
                 <button className="icon-danger" onClick={() => deleteDoc(doc(db, 'shoppingItems', item.id))}>🗑️</button>
               </div>
             ))}</div>
           </article>
         ))}
       </section>
+
+      {storesOpen && <Modal title="Własne sklepy" onClose={() => { setStoresOpen(false); setEditingStore(null); setStoreName(''); }}>
+        <div className="shopping-custom-stores">
+          <p>Każdy produkt jest jeden, nawet gdy wybierzesz kilka sklepów.</p>
+          {storesError && <p className="shopping-stores-status" role="status">{storesError}</p>}
+          <form onSubmit={saveStore} className="shopping-store-form">
+            <label className="field"><span>Nazwa sklepu</span><input required maxLength={80} value={storeName} onChange={event => setStoreName(event.target.value)} placeholder="Np. sklep osiedlowy"/></label>
+            <button className="primary-button" disabled={savingStore || !storeName.trim()}>{savingStore ? 'Zapisuję…' : editingStore ? 'Zapisz sklep' : 'Dodaj sklep'}</button>
+            {editingStore && <button type="button" className="secondary-button" onClick={() => { setEditingStore(null); setStoreName(''); }}>Anuluj edycję</button>}
+          </form>
+          {customStores.length === 0 ? <p className="muted-text">Nie dodano własnych sklepów.</p> : customStores.map(store => <div key={store.id} className="shopping-custom-store-row">
+            <strong>{store.name}{store.archived && <small> · Ukryty</small>}</strong>
+            {(store.createdBy === user.uid || isParent(member)) && <><button type="button" className="secondary-button" onClick={() => { setEditingStore(store); setStoreName(store.name); }}>Edytuj</button><button type="button" className="secondary-button" onClick={() => void archiveStore(store)}>{store.archived ? 'Przywróć' : 'Usuń sklep'}</button></>}
+          </div>)}
+        </div>
+      </Modal>}
+
+      {editingItemStores && <Modal title={`Sklepy: ${editingItemStores.title}`} onClose={() => setEditingItemStores(null)}>
+        <form onSubmit={saveItemStores} className="shopping-item-stores-form">
+          <ShoppingStorePicker stores={allStores} value={itemShopIds} onChange={setItemShopIds}/>
+          <p>Odhaczenie zakupu dotyczy wszystkich wybranych sklepów.</p>
+          <div className="form-actions"><button type="button" className="secondary-button" onClick={() => setEditingItemStores(null)}>Anuluj</button><button className="primary-button" disabled={savingItemStores}>{savingItemStores ? 'Zapisuję…' : 'Zapisz sklepy'}</button></div>
+        </form>
+      </Modal>}
 
       {quickMenu && <div className="quick-product-menu-backdrop" onClick={() => setQuickMenu(null)}><div className="quick-product-menu" onClick={(e) => e.stopPropagation()}><strong>{quickMenu.title}</strong><button onClick={() => openQuickEditor(quickMenu)}>🖼️ Zmień ikonkę / Edytuj</button><button className="danger" onClick={() => void removeQuick(quickMenu)}>🗑️ Usuń</button><button onClick={() => setQuickMenu(null)}>Anuluj</button></div></div>}
 

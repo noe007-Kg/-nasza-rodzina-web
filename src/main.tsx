@@ -179,7 +179,7 @@ function FamilyApp({ user }: { user: User }) {
 function Sidebar({ page, goTo, member }: { page: Page; goTo: (page: Page) => void; member: Member | null }) {
   const groups: Array<{ label: string; items: Page[] }> = [
     { label: 'Na co dzień', items: ['Start', 'Kalendarz', 'Zadania', 'Zakupy'] },
-    { label: 'Dom i bliscy', items: ['Czat', 'Zdrowie', 'Szkoła', 'Rodzina'] },
+    { label: 'Dom i bliscy', items: ['Czat', 'Zdrowie', 'Szkoła'] },
     { label: 'Twoja aplikacja', items: ['Ustawienia'] },
   ];
 
@@ -219,7 +219,7 @@ function MobileNavigation({ page, goTo, moreOpen, onMore }: { page: Page; goTo: 
 }
 
 function MobileMoreMenu({ page, goTo, onClose }: { page: Page; goTo: (page: Page) => void; onClose: () => void }) {
-  const items: Array<[Page, string]> = [['Czat', 'Rodzinne rozmowy'], ['Zdrowie', 'Wizyty i dokumenty'], ['Szkoła', 'Lekcje i oceny'], ['Rodzina', 'Nasi najbliżsi'], ['Ustawienia', 'Dopasuj aplikację']];
+  const items: Array<[Page, string]> = [['Czat', 'Rodzinne rozmowy'], ['Zdrowie', 'Wizyty i dokumenty'], ['Szkoła', 'Lekcje i oceny'], ['Ustawienia', 'Dopasuj aplikację']];
   const panel = useRef<HTMLElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;

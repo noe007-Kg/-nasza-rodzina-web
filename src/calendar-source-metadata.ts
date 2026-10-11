@@ -1,11 +1,11 @@
 import type { CalendarEventData } from './app-shared';
 
-type SourceMetadata = Pick<CalendarEventData, 'source' | 'sourceRecordId' | 'sourceConnectionId' | 'sourceOwnerUid' | 'externalCalendarId' | 'externalEventId' | 'externalSeriesId' | 'sourceStartDate' | 'sourceEndDateExclusive' | 'ownerProfileId' | 'readOnly' | 'cancelled'>;
+type SourceMetadata = Pick<CalendarEventData, 'source' | 'sourceRecordId' | 'sourceConnectionId' | 'sourceOwnerUid' | 'externalCalendarId' | 'externalEventId' | 'externalSeriesId' | 'sourceStartDate' | 'sourceEndDateExclusive' | 'ownerProfileId' | 'readOnly' | 'cancelled' | 'sourceRecurrence' | 'externalOriginalStart' | 'sourceExceptionTombstone' | 'providerEtag'>;
 const fields = ['sourceRecordId', 'sourceConnectionId', 'sourceOwnerUid', 'externalCalendarId', 'externalEventId', 'externalSeriesId', 'ownerProfileId'] as const;
 
 /** Provenance is read from existing documents; this never creates provider records. */
 export function readCalendarSourceMetadata(data: Record<string, unknown>): SourceMetadata {
-  const source = data.source === 'google' || data.source === 'sp4' || data.source === 'manual' ? data.source : undefined;
+  const source = ['google', 'sp4', 'manual', 'health', 'fryderyk', 'ics'].includes(String(data.source)) ? data.source as CalendarEventData['source'] : undefined;
   const result: SourceMetadata = {};
   if (source) result.source = source;
   // Google content belongs to its source even if an old record omitted this flag.
@@ -16,6 +16,10 @@ export function readCalendarSourceMetadata(data: Record<string, unknown>): Sourc
     if (typeof value === 'string' && value.trim() && value.length <= 2048) result[field] = value;
   }
   if (source === 'google') {
+    if (Array.isArray(data.sourceRecurrence)) result.sourceRecurrence = data.sourceRecurrence.filter((value): value is string => typeof value === 'string' && value.length <= 4096).slice(0, 64);
+    if (typeof data.externalOriginalStart === 'string' && data.externalOriginalStart.length <= 256) result.externalOriginalStart = data.externalOriginalStart;
+    if (data.sourceExceptionTombstone === true) result.sourceExceptionTombstone = true;
+    if (typeof data.providerEtag === 'string' && data.providerEtag.length <= 2048) result.providerEtag = data.providerEtag;
     if (validCivilDay(data.sourceStartDate)) result.sourceStartDate = data.sourceStartDate as string;
     if (validCivilDay(data.sourceEndDateExclusive)) result.sourceEndDateExclusive = data.sourceEndDateExclusive as string;
   }
@@ -44,7 +48,7 @@ function localCivilDay(value: string, end = false): Date {
 /** A Google all-day DATE is a civil day, not the device-local date of its UTC instant.
  * Display-only copies leave storage and ICS export on the original source timestamps. */
 export function calendarSourceDisplayEvent(event: CalendarEventData): CalendarEventData {
-  if (event.source !== 'google' || !event.allDay || event.repeat !== 'none') return event;
+  if (event.source !== 'google' || !event.allDay || event.repeat !== 'none' || event.sourceRecurrence?.length) return event;
   let start: string, end: string;
   if (validCivilDay(event.sourceStartDate) && validCivilDay(event.sourceEndDateExclusive)
     && event.sourceEndDateExclusive > event.sourceStartDate) {

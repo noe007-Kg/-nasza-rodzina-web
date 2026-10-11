@@ -8,6 +8,8 @@ import { familyAccessDiagnostic, familyAccessErrorMessage, type FamilyQuerySourc
 import { schoolReadAccess, schoolReadAccessKey, SCHOOL_PROFILE_UNBOUND } from '../school/read-access';
 import { clearNotice } from '../feedback';
 import { ProfileAvatar } from '../account/ProfileSettings';
+import { calendarEventInView } from '../calendar-v2';
+import { ownPerson } from '../app-shared';
 
 export function FamilyPage({ user, member, goTo, selected, onSelect }: { user: User; member: Member | null; goTo: (page: Page) => void; selected: PersonKey; onSelect: (person: PersonKey) => void }) {
   const members = useFamilyDirectory().filter(profile => profile.active !== false && !profile.archived && !profile.disabled);
@@ -73,7 +75,7 @@ export function FamilyPage({ user, member, goTo, selected, onSelect }: { user: U
 
   function statusFor(name:string) {
     const key=name as PersonKey;
-    const cal=todayCalendar.filter((o)=>o.source.person === key);
+    const cal=todayCalendar.filter((o)=>o.source.person === key && calendarEventInView(o.source, key, ownPerson(member), user.uid));
     const schoolRows=todaySchool.filter((r)=>r.person === key).map((r)=>({ start:parseLocalDate(today,r.time || '08:00'), end:parseLocalDate(today,r.endTime || r.time || '08:45'), title:r.type === 'activity' ? r.title : (r.subject || r.title), icon:subjectIcon(r.subject || r.title) }));
     const rows=[...cal.map((o)=>({start:o.date,end:o.endDate,title:o.source.title,icon:eventActivityIcon(o.source.title)})),...schoolRows].sort((a,b)=>a.start.getTime()-b.start.getTime());
     const active=rows.find((r)=>r.start <= now && r.end > now); if (active) return `${active.icon} ${active.title} do ${formatTime(active.end)}`;
@@ -83,15 +85,15 @@ export function FamilyPage({ user, member, goTo, selected, onSelect }: { user: U
 
   const selectedMember=members.find((m)=>memberPersonKey(m) === selected);
   const selectedTasks=tasks.filter((t)=>!t.done && (selected === 'family' ? true : t.person === selected || t.person === 'family')).slice(0,5);
-  const selectedPlan=selected === 'family' ? todayCalendar.slice(0,8) : todayCalendar.filter((o)=>o.source.person === selected || o.source.person === 'family').slice(0,6);
+  const selectedPlan=todayCalendar.filter(o => calendarEventInView(o.source, selected, ownPerson(member), user.uid)).slice(0,selected === 'family' ? 8 : 6);
   const selectedSchool=todaySchool.filter((r)=>selected !== 'family' && r.person === selected).slice(0,7);
-  const upcoming=events.flatMap((e)=>generateOccurrences(e,new Date(),endOfDay(addDays(new Date(),30)))).filter((o)=>o.date >= new Date() && (selected === 'family' || o.source.person === selected || o.source.person === 'family')).sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,4);
+  const upcoming=events.filter(e => calendarEventInView(e, selected, ownPerson(member), user.uid)).flatMap((e)=>generateOccurrences(e,new Date(),endOfDay(addDays(new Date(),30)))).filter((o)=>o.date >= new Date()).sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,4);
   const isStudent=memberSchoolEnabled(selectedMember);
   const age=ageFromBirthDate((selectedMember as { birthDate?: string } | undefined)?.birthDate || FAMILY_BIRTHDAYS[selected]);
 
   return (
     <div className="page-content compact-page family-v130">
-      <ModuleHeader icon="👨‍👩‍👧‍👦" title="Rodzina" text="Profile, plany i szybki dostęp do informacji każdej osoby." />
+      <ModuleHeader icon="👨‍👩‍👧‍👦" title={selectedMember?.name || 'Plan rodziny'} text="Profil i plan dnia. Zarządzanie członkami znajdziesz w Ustawieniach." />
       <p className="family-selection-note">Wybierz osobę w górnym pasku, aby zobaczyć jej plan dnia. {selected !== 'family' && <button className="secondary-button" onClick={() => onSelect('family')}>Plan całej rodziny</button>}</p>
       {member?.role === 'child' && !schoolAccess && <p className="family-selection-note" role="status">{SCHOOL_PROFILE_UNBOUND}</p>}
 

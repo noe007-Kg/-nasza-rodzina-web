@@ -1,7 +1,7 @@
 import type { CalendarConnection, CalendarStatusResponse } from './model';
 export const CALENDAR_AUTO_SYNC_MS = 60 * 60_000;
 export function shouldRefreshCalendar(connection: CalendarConnection, now: number) {
-  if (connection.provider !== 'google' || connection.mode !== 'sync' || connection.status !== 'connected' || connection.selectionConfirmed !== true) return false;
+  if (connection.provider !== 'google' || connection.mode !== 'sync' || connection.status !== 'connected' || connection.selectionConfirmed !== true || connection.historyRequired) return false;
   if (!connection.lastSuccessfulSyncAt) return true;
   const success = Date.parse(connection.lastSuccessfulSyncAt);
   return Number.isFinite(success) && now - success >= CALENDAR_AUTO_SYNC_MS;

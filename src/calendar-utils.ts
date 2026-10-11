@@ -1,7 +1,7 @@
 export type RepeatType = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 export type RecurrenceUnit = 'day' | 'week' | 'month' | 'year';
 export type RecurrenceRule = { interval: number; unit: RecurrenceUnit; weekdays?: number[] };
-export type OccurrenceOverride = { date: Date; endDate: Date; title?: string; person?: string; description?: string; location?: string; allDay?: boolean };
+export type OccurrenceOverride = { date: Date; endDate: Date; title?: string; person?: string; description?: string; location?: string; allDay?: boolean; important?: boolean };
 
 export type RecurringEvent = {
   id: string;

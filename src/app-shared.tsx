@@ -32,9 +32,9 @@ import SchoolModule from './SchoolModule';
 import { registerPwa } from './pwa';
 import { startOfDay, endOfDay, startOfWeek, addDays, addMonths, addYears, sameDay, formatDateInput, formatTimeInput, parseLocalDate, isRepeatType, repeatLabel, occurrenceAt, generateOccurrences } from './calendar-utils';
 
-export const APP_VERSION = '1.6.0';
+export const APP_VERSION = '2.0.0';
 
-export const APP_UPDATED = '03.10.2026';
+export const APP_UPDATED = '11.10.2026';
 
 export type Member = {
   id?: string;
@@ -86,7 +86,7 @@ export type CalendarEventData = {
   recurrence?: { interval: number; unit: 'day' | 'week' | 'month' | 'year'; weekdays?: number[] };
   repeatCount?: number | null;
   recurrenceExceptions?: string[];
-  recurrenceOverrides?: Record<string, { title?: string; person?: PersonKey; date: Date; endDate: Date; allDay?: boolean; description?: string; location?: string }>;
+  recurrenceOverrides?: Record<string, { title?: string; person?: PersonKey; date: Date; endDate: Date; allDay?: boolean; description?: string; location?: string; important?: boolean }>;
   repeatBefore?: Date | null;
   seriesId?: string;
   ownerUid?: string;
@@ -94,7 +94,12 @@ export type CalendarEventData = {
   location?: string;
   timeZone?: string;
   /** Local read-only views; school projections are never written as calendar documents. */
-  source?: 'manual' | 'sp4' | 'google';
+  source?: 'manual' | 'sp4' | 'google' | 'health' | 'fryderyk' | 'ics';
+  important?: boolean;
+  sourceRecurrence?: string[];
+  externalOriginalStart?: string | null;
+  sourceExceptionTombstone?: boolean;
+  providerEtag?: string;
   sourceRecordId?: string;
   sourceConnectionId?: string;
   sourceOwnerUid?: string;
@@ -134,6 +139,7 @@ export type EventForm = {
   repeatCount?: number;
   private?: boolean;
   location?: string;
+  important?: boolean;
 };
 
 export type TaskApproval = 'none' | 'pending' | 'approved';

@@ -1,10 +1,13 @@
-import { addDoc, collection, db, deleteDoc, deleteObject, doc, EmptyState, errorMessage, formatDateInput, formatShortDate, getBlob, isParent, isPersonKey, Modal, ModuleHeader, notify, onSnapshot, ownPerson, parseLocalDate, personColor, PersonSelect, query, React, storage, storageRef, Timestamp, updateDoc, useEffect, useRef, useState, where, writeBatch, type HealthForm, type HealthRecord, type HealthStatus, type HealthType, type MedicalContact, type Member, type PersonKey, type User } from "../app-shared";
+import { addDoc, collection, db, deleteDoc, deleteObject, doc, EmptyState, errorMessage, formatDateInput, formatShortDate, isParent, isPersonKey, Modal, ModuleHeader, notify, onSnapshot, ownPerson, parseLocalDate, personColor, PersonSelect, query, React, storage, storageRef, Timestamp, updateDoc, useEffect, useRef, useState, where, writeBatch, type HealthForm, type HealthRecord, type HealthStatus, type HealthType, type MedicalContact, type Member, type PersonKey, type User } from "../app-shared";
 
 import { uploadBytesResumable } from 'firebase/storage';
 import { useNotifications } from '../notifications';
 
 import { observeHealthUpload, validateHealthFile, type HealthUploadProgress } from './health-upload';
 import { HealthUploadStatus } from './HealthUploadStatus';
+import { ProtectedHealthDocuments } from '../health/ProtectedHealthDocuments';
+import { HealthDocumentViewer, type HealthPreviewFile } from '../health/HealthDocumentViewer';
+import '../health/health-documents.css';
 import './chat-health.css';
 
 export const HEALTH_META: Record<HealthType, { label: string; icon: string }> = {
@@ -18,13 +21,18 @@ export function isHealthType(value: unknown): value is HealthType { return typeo
 export function isHealthStatus(value: unknown): value is HealthStatus { return value === 'planned' || value === 'toBook' || value === 'booked' || value === 'done' || value === 'cancelled'; }
 
 export function HealthPage({ user, member }: { user: User; member: Member | null }) {
-  const [records, setRecords] = useState<HealthRecord[]>([]);
-  const [contacts, setContacts] = useState<MedicalContact[]>([]);
+  const [recordState, setRecords] = useState<{ scope: string; rows: HealthRecord[] }>({ scope: '', rows: [] });
+  const [contactState, setContacts] = useState<{ scope: string; rows: MedicalContact[] }>({ scope: '', rows: [] });
   const [person, setPerson] = useState<PersonKey>('family');
   const [specialtyFilter, setSpecialtyFilter] = useState<string>('all');
   const [showForm, setShowForm] = useState(false);
   const [showContactForm, setShowContactForm] = useState(false);
+  const [section, setSection] = useState<'overview' | 'visits' | 'medicine' | 'documents' | 'history' | 'contacts'>('overview');
+  const [previewFile, setPreviewFile] = useState<HealthPreviewFile | null>(null);
   const parent = isParent(member);
+  const healthScope = JSON.stringify([user.uid, parent, ownPerson(member)]);
+  const records = recordState.scope === healthScope ? recordState.rows : [];
+  const contacts = contactState.scope === healthScope ? contactState.rows : [];
   const [recordType, setRecordType] = useState<HealthType | 'all'>('all');
   const [editingHealth, setEditingHealth] = useState<HealthRecord | null>(null);
   const [savingHealth, setSavingHealth] = useState(false);
@@ -37,7 +45,7 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
   const [savingContact, setSavingContact] = useState(false);
   const [editingContact, setEditingContact] = useState<MedicalContact | null>(null);
   const contactSavingRef = useRef(false);
-  const emptyForm = (): HealthForm => ({ title: '', person: !parent ? ownPerson(member) : person === 'family' ? 'Paweł' : person, type: 'visit', date: formatDateInput(new Date()), time: '12:00', doctor: '', location: '', note: '', specialty: '', status: 'planned', referralCode: '', nextControl: '', callReminderDate: '', privateToParents: false, dose: '', medicineTime: '20:00', addToCalendar: true, file: null });
+  const emptyForm = (): HealthForm => ({ title: '', person: !parent ? ownPerson(member) : person === 'family' ? ownPerson(member) : person, type: 'visit', date: formatDateInput(new Date()), time: '12:00', doctor: '', location: '', note: '', specialty: '', status: 'planned', referralCode: '', nextControl: '', callReminderDate: '', privateToParents: false, dose: '', medicineTime: '20:00', addToCalendar: true, file: null });
   const [form, setForm] = useState<HealthForm>(emptyForm);
   const [contactForm, setContactForm] = useState({ person:'family' as PersonKey, specialty:'', name:'', doctor:'', phone:'', address:'', note:'' });
 
@@ -49,12 +57,12 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
       };
     });
     next.sort((a,b)=>(b.date || '').localeCompare(a.date || '') || (b.createdAt?.getTime() || 0)-(a.createdAt?.getTime() || 0));
-    setRecords(next);
-  }), []);
+    setRecords({ scope: healthScope, rows: next });
+  }), [healthScope, parent, member?.personKey, member?.name]);
 
   useEffect(() => onSnapshot(parent ? collection(db, 'medicalContacts') : query(collection(db, 'medicalContacts'), where('person', 'in', ['family', ownPerson(member)])), (snap) => {
-    setContacts(snap.docs.map((d) => { const x=d.data(); return { id:d.id, person:isPersonKey(x.person) ? x.person : 'family', specialty:String(x.specialty || ''), name:String(x.name || ''), doctor:String(x.doctor || ''), phone:String(x.phone || ''), address:String(x.address || ''), note:String(x.note || '') }; }));
-  }), []);
+    setContacts({ scope: healthScope, rows: snap.docs.map((d) => { const x=d.data(); return { id:d.id, person:isPersonKey(x.person) ? x.person : 'family', specialty:String(x.specialty || ''), name:String(x.name || ''), doctor:String(x.doctor || ''), phone:String(x.phone || ''), address:String(x.address || ''), note:String(x.note || '') }; }) });
+  }), [healthScope, parent, member?.personKey, member?.name]);
 
   useEffect(() => {
     const check = () => {
@@ -85,13 +93,12 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
   const documents = personRecords.filter((r) => r.type === 'document' || r.type === 'result').slice(0,8);
   const controlItems = personRecords.filter((r) => r.nextControl || r.callReminderDate).slice(0,6);
   const visibleContacts = contacts.filter((c) => c.person === 'family' || person === 'family' || c.person === person);
-  const importantPawelDocs = allowedRecords.filter((r) => r.person === 'Paweł' && r.type === 'document' && r.privateToParents).slice(0,4);
 
   function resetUpload() {
     setUploadProgress({ phase: 'idle', percent: 0 }); setUploadFileName(''); setUploadError(''); uploadedFile.current = null;
   }
 
-  function openAdd(type: HealthType = 'visit') { resetUpload(); setEditingHealth(null); setForm({ ...emptyForm(), type, person: !parent ? ownPerson(member) : person === 'family' ? 'Paweł' : person, privateToParents:parent && type === 'document' }); setShowForm(true); }
+  function openAdd(type: HealthType = 'visit') { resetUpload(); setEditingHealth(null); setForm({ ...emptyForm(), type, person: !parent ? ownPerson(member) : person === 'family' ? ownPerson(member) : person, privateToParents:parent && type === 'document' }); setShowForm(true); }
 
   function editHealth(record: HealthRecord) {
     resetUpload();
@@ -102,14 +109,7 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
 
   async function openDocument(record: HealthRecord) {
     if (!record.documentPath) { notify('Ten plik wymaga migracji do chronionego magazynu. Instrukcja znajduje się w paczce projektu.', 'error'); return; }
-    const preview = window.open('', '_blank');
-    try {
-      const blob = await getBlob(storageRef(storage, record.documentPath), 10 * 1024 * 1024);
-      const url = URL.createObjectURL(blob);
-      if (preview) { preview.opener = null; preview.location.replace(url); }
-      else { const a = document.createElement('a'); a.href = url; a.download = record.title; a.click(); }
-      window.setTimeout(()=>URL.revokeObjectURL(url), 60000);
-    } catch (error) { preview?.close(); notify(errorMessage(error), 'error'); }
+    setPreviewFile({ title: record.title, path: record.documentPath });
   }
 
   async function uploadHealthFile(file: File, recordPerson: PersonKey) {
@@ -181,21 +181,21 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
       <section className="health-person-filter" aria-label="Wybór kartoteki zdrowia">
         <label><span>Kartoteka</span><PersonSelect value={person} onChange={setPerson} allowed={parent ? undefined : ['family', ownPerson(member)]} /></label>
       </section>
+      <nav className="health-section-navigation" aria-label="Sekcje zdrowia">{([['overview', 'Przegląd'], ['visits', 'Wizyty'], ['medicine', 'Leki'], ['documents', 'Dokumenty'], ['history', 'Historia zdrowia'], ['contacts', 'Kontakty medyczne']] as const).map(([key, label]) => <button type="button" key={key} aria-pressed={section === key} onClick={() => setSection(key)}>{label}</button>)}</nav>
+      {(section === 'overview' || section === 'documents') && <ProtectedHealthDocuments key={user.uid} user={user} member={member} person={person} />}
 
       <section className="specialty-chips"><button className={specialtyFilter === 'all' ? 'active' : ''} onClick={() => setSpecialtyFilter('all')}>Chronologia</button>{SPECIALTIES.map((s)=><button key={s} className={specialtyFilter === s ? 'active' : ''} onClick={() => setSpecialtyFilter(s)}>{s}</button>)}</section>
 
       <div className="health-dashboard-grid">
-        <article className="health-card upcoming-health"><header><strong>📅 Najbliższe wizyty{person !== 'family' ? ` — ${person}` : ''}</strong><button onClick={() => openAdd('visit')}>Dodaj +</button></header>{upcomingVisits.length === 0 ? <p className="health-empty">Brak zaplanowanych wizyt.</p> : upcomingVisits.map((r)=><div className="health-list-row" key={r.id}><span className="health-date-tile"><b>{new Date(`${r.date}T12:00`).getDate()}</b><small>{new Date(`${r.date}T12:00`).toLocaleDateString('pl-PL',{month:'short'}).toUpperCase()}</small></span><div><strong>{r.person} — {r.specialty || r.title}</strong><small>{r.doctor || r.location || r.title}</small><p>{r.time}{r.referralCode ? ` · skierowanie: ${r.referralCode}` : ''}</p></div><span className="health-status">{r.status === 'toBook' ? 'Do umówienia' : r.status === 'booked' ? 'Umówiona' : 'Zaplanowana'}</span></div>)}</article>
+        {(section === 'overview' || section === 'visits') && <article className="health-card upcoming-health"><header><strong>📅 Najbliższe wizyty{person !== 'family' ? ` — ${person}` : ''}</strong><button onClick={() => openAdd('visit')}>Dodaj +</button></header>{upcomingVisits.length === 0 ? <p className="health-empty">Brak zaplanowanych wizyt.</p> : upcomingVisits.map((r)=><div className="health-list-row" key={r.id}><span className="health-date-tile"><b>{new Date(`${r.date}T12:00`).getDate()}</b><small>{new Date(`${r.date}T12:00`).toLocaleDateString('pl-PL',{month:'short'}).toUpperCase()}</small></span><div><strong>{r.person} — {r.specialty || r.title}</strong><small>{r.doctor || r.location || r.title}</small><p>{r.time}{r.referralCode ? ` · skierowanie: ${r.referralCode}` : ''}</p></div><span className="health-status">{r.status === 'toBook' ? 'Do umówienia' : r.status === 'booked' ? 'Umówiona' : 'Zaplanowana'}</span></div>)}</article>}
 
-        <article className="health-card"><header><strong>🔔 Przypomnienia</strong></header>{medicines.slice(0,3).map((r)=><div className="health-list-row" key={r.id}><span className="health-icon-tile">💊</span><div><strong>{r.title} — {r.person}</strong><small>{r.medicineTime || r.time}{r.dose ? ` · ${r.dose}` : ''}</small></div><button className={r.confirmedDate === formatDateInput(new Date()) ? 'confirmed-button' : 'medicine-confirm'} onClick={() => void confirmMedicine(r)}>{r.confirmedDate === formatDateInput(new Date()) ? '✓ Przyjęte' : 'Potwierdź'}</button></div>)}{controlItems.map((r)=><div className="health-list-row" key={`control-${r.id}`}><span className="health-icon-tile">☎️</span><div><strong>{r.nextControl ? `Kontrola: ${r.nextControl}` : 'Zadzwoń do rejestracji'}</strong><small>{r.callReminderDate ? `Przypomnienie: ${formatShortDate(r.callReminderDate)}` : r.specialty}</small></div></div>)}</article>
+        {(section === 'overview' || section === 'medicine') && <article className="health-card"><header><strong>🔔 Przypomnienia</strong></header>{medicines.slice(0,3).map((r)=><div className="health-list-row" key={r.id}><span className="health-icon-tile">💊</span><div><strong>{r.title} — {r.person}</strong><small>{r.medicineTime || r.time}{r.dose ? ` · ${r.dose}` : ''}</small></div><button className={r.confirmedDate === formatDateInput(new Date()) ? 'confirmed-button' : 'medicine-confirm'} onClick={() => void confirmMedicine(r)}>{r.confirmedDate === formatDateInput(new Date()) ? '✓ Przyjęte' : 'Potwierdź'}</button></div>)}{controlItems.map((r)=><div className="health-list-row" key={`control-${r.id}`}><span className="health-icon-tile">☎️</span><div><strong>{r.nextControl ? `Kontrola: ${r.nextControl}` : 'Zadzwoń do rejestracji'}</strong><small>{r.callReminderDate ? `Przypomnienie: ${formatShortDate(r.callReminderDate)}` : r.specialty}</small></div></div>)}</article>}
 
-        {person === 'Paweł' && parent && <article className="health-card important-docs"><header><strong>🔒 Ważne dokumenty Pawła</strong><button onClick={() => openAdd('document')}>Dodaj +</button></header>{importantPawelDocs.length === 0 ? <p className="health-empty">Dodaj orzeczenie lub ważny dokument, aby mieć go zawsze pod ręką.</p> : importantPawelDocs.map((r)=><div className="document-row" key={r.id}><span>📁</span><div><strong>{r.title}</strong><small>Tylko rodzice</small></div>{(r.documentPath || r.documentURL) && <button onClick={()=>void openDocument(r)}>Pokaż lekarzowi</button>}</div>)}</article>}
+        {(section === 'overview' || section === 'history' || section === 'visits') && <article className="health-card"><header><strong>🕘 Historia wizyt</strong><small>Od najnowszych do najstarszych</small></header>{history.length === 0 ? <p className="health-empty">Brak historii.</p> : history.map((r)=><div className="timeline-health-row" key={r.id}><time>{r.date ? formatShortDate(r.date) : '—'}</time><span style={{ background:personColor(r.person) }} /><div><strong>{r.specialty || r.title}</strong><small>{r.person}{r.doctor ? ` · ${r.doctor}` : ''}</small><p>{r.note || r.location}</p></div></div>)}</article>}
 
-        <article className="health-card"><header><strong>🕘 Historia wizyt</strong><small>Od najnowszych do najstarszych</small></header>{history.length === 0 ? <p className="health-empty">Brak historii.</p> : history.map((r)=><div className="timeline-health-row" key={r.id}><time>{r.date ? formatShortDate(r.date) : '—'}</time><span style={{ background:personColor(r.person) }} /><div><strong>{r.specialty || r.title}</strong><small>{r.person}{r.doctor ? ` · ${r.doctor}` : ''}</small><p>{r.note || r.location}</p></div></div>)}</article>
+        {(section === 'overview' || section === 'documents') && <article className="health-card"><header><strong>📄 Dotychczasowe dokumenty i wyniki</strong><button onClick={() => openAdd('result')}>Dodaj wynik +</button></header>{documents.length === 0 ? <p className="health-empty">Brak dokumentów.</p> : documents.map((r)=><div className="document-row" key={r.id}><span>📄</span><div><strong>{r.title}</strong><small>{r.date ? formatShortDate(r.date) : ''} · {r.person}</small></div>{r.documentPath || r.documentURL ? <button onClick={()=>void openDocument(r)}>Otwórz</button> : <span>Bez pliku</span>}</div>)}</article>}
 
-        <article className="health-card"><header><strong>📄 Dokumenty i wyniki</strong><button onClick={() => openAdd('result')}>Dodaj plik +</button></header>{documents.length === 0 ? <p className="health-empty">Brak dokumentów.</p> : documents.map((r)=><div className="document-row" key={r.id}><span>📄</span><div><strong>{r.title}</strong><small>{r.date ? formatShortDate(r.date) : ''} · {r.person}</small></div>{r.documentPath || r.documentURL ? <button onClick={()=>void openDocument(r)}>Otwórz</button> : <span>Bez pliku</span>}</div>)}</article>
-
-        <article className="health-card medical-contacts"><header><strong>👥 Kontakty medyczne</strong>{parent && <button onClick={() => { setEditingContact(null); setContactForm({ person:person === 'family' ? 'family' : person, specialty:'', name:'', doctor:'', phone:'', address:'', note:'' }); setShowContactForm(true); }}>Dodaj +</button>}</header>{visibleContacts.length === 0 ? <p className="health-empty">Dodaj szpital, poradnię lub lekarza.</p> : visibleContacts.map((c)=><div className="contact-row" key={c.id}><span>🏥</span><div><strong>{c.name}</strong><small>{[c.specialty,c.doctor,c.address].filter(Boolean).join(' · ')}</small></div>{c.phone && <a href={`tel:${c.phone.replace(/\s/g,'')}`}>☎ {c.phone}</a>}{parent && <div className="health-record-actions"><button aria-label={`Edytuj kontakt: ${c.name}`} onClick={()=>{ const { id, ...fields } = c; setContactForm(fields); setEditingContact(c); setShowContactForm(true); }}>Edytuj</button><button aria-label={`Usuń kontakt: ${c.name}`} onClick={()=>{ if(confirm(`Usunąć kontakt „${c.name}”?`)) void deleteDoc(doc(db,'medicalContacts',c.id)); }}>Usuń</button></div>}</div>)}</article>
+        {(section === 'overview' || section === 'contacts') && <article className="health-card medical-contacts"><header><strong>👥 Kontakty medyczne</strong>{parent && <button onClick={() => { setEditingContact(null); setContactForm({ person:person === 'family' ? 'family' : person, specialty:'', name:'', doctor:'', phone:'', address:'', note:'' }); setShowContactForm(true); }}>Dodaj +</button>}</header>{visibleContacts.length === 0 ? <p className="health-empty">Dodaj szpital, poradnię lub lekarza.</p> : visibleContacts.map((c)=><div className="contact-row" key={c.id}><span>🏥</span><div><strong>{c.name}</strong><small>{[c.specialty,c.doctor,c.address].filter(Boolean).join(' · ')}</small></div>{c.phone && <a href={`tel:${c.phone.replace(/\s/g,'')}`}>☎ {c.phone}</a>}{parent && <div className="health-record-actions"><button aria-label={`Edytuj kontakt: ${c.name}`} onClick={()=>{ const { id, ...fields } = c; setContactForm(fields); setEditingContact(c); setShowContactForm(true); }}>Edytuj</button><button aria-label={`Usuń kontakt: ${c.name}`} onClick={()=>{ if(confirm(`Usunąć kontakt „${c.name}”?`)) void deleteDoc(doc(db,'medicalContacts',c.id)); }}>Usuń</button></div>}</div>)}</article>}
       </div>
 
       <section className="health-manager"><header><strong>Wszystkie wpisy</strong><span>{visibleRecords.length} wpisów</span></header>
@@ -206,7 +206,7 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
       {showForm && <Modal title={`❤️ ${HEALTH_META[form.type].label}`} onClose={() => { if (!savingHealth) setShowForm(false); }} wide>
         <form className="form-grid" onSubmit={save}>
           <label className="field"><span>Osoba</span>{!parent ? <input value={ownPerson(member)} readOnly /> : <PersonSelect includeFamily={false} value={form.person} onChange={(value)=>setForm((f)=>({...f,person:value}))} />}</label>
-          <label className="field"><span>Rodzaj</span><select aria-label="Rodzaj" value={form.type} onChange={(e)=>setForm((f)=>({...f,type:e.target.value as HealthType}))}>{(Object.keys(HEALTH_META) as HealthType[]).map((t)=><option key={t} value={t}>{HEALTH_META[t].icon} {HEALTH_META[t].label}</option>)}</select></label>
+          <label className="field"><span>Rodzaj</span><select aria-label="Rodzaj" value={form.type} onChange={(e)=>setForm((f)=>({...f,type:e.target.value as HealthType}))}>{(Object.keys(HEALTH_META) as HealthType[]).filter(type => type !== 'document' || editingHealth?.type === 'document').map((t)=><option key={t} value={t}>{HEALTH_META[t].icon} {HEALTH_META[t].label}</option>)}</select></label>
           <label className="field field-wide"><span>Nazwa / opis</span><input value={form.title} onChange={(e)=>setForm((f)=>({...f,title:e.target.value}))} placeholder="Np. neurolog — kontrola" required /></label>
           <label className="field"><span>Specjalizacja</span><select aria-label="Specjalizacja" value={form.specialty} onChange={(e)=>setForm((f)=>({...f,specialty:e.target.value}))}><option value="">—</option>{SPECIALTIES.map((s)=><option key={s}>{s}</option>)}</select></label>
           <label className="field"><span>Status</span><select aria-label="Status" value={form.status} onChange={(e)=>setForm((f)=>({...f,status:e.target.value as HealthStatus}))}><option value="planned">Zaplanowana</option><option value="toBook">Do umówienia</option><option value="booked">Umówiona</option><option value="done">Odbyta</option><option value="cancelled">Anulowana</option></select></label>
@@ -231,6 +231,7 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
       {showContactForm && <Modal title={editingContact ? "☎️ Edytuj kontakt medyczny" : "☎️ Nowy kontakt medyczny"} onClose={()=>setShowContactForm(false)}>
         <form className="form-grid" onSubmit={saveContact}><label className="field"><span>Osoba / rodzina</span><PersonSelect value={contactForm.person} onChange={(value)=>setContactForm((f)=>({...f,person:value}))} /></label><label className="field"><span>Specjalizacja</span><input value={contactForm.specialty} onChange={(e)=>setContactForm((f)=>({...f,specialty:e.target.value}))} /></label><label className="field field-wide"><span>Nazwa placówki</span><input value={contactForm.name} onChange={(e)=>setContactForm((f)=>({...f,name:e.target.value}))} required /></label><label className="field"><span>Lekarz</span><input value={contactForm.doctor} onChange={(e)=>setContactForm((f)=>({...f,doctor:e.target.value}))} /></label><label className="field"><span>Telefon</span><input value={contactForm.phone} onChange={(e)=>setContactForm((f)=>({...f,phone:e.target.value}))} /></label><label className="field field-wide"><span>Adres</span><input value={contactForm.address} onChange={(e)=>setContactForm((f)=>({...f,address:e.target.value}))} /></label><label className="field field-wide"><span>Notatka</span><textarea value={contactForm.note} onChange={(e)=>setContactForm((f)=>({...f,note:e.target.value}))} /></label><div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={()=>setShowContactForm(false)}>Anuluj</button><button className="primary-button" disabled={savingContact}>{savingContact ? "Zapisuję…" : "✓ Zapisz"}</button></div></form>
       </Modal>}
+      {previewFile && <HealthDocumentViewer uid={user.uid} file={previewFile} onClose={() => setPreviewFile(null)} />}
     </div>
   );
 }

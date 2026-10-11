@@ -1,0 +1,43 @@
+.health-protected-documents { min-width: 0; border: 1px solid var(--nr-line, #f1dce8); background: var(--nr-panel, #fff); border-radius: 22px; padding: 16px; color: var(--nr-text, #171b4b); }
+.health-protected-documents > header, .health-protected-document-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.health-protected-documents > header > div, .health-protected-document-row > div:first-child { display: grid; gap: 5px; min-width: 0; }
+.health-protected-documents small { color: var(--nr-muted, #655b79); }
+.health-doc-access-note { font-size: .78rem; line-height: 1.45; margin: 10px 0; color: var(--nr-muted, #655b79); }
+.health-protected-documents button, .health-document-toolbar button, .health-document-toolbar a { min-height: 40px; border-radius: 12px; border: 1px solid var(--nr-line, #f1dce8); padding: 7px 10px; background: var(--nr-soft, #fff1f7); color: inherit; font: inherit; cursor: pointer; text-decoration: none; }
+.health-important-document-types { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr)); gap: 8px; max-width: 520px; }
+.health-important-document-types > button { display: grid; align-content: start; gap: 6px; text-align: left; padding: 10px; min-height: 110px; font-size: .78rem; overflow-wrap: anywhere; }
+.health-important-document-types > button > span { font-size: 1.3rem; }
+.health-protected-document-list { display: grid; gap: 8px; margin-top: 12px; }
+.health-protected-document-row { padding: 10px; border: 1px solid var(--nr-line, #f1dce8); border-radius: 14px; overflow-wrap: anywhere; }
+.health-document-row-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: 4px; }
+.health-document-status { display: inline-flex; width: fit-content; border-radius: 999px; padding: 4px 7px; font-size: .74rem; background: #f0ecf8; color: #514961; }
+.health-document-status.valid { background: #ddf7e9; color: #176041; }
+.health-document-status.soon { background: #fff2bd; color: #695300; }
+.health-document-status.expired { background: #ffe3e8; color: #9c2337; }
+.health-consent-settings { margin-top: 12px; font-size: .8rem; }
+.health-consent-settings summary { cursor: pointer; min-height: 40px; padding: 8px; }
+.health-consent-settings > label, .health-consent-settings > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.health-consent-settings select { max-width: 100%; min-height: 40px; }
+.health-document-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; border: 0; padding: 0; margin: 0; min-width: 0; }
+.health-document-pages { list-style: none; margin: 0; padding: 0; }
+.health-document-pages > li { display: flex; align-items: center; gap: 6px; padding: 6px 0; font-size: .8rem; }
+.health-document-pages > li > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.health-document-pages button { min-height: 36px; }
+.health-document-viewer { min-width: 0; background: var(--nr-panel, #fff); color: var(--nr-text, #171b4b); padding: 8px; }
+.health-document-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; font-size: .8rem; }
+.health-document-preview { overflow: auto; max-height: 65dvh; border-radius: 12px; background: #f4f1f8; }
+.health-document-preview > iframe { display: block; border: 0; width: 100%; height: 60dvh; min-height: 300px; }
+.health-document-preview > img { display: block; height: auto; }
+.health-document-print-frame { position: fixed; width: 0; height: 0; border: 0; opacity: 0; }
+.health-document-viewer:fullscreen { height: 100%; }
+.health-document-viewer:fullscreen .health-document-preview { max-height: calc(100dvh - 110px); }
+.health-document-viewer:fullscreen iframe { height: calc(100dvh - 120px); }
+.health-section-navigation { display: flex; gap: 6px; max-width: 100%; overflow-x: auto; padding: 4px 0; margin: 6px 0 12px; }
+.health-section-navigation > button { flex: 0 0 auto; min-height: 40px; border-radius: 12px; padding: 7px 10px; }
+.health-section-navigation > button[aria-pressed=true] { background: #ffe5f1; border-color: #e83e9f; color: #8b2159; }
+@media (max-width: 560px) {
+  .health-protected-documents { padding: 12px; }
+  .health-protected-document-row { align-items: stretch; flex-direction: column; }
+  .health-document-row-actions { justify-content: start; }
+  .health-document-fields { grid-template-columns: minmax(0, 1fr); }
+}

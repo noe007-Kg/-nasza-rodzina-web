@@ -1,5 +1,5 @@
 import { CalendarRequestError } from './model';
-export type CalendarAction = 'start' | 'finalize' | 'status' | 'list' | 'configure' | 'sync' | 'disconnect' | 'visibility';
+export type CalendarAction = 'start' | 'finalize' | 'status' | 'list' | 'configure' | 'sync' | 'disconnect' | 'visibility' | 'history' | 'twoway' | 'export' | 'update' | 'visibilitybatch';
 type CalendarUser = { uid: string; getIdToken(): Promise<string> };
 type Dependencies = { currentUid(): string | null | undefined; fetch?: typeof fetch };
 /** HTTP boundary: no provider tokens or server error text enter UI state. */

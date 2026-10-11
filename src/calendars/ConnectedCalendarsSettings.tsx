@@ -7,25 +7,17 @@ import { Card, Icon, PrimaryButton, SecondaryButton, StatusPill } from '../ui';
 import { calendarRequest, listExternalCalendars, readCalendarStatus } from './calendar-client';
 import { authorizedCalendarUrl, availableCalendarOwners, calendarErrorMessage, calendarOwnerName, manualCalendarSyncAvailableAt, type CalendarConnection, type CalendarMode, type CalendarNotice, type CalendarStatusResponse, type CalendarVisibility, type ExternalCalendar } from './model';
 import './calendars.css';
+import { CalendarHistoryControls, CalendarGoogleWriteSettings } from './GoogleCalendarV2Controls';
 
 type Choices = { ownerProfileId: string; visibility: CalendarVisibility | ''; mode: CalendarMode };
 type Setup = { connection: CalendarConnection; calendars: ExternalCalendar[]; calendarId: string; choices: Choices };
 const statusLabels: Record<CalendarConnection['status'], string> = { connected: 'Połączono', disconnected: 'Rozłączono', 'needs-reconnect': 'Połącz ponownie', imported: 'Import zakończony' };
 function syncDate(value: string | null) { return value ? new Date(value).toLocaleString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Jeszcze nie pobierano'; }
 
-function CalendarChoices({ value, onChange, profiles, prefix, disabled, locked = false }: { value: Choices; onChange(value: Choices): void; profiles: ReturnType<typeof availableCalendarOwners>; prefix: string; disabled: boolean; locked?: boolean }) {
+function CalendarChoices({ value, onChange, prefix, disabled, locked = false }: { value: Choices; onChange(value: Choices): void; profiles: ReturnType<typeof availableCalendarOwners>; prefix: string; disabled: boolean; locked?: boolean }) {
   return <>
-    <label htmlFor={`${prefix}-owner`}>Przypisz wydarzenia do</label>
-    <select id={`${prefix}-owner`} value={value.ownerProfileId} onChange={event => onChange({ ...value, ownerProfileId: event.target.value })} required disabled={disabled || locked}>
-      <option value="" disabled>Wybierz profil</option><option value="family">Cała rodzina</option>
-      {profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name || profile.personKey || 'Profil rodziny'}</option>)}
-    </select>
-    <fieldset className="calendar-visibility-choice" disabled={disabled}>
-      <legend>Gdzie mają być widoczne wydarzenia?</legend>
-      <label><input type="radio" name={`${prefix}-visibility`} value="private" checked={value.visibility === 'private'} onChange={() => onChange({ ...value, visibility: 'private' })} required /><span><Icon name="shield" /> Prywatny</span></label>
-      <label><input type="radio" name={`${prefix}-visibility`} value="family" checked={value.visibility === 'family'} onChange={() => onChange({ ...value, visibility: 'family' })} required /><span><Icon name="users" /> Rodzinny</span></label>
-    </fieldset>
-    <p className="calendar-connection-help">{value.visibility === 'private' ? 'Prywatne wydarzenia zobaczysz tylko Ty, także po przypisaniu ich do profilu innej osoby.' : value.visibility === 'family' ? 'Wydarzenia będą widoczne w kalendarzu rodzinnym dla uprawnionych członków.' : 'Wybierz widoczność. Przypisanie profilu samo nie udostępnia wydarzeń.'}</p>
+    <p className="calendar-connection-help"><Icon name="shield" /> Nowe wydarzenia z Google: <strong>tylko ja — prywatny</strong>. Po imporcie możesz świadomie udostępnić wybrane wydarzenia rodzinie. Starsze wydarzenia zachowują swoją widoczność.</p>
+    <input type="hidden" name={`${prefix}-owner`} value={value.ownerProfileId} />
     <label htmlFor={`${prefix}-mode`}>Sposób pobierania</label>
     <select id={`${prefix}-mode`} value={value.mode} onChange={event => onChange({ ...value, mode: event.target.value as CalendarMode })} disabled={disabled || locked}>
       <option value="sync">Synchronizacja z Google do Naszej Rodziny</option><option value="import">Import jednorazowy</option>
@@ -39,7 +31,7 @@ export function ConnectedCalendarsSettings({ user, member, notice, children }: {
   const [status, setStatus] = useState<CalendarStatusResponse | null>(null);
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false);
   const [error, setError] = useState(''), [success, setSuccess] = useState('');
-  const [choices, setChoices] = useState<Choices>({ ownerProfileId: user.uid, visibility: '', mode: 'sync' });
+  const [choices, setChoices] = useState<Choices>({ ownerProfileId: user.uid, visibility: 'private', mode: 'sync' });
   const [setup, setSetup] = useState<Setup | null>(null);
   const [disconnect, setDisconnect] = useState<CalendarConnection | null>(null);
   const [removeEvents, setRemoveEvents] = useState<boolean | null>(null);
@@ -98,9 +90,7 @@ export function ConnectedCalendarsSettings({ user, member, notice, children }: {
       await calendarRequest('configure', user, { connectionId: selected.connection.id, calendarId: selected.calendarId, ...selected.choices }, signal);
       await refresh(signal);
       if (current() && !signal.aborted) setSetup(null);
-      await calendarRequest('sync', user, { connectionId: selected.connection.id }, signal);
-      await refresh(signal);
-      if (current() && !signal.aborted) { setSetup(null); setSuccess(selected.choices.mode === 'import' ? 'Pobrano wydarzenia. Import jednorazowy zakończony.' : 'Pobrano wydarzenia. Kalendarz będzie odświeżany automatycznie, także przy zamkniętej aplikacji.'); }
+      if (current() && !signal.aborted) setSuccess('Wybrano kalendarz. Sprawdź liczbę wydarzeń i zatwierdź prywatny import historii.');
     });
   }
   async function synchronize(connection: CalendarConnection) {
@@ -127,11 +117,13 @@ export function ConnectedCalendarsSettings({ user, member, notice, children }: {
       <p className="calendar-connection-help">{connection.mode === 'sync' ? 'Synchronizacja w jedną stronę' : 'Import jednorazowy'} · Ostatnie pobranie: {syncDate(connection.lastSuccessfulSyncAt)}</p>
       {connection.lastErrorCode && <p className="calendar-connection-help">{connection.status === 'needs-reconnect' ? 'Google wymaga ponownego połączenia. Zapisane wydarzenia pozostają w aplikacji.' : 'Nie udało się odświeżyć. Spróbujemy ponownie.'}</p>}
       <div className="calendar-connection-actions">
-        {status.configured && connection.status === 'connected' && (connection.selectionConfirmed ? <SecondaryButton disabled={busy} onClick={() => void synchronize(connection)}>{connection.mode === 'import' ? 'Importuj teraz' : 'Synchronizuj teraz'}</SecondaryButton> : <PrimaryButton disabled={busy} onClick={() => void chooseCalendar(connection)}>Wybierz kalendarz</PrimaryButton>)}
+        {status.configured && connection.status === 'connected' && (connection.selectionConfirmed ? !connection.historyRequired && <SecondaryButton disabled={busy} onClick={() => void synchronize(connection)}>{connection.mode === 'import' ? 'Importuj teraz' : 'Synchronizuj teraz'}</SecondaryButton> : <PrimaryButton disabled={busy} onClick={() => void chooseCalendar(connection)}>Wybierz kalendarz</PrimaryButton>)}
         {status.configured && connection.status === 'connected' && connection.selectionConfirmed && <SecondaryButton disabled={busy} onClick={() => void chooseCalendar(connection)}>Ustawienia źródła</SecondaryButton>}
         {status.configured && (connection.status === 'needs-reconnect' || connection.status === 'disconnected') && <SecondaryButton disabled={busy} onClick={() => void start(undefined, connection)}>Połącz ponownie</SecondaryButton>}
         {connection.status !== 'disconnected' && <SecondaryButton disabled={busy} onClick={() => { setRemoveEvents(null); setDisconnect(connection); }}>Rozłącz</SecondaryButton>}
       </div>
+      {connection.status === 'connected' && connection.selectionConfirmed && <CalendarHistoryControls user={user} connection={connection} />}
+      {connection.mode === 'sync' && connection.status === 'connected' && <CalendarGoogleWriteSettings user={user} connection={connection} />}
     </article>)}</div>}
     {status?.configured && <form className="calendar-source-form" onSubmit={event => void start(event)}>
       <h3>Dodaj Google Calendar</h3><p className="calendar-connection-help">Zgoda na odczyt kalendarza jest niezależna od logowania Google do Naszej Rodziny. Nie wysyłamy zmian do Google.</p>

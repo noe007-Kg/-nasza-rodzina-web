@@ -108,5 +108,6 @@ function localApiNotice(): Plugin {
 
 export default defineConfig({
   base: '/',
+  define: { 'import.meta.env.VITE_V2_PREVIEW_READ_ONLY': JSON.stringify(process.env.VERCEL_ENV === 'preview' ? 'true' : 'false') },
   plugins: [react(), localApiNotice(), publicShellWorker()],
 });

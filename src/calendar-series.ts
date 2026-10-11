@@ -33,7 +33,7 @@ export function planSeriesUpdate(events: CalendarEventData[], event: CalendarEve
       detached.seriesId = detached.id;
       return { upserts: [{ ...event, recurrenceExceptions: [...new Set([...(event.recurrenceExceptions || []), original.toISOString()])], recurrenceOverrides: Object.fromEntries(Object.entries(event.recurrenceOverrides || {}).filter(([key]) => key !== original.toISOString())) }, detached], deletes: [] };
     }
-    return { upserts: [{ ...event, recurrenceOverrides: { ...event.recurrenceOverrides, [original.toISOString()]: { title: patch.title, person: patch.person, date: patch.date, endDate: patch.endDate, allDay: patch.allDay, description: patch.description, location: patch.location || '' } } }], deletes: [] };
+    return { upserts: [{ ...event, recurrenceOverrides: { ...event.recurrenceOverrides, [original.toISOString()]: { title: patch.title, person: patch.person, date: patch.date, endDate: patch.endDate, allDay: patch.allDay, description: patch.description, location: patch.location || '', important: patch.important === true } } }], deletes: [] };
   }
   const related = group(events, event).sort((a, b) => a.date.getTime() - b.date.getTime());
   if (scope === 'future') {

@@ -5,7 +5,7 @@ import { collection, query, where, Timestamp } from 'firebase/firestore';
 import { DndContext, DragOverlay, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { db } from '../firebase';
 import { onSnapshot } from '../feedback';
-import { AppIcon, capitalize, formatShortDate, formatTime, isAdultMember, isParent, isPersonKey, ownPerson, personLabel, schoolQuery, isSchoolType, type CalendarEventData, type Member, type Page, type SchoolRecord, type TaskItem, type QuickProduct } from '../app-shared';
+import { AppIcon, capitalize, formatShortDate, formatTime, isAdultMember, isParent, isPersonKey, ownPerson, personLabel, schoolQuery, isSchoolType, type CalendarEventData, type Member, type Page, type SchoolRecord, type TaskItem, type QuickProduct, type CalendarOccurrence, Modal, DetailRow } from '../app-shared';
 import { addDays, endOfDay, formatDateInput, generateOccurrences, startOfDay } from '../calendar-utils';
 import { subscribeCalendar } from '../calendar-store';
 import { Icon } from '../ui';
@@ -23,6 +23,13 @@ import { getStartTileColorStyle, selectedStartTileColorId, type StartTileColors 
 import './start-tile-colors.css';
 import { useStartTileSizes } from './useStartTileSizes';
 import { selectedStartTileSize, type StartTileSizes } from './start-tile-sizes';
+import { familyCalendarEvents, calendarOwnerColor, projectFamilyBirthdays } from '../calendar-v2';
+import { CalendarOwnerBadge } from '../CalendarOwnerBadge';
+import { projectSchoolCalendar } from '../calendar-source-projections';
+import { calendarSourceDisplayEvent } from '../calendar-source-metadata';
+import { generateCalendarOccurrencesFromSources } from '../calendars/google-occurrences';
+import { useCalendarHealthSources } from '../health/useCalendarHealthSources';
+import './calendar-v2.css';
 
 type Weather = { temp: number; max: number; min: number; wind: number; label: string; icon: string };
 type HealthPreview = { id: string; title: string; person: string; type: string; date: string; time: string; status: string; medicineTime: string; confirmedDate: string };
@@ -33,6 +40,14 @@ function timestampDate(value: unknown) { return value instanceof Timestamp ? val
 function DashboardTile({ tile, active, onOpen, suppressClick, dragDisabled, colors, sizes }: { tile: Tile; active: boolean; onOpen: () => void; suppressClick: () => boolean; dragDisabled: boolean; colors: StartTileColors; sizes: StartTileSizes }) {
   const { attributes, listeners, setNodeRef: setDragRef } = useDraggable({ id: tile.id, disabled: dragDisabled });
   const { setNodeRef: setDropRef } = useDroppable({ id: tile.id });
+  if (tile.id === 'calendar') return <article ref={node => { setDragRef(node); setDropRef(node); }} {...listeners}
+    className={`start-dashboard-card start-card--${tile.id}${active ? ' is-drag-source' : ''}`}
+    data-custom-color={selectedStartTileColorId(colors, tile.id)} style={getStartTileColorStyle(colors, tile.id)}
+    data-card-size={selectedStartTileSize(sizes, tile.id)} data-testid={`start-card-${tile.id}`} data-card-id={tile.id}
+    aria-label={tile.label} onContextMenu={event => event.preventDefault()}>
+    <button type="button" {...attributes} className="start-calendar-open" aria-label="Otwórz Kalendarz" onClick={event => { if (suppressClick()) { event.preventDefault(); return; } onOpen(); }}><TileContents tile={tile} headingOnly/></button>
+    <div className="start-custom-content" id={`start-card-preview-${tile.id}`}>{tile.details}</div>
+  </article>;
   return <button ref={node => { setDragRef(node); setDropRef(node); }} {...attributes} {...listeners}
     type="button" className={`start-dashboard-card start-card--${tile.id}${active ? ' is-drag-source' : ''}`}
     data-custom-color={selectedStartTileColorId(colors, tile.id)} style={getStartTileColorStyle(colors, tile.id)}
@@ -43,9 +58,11 @@ function DashboardTile({ tile, active, onOpen, suppressClick, dragDisabled, colo
   </button>;
 }
 
-function TileContents({ tile, overlay = false }: { tile: Tile; overlay?: boolean }) {
+function TileContents({ tile, overlay = false, headingOnly = false }: { tile: Tile; overlay?: boolean; headingOnly?: boolean }) {
+  const heading = <span className="start-card-heading"><span className="start-card-icon"><AppIcon page={tile.id === 'family-time' ? 'Rodzina' : tile.page} size={26}/></span><strong>{tile.label}</strong><Icon name="arrow-right" size={17}/></span>;
+  if (headingOnly) return heading;
   return <>
-    <span className="start-card-heading"><span className="start-card-icon"><AppIcon page={tile.id === 'family-time' ? 'Rodzina' : tile.page} size={26}/></span><strong>{tile.label}</strong><Icon name="arrow-right" size={17}/></span>
+    {heading}
     {tile.details ? <span className="start-custom-content" id={overlay ? undefined : `start-card-preview-${tile.id}`}>{tile.details}</span> : <><span className="start-card-value">{tile.value}</span><span className="start-card-status">{tile.status}</span>
     <span className="start-card-preview" id={overlay ? undefined : `start-card-preview-${tile.id}`}>{tile.preview}</span></>}
   </>;
@@ -57,7 +74,10 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const profiles = orderedFamilyProfiles(useFamilyDirectory(), user.uid);
   const { items: notifications } = useNotifications();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [events, setEvents] = useState<CalendarEventData[]>([]);
+  const [calendarData, setCalendarData] = useState<{ uid: string; rows: CalendarEventData[] }>({ uid: user.uid, rows: [] });
+  const events = calendarData.uid === user.uid ? calendarData.rows : [];
+  const [calendarDetail, setCalendarDetail] = useState<{ uid: string; key: string } | null>(null);
+  const healthSources = useCalendarHealthSources({ uid: user.uid, member });
   const schoolScope = schoolReadAccessKey(user.uid, schoolReadAccess(member));
   const [schoolData, setSchoolData] = useState<{ scope: string; rows: (SchoolRecord & StartSchoolRecord)[] }>({ scope: '', rows: [] });
   const schoolRecords = schoolData.scope === schoolScope ? schoolData.rows : [];
@@ -98,7 +118,7 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
       icon: typeof x.icon === 'string' ? x.icon : undefined, imageURL: typeof x.imageURL === 'string' ? x.imageURL : undefined,
       adultOnly: typeof x.adultOnly === 'boolean' ? x.adultOnly : undefined, hidden: x.hidden === true, defaultQuantity: String(x.defaultQuantity || '1'), defaultUnit: String(x.defaultUnit || 'szt.') };
   }))), [user.uid]);
-  useEffect(() => subscribeCalendar(user.uid, setEvents), [user.uid]);
+  useEffect(() => { let active = true; const uid = user.uid; const stop = subscribeCalendar(uid, rows => { if (active) setCalendarData({ uid, rows }); }); return () => { active = false; stop(); }; }, [user.uid]);
   useEffect(() => {
     setSchoolData({ scope: schoolScope, rows: [] });
     const target = schoolQuery(member);
@@ -147,8 +167,10 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   }, []);
 
   const todayKey = formatDateInput(now); const todayWeekday = now.getDay() === 0 ? 7 : now.getDay();
-  const todayOccurrences = useMemo(() => events.flatMap(event => generateOccurrences(event, startOfDay(now), endOfDay(now))).sort((a, b) => a.date.getTime() - b.date.getTime()), [events, todayKey]);
-  const upcomingEvents = useMemo(() => events.flatMap(event => generateOccurrences(event, startOfDay(now), endOfDay(addDays(now, 45)))).filter(occurrence => occurrence.endDate >= now).sort((a, b) => a.date.getTime() - b.date.getTime()), [events, now]);
+  const schoolProjection = useMemo(() => projectSchoolCalendar(schoolRecords, events, schoolReadAccess(member)), [schoolRecords, events, schoolScope]);
+  const sharedEvents = useMemo(() => familyCalendarEvents([...events.map(calendarSourceDisplayEvent), ...schoolProjection.events, ...healthSources.events, ...projectFamilyBirthdays(profiles)]), [events, schoolProjection.events, healthSources.events, profiles]);
+  const todayOccurrences = useMemo(() => generateCalendarOccurrencesFromSources(sharedEvents, startOfDay(now), endOfDay(now)), [sharedEvents, todayKey]);
+  const openedCalendarOccurrence = calendarDetail?.uid === user.uid ? todayOccurrences.find(item => item.key === calendarDetail.key) : null;
   const todaySchoolItems = useMemo(() => schoolRecords.filter(record => (record.type === 'lesson' || record.type === 'activity') && (record.weekday === todayWeekday || (!!record.date && record.date === todayKey))).sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99')), [schoolRecords, todayWeekday, todayKey]);
   const familyTime = buildFamilyTime(profiles, todayOccurrences, schoolRecords, now);
   const openTasks = tasks.filter(item => !item.done).sort((a, b) => ({ high: 0, normal: 1, low: 2 }[a.priority] - { high: 0, normal: 1, low: 2 }[b.priority] || (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99')));
@@ -161,7 +183,7 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const rows = (items: ReactNode[]) => items.length ? <span className="start-preview-rows">{items.map((item, index) => <span key={index}>{item}</span>)}</span> : null;
   const tiles: Tile[] = [
     { id: 'family-time', label: 'Rodzinny czas', page: 'Kalendarz', details: <FamilyTimeDetails summary={familyTime} now={now}/> },
-    { id: 'calendar', label: 'Kalendarz', page: 'Kalendarz', value: todayOccurrences.length, status: 'wydarzeń dzisiaj', preview: rows(upcomingEvents.slice(0, 3).map(occurrence => <><time>{formatShortDate(formatDateInput(occurrence.date))} · {occurrence.source.allDay ? 'cały dzień' : formatTime(occurrence.date)}</time><span>{occurrence.source.title}</span></>)) || 'Brak nadchodzących wydarzeń.' },
+    { id: 'calendar', label: 'Kalendarz', page: 'Kalendarz', details: <><span className="start-calendar-count"><b>{todayOccurrences.length}</b> rodzinnych wydarzeń dzisiaj</span>{todayOccurrences.length ? <span className="start-calendar-rows">{todayOccurrences.slice(0, 3).map(item => <button type="button" key={item.key} style={{ '--calendar-owner-color': calendarOwnerColor(item.source.person) } as import('react').CSSProperties} aria-label={`Szczegóły: ${item.source.title}`} onClick={event => { event.stopPropagation(); if (Date.now() >= suppressClickUntil.current) setCalendarDetail({ uid: user.uid, key: item.key }); }}><time>{item.source.allDay ? 'Cały dzień' : formatTime(item.date)}</time><span><strong>{item.source.cancelled ? 'ODWOŁANE — ' : ''}{item.source.title}</strong><CalendarOwnerBadge event={item.source}/></span></button>)}</span> : <span className="start-calendar-empty">Brak rodzinnych wydarzeń na dzisiaj.</span>}</> },
     { id: 'tasks', label: 'Zadania', page: 'Zadania', value: openTasks.length, status: 'zadań do zrobienia', preview: rows(openTasks.slice(0, 3).map(item => <><span className={`start-preview-dot${item.priority === 'high' ? ' important' : ''}`}/><span>{item.title}</span></>)) || 'Brak zadań do zrobienia.' },
     { id: 'shopping', label: 'Zakupy', page: 'Zakupy', details: <ShoppingDetails rows={shoppingRows} openCount={openShopping.length} total={shopping.length} bought={shopping.length - openShopping.length}/> },
     { id: 'chat', label: 'Czat', page: 'Czat', details: <ChatDetails conversations={conversations} notifications={notifications} messages={messages} currentUid={user.uid}/> },
@@ -190,7 +212,8 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
       <section className="start-dashboard-grid" aria-label="Twój rodzinny Start" aria-describedby="start-drag-hint" data-order={order.join(',')} data-layout-ready={loaded}>
         {order.map(id => <DashboardTile key={id} tile={byId[id]} active={activeCard === id} onOpen={() => goTo(byId[id].page)} suppressClick={() => Date.now() < suppressClickUntil.current} dragDisabled={!loaded} colors={colors} sizes={sizes}/>)}
       </section>
-      {createPortal(<DragOverlay dropAnimation={null} zIndex={1200}>{activeCard && <div className={`start-dashboard-card start-card--${activeCard} start-card-overlay`} data-testid="start-drag-overlay" aria-hidden="true" data-card-size={selectedStartTileSize(sizes, activeCard)} data-custom-color={selectedStartTileColorId(colors, activeCard)} style={getStartTileColorStyle(colors, activeCard)}><TileContents tile={byId[activeCard]} overlay/></div>}</DragOverlay>, document.body)}
+      {createPortal(<DragOverlay dropAnimation={null} zIndex={1200}>{activeCard && <div className={`start-dashboard-card start-card--${activeCard} start-card-overlay`} data-testid="start-drag-overlay" aria-hidden="true" inert data-card-size={selectedStartTileSize(sizes, activeCard)} data-custom-color={selectedStartTileColorId(colors, activeCard)} style={getStartTileColorStyle(colors, activeCard)}><TileContents tile={byId[activeCard]} overlay/></div>}</DragOverlay>, document.body)}
     </DndContext>
+    {openedCalendarOccurrence && <Modal title={openedCalendarOccurrence.source.title} subtitle="Dzisiejsze wydarzenie rodzinne" onClose={() => setCalendarDetail(null)}><div className="details-grid"><CalendarOwnerBadge event={openedCalendarOccurrence.source}/><DetailRow label="Termin" value={openedCalendarOccurrence.date.toLocaleDateString('pl-PL')}/><DetailRow label="Godzina" value={openedCalendarOccurrence.source.allDay ? 'Cały dzień' : `${formatTime(openedCalendarOccurrence.date)}–${formatTime(openedCalendarOccurrence.endDate)}`}/>{openedCalendarOccurrence.source.location && <DetailRow label="Lokalizacja" value={openedCalendarOccurrence.source.location}/>}<DetailRow label="Źródło" value={openedCalendarOccurrence.source.source === 'sp4' ? 'SP4' : openedCalendarOccurrence.source.source === 'google' ? 'Google Calendar' : openedCalendarOccurrence.source.source === 'health' ? 'Zdrowie' : openedCalendarOccurrence.source.source === 'fryderyk' ? 'Fryderyk' : 'Nasza Rodzina'}/>{openedCalendarOccurrence.source.cancelled && <DetailRow label="Status" value="ODWOŁANE"/>}{openedCalendarOccurrence.source.description && <DetailRow label="Opis" value={openedCalendarOccurrence.source.description}/>}</div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setCalendarDetail(null); goTo('Kalendarz'); }}>Otwórz Kalendarz</button></div></Modal>}
   </div>;
 }

@@ -23,7 +23,7 @@ export function readCalendarEvent(id: string, data: DocumentData, privateRecord 
       if (!raw || typeof raw !== 'object' || !Number.isFinite(new Date(key).getTime())) continue;
       const item = raw as Record<string, unknown>, start = asDate(item.date), end = asDate(item.endDate);
       if (!start || !end || end < start) continue;
-      overrides[key] = { date: start, endDate: end, ...(typeof item.title === 'string' ? { title: item.title } : {}), ...(isPersonKey(item.person) ? { person: item.person } : {}), ...(typeof item.description === 'string' ? { description: item.description } : {}), ...(typeof item.location === 'string' ? { location: item.location } : {}), ...(typeof item.allDay === 'boolean' ? { allDay: item.allDay } : {}) };
+      overrides[key] = { date: start, endDate: end, ...(typeof item.title === 'string' ? { title: item.title } : {}), ...(isPersonKey(item.person) ? { person: item.person } : {}), ...(typeof item.description === 'string' ? { description: item.description } : {}), ...(typeof item.location === 'string' ? { location: item.location } : {}), ...(typeof item.allDay === 'boolean' ? { allDay: item.allDay } : {}), ...(typeof item.important === 'boolean' ? { important: item.important } : {}) };
     }
   }
   return {
@@ -31,6 +31,7 @@ export function readCalendarEvent(id: string, data: DocumentData, privateRecord 
     person: isPersonKey(data.person) ? data.person : 'family', date,
     endDate: asDate(data.endDate) || new Date(date.getTime() + 3600000), allDay: data.allDay === true,
     description: typeof data.description === 'string' ? data.description : '',
+    important: data.important === true,
     location: typeof data.location === 'string' ? data.location : '', createdBy: typeof data.createdBy === 'string' ? data.createdBy : '',
     repeat: isRepeatType(data.repeat) ? data.repeat : 'none', repeatUntil: asDate(data.repeatUntil),
     ...(recurrence ? { recurrence } : {}), repeatCount: Number.isInteger(data.repeatCount) && data.repeatCount > 0 ? data.repeatCount : null,
@@ -67,7 +68,7 @@ export async function fetchCalendarEvents(uid: string): Promise<CalendarEventDat
 
 export function calendarDocument(event: CalendarEventData): DocumentData {
   const overrides = Object.fromEntries(Object.entries(event.recurrenceOverrides || {}).map(([key, item]) => [key, { ...item, date: Timestamp.fromDate(item.date), endDate: Timestamp.fromDate(item.endDate) }]));
-  return { title: event.title, person: event.person, date: Timestamp.fromDate(event.date), endDate: Timestamp.fromDate(event.endDate), allDay: event.allDay, description: event.description, location: event.location || '', createdBy: event.createdBy, repeat: event.repeat, repeatUntil: event.repeatUntil ? Timestamp.fromDate(event.repeatUntil) : null, recurrence: event.recurrence || null, repeatCount: event.repeatCount || null, repeatBefore: event.repeatBefore ? Timestamp.fromDate(event.repeatBefore) : null, recurrenceExceptions: event.recurrenceExceptions || [], recurrenceOverrides: overrides, private: event.private === true, ownerUid: event.ownerUid || event.createdBy, seriesId: event.seriesId || event.id, timeZone: event.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone };
+  return { title: event.title, person: event.person, date: Timestamp.fromDate(event.date), endDate: Timestamp.fromDate(event.endDate), allDay: event.allDay, description: event.description, important: event.important === true, location: event.location || '', createdBy: event.createdBy, repeat: event.repeat, repeatUntil: event.repeatUntil ? Timestamp.fromDate(event.repeatUntil) : null, recurrence: event.recurrence || null, repeatCount: event.repeatCount || null, repeatBefore: event.repeatBefore ? Timestamp.fromDate(event.repeatBefore) : null, recurrenceExceptions: event.recurrenceExceptions || [], recurrenceOverrides: overrides, private: event.private === true, ownerUid: event.ownerUid || event.createdBy, seriesId: event.seriesId || event.id, timeZone: event.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone };
 }
 
 /** One atomic batch preserves unknown legacy metadata and moves privacy boundaries safely. */

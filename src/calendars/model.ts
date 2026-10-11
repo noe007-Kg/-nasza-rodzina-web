@@ -7,6 +7,8 @@ export type CalendarConnection = {
   ownerProfileId: string; person: string; visibility: CalendarVisibility; mode: CalendarMode;
   status: 'connected' | 'disconnected' | 'needs-reconnect' | 'imported'; selectionConfirmed: boolean;
   lastSuccessfulSyncAt: string | null; lastAttemptAt: string | null; lastErrorCode: string | null;
+  writeAuthorized?: boolean; twoWayEnabled?: boolean; historyComplete?: boolean; historyRequired?: boolean;
+  historyProgress?: { phase: 'preview' | 'import' | 'sync'; processed: number; total: number | null; complete: boolean } | null;
 };
 export type ExternalCalendar = { id: string; name: string; timeZone: string; primary: boolean };
 export type CalendarStatusResponse = { ok: true; configured: boolean; connections: CalendarConnection[] };
@@ -48,6 +50,12 @@ export function calendarMessage(code: string): string {
     CALENDAR_ACCOUNT_CHANGED: 'Konto zalogowane w aplikacji zmieniło się. Nie wykonano operacji na nowym koncie.',
     CALENDAR_NETWORK_ERROR: 'Nie udało się połączyć z serwerem. Sprawdź internet i spróbuj ponownie.',
     CALENDAR_INVALID_RESPONSE: 'Nie udało się odczytać stanu połączenia. Spróbuj ponownie.',
+    CALENDAR_PREVIEW_READ_ONLY: 'Preview chroni produkcyjne dane: nowe zapisy kalendarza wymagają oddzielnego projektu testowego.',
+    CALENDAR_HISTORY_CONFIRM_REQUIRED: 'Najpierw sprawdź liczbę wydarzeń, a następnie zatwierdź import prywatnej historii.',
+    CALENDAR_WRITE_PERMISSION_REQUIRED: 'Sprawdź import historii, połącz ponownie Google ze zgodą na zapis i wybierz kalendarz, w którym możesz edytować wydarzenia.',
+    CALENDAR_WRITE_DISABLED: 'Synchronizacja dwukierunkowa jest wyłączona. Włącz ją świadomie w ustawieniach źródła.',
+    CALENDAR_WRITE_CONFLICT: 'Wydarzenie zmieniło się po obu stronach. Nie nadpisano konfliktu; sprawdź aktualne wersje.',
+    CALENDAR_EXPORT_SERIES_COMPLEX: 'Seria z lokalnymi wyjątkami wymaga osobnego uzgodnienia. Nie wysłano uproszczonej kopii.',
   };
   return messages[code] || 'Nie udało się odświeżyć kalendarza. Zapisane wydarzenia pozostają widoczne. Spróbuj ponownie.';
 }
@@ -78,7 +86,11 @@ export function parseCalendarStatus(value: unknown): CalendarStatusResponse {
   const connections = reply.connections.map(value => {
     const row = object(value);
     if (row.provider !== 'google' || !['private', 'family'].includes(String(row.visibility)) || !['sync', 'import'].includes(String(row.mode)) || !['connected', 'disconnected', 'needs-reconnect', 'imported'].includes(String(row.status)) || typeof row.selectionConfirmed !== 'boolean') throw new CalendarRequestError('CALENDAR_INVALID_RESPONSE');
-    return { id: text(row.id)!, provider: 'google' as const, calendarId: text(row.calendarId, true), calendarName: text(row.calendarName, true), ownerProfileId: text(row.ownerProfileId)!, person: text(row.person)!, visibility: row.visibility as CalendarVisibility, mode: row.mode as CalendarMode, status: row.status as CalendarConnection['status'], selectionConfirmed: row.selectionConfirmed, lastSuccessfulSyncAt: time(row.lastSuccessfulSyncAt), lastAttemptAt: time(row.lastAttemptAt), lastErrorCode: text(row.lastErrorCode, true) };
+    const progress = row.historyProgress === undefined || row.historyProgress === null ? null : object(row.historyProgress);
+    if (progress && (!['preview', 'import', 'sync'].includes(String(progress.phase)) || !Number.isSafeInteger(progress.processed) || Number(progress.processed) < 0 || progress.total !== null && (!Number.isSafeInteger(progress.total) || Number(progress.total) < 0) || typeof progress.complete !== 'boolean')) throw new CalendarRequestError('CALENDAR_INVALID_RESPONSE');
+    return { id: text(row.id)!, provider: 'google' as const, calendarId: text(row.calendarId, true), calendarName: text(row.calendarName, true), ownerProfileId: text(row.ownerProfileId)!, person: text(row.person)!, visibility: row.visibility as CalendarVisibility, mode: row.mode as CalendarMode, status: row.status as CalendarConnection['status'], selectionConfirmed: row.selectionConfirmed, lastSuccessfulSyncAt: time(row.lastSuccessfulSyncAt), lastAttemptAt: time(row.lastAttemptAt), lastErrorCode: text(row.lastErrorCode, true),
+      writeAuthorized: row.writeAuthorized === true, twoWayEnabled: row.twoWayEnabled === true, historyComplete: row.historyComplete === true, historyRequired: row.historyRequired === true,
+      historyProgress: progress ? { phase: progress.phase as 'preview' | 'import' | 'sync', processed: Number(progress.processed), total: progress.total === null ? null : Number(progress.total), complete: progress.complete as boolean } : null };
   });
   if (new Set(connections.map(row => row.id)).size !== connections.length) throw new CalendarRequestError('CALENDAR_INVALID_RESPONSE');
   return { ok: true, configured: reply.configured, connections };
