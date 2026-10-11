@@ -308,7 +308,6 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
         </div>
       </section>
 
-      <div className="calendar-transfer-toolbar"><button className="secondary-button" onClick={() => { setTransferPerson(selectedPerson); setShowTransfer(true); }}>Importuj / pobierz kalendarz .ics</button></div>
       <section className="person-filters">
         {personOptions.map((person) => <button key={person} type="button" className={selectedPerson === person ? 'active' : ''} onClick={() => setSelectedPerson(person)}><span style={{ background: calendarOwnerColor(person, activeProfiles.find(profile => memberPersonKey(profile) === person)) }} />{person === own ? 'Moje wydarzenia' : activeProfiles.find(profile => memberPersonKey(profile) === person)?.name || personLabel(person)}</button>)}
       </section>
@@ -336,6 +335,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
         <article className="calendar-lower-card"><header><strong>🔔 Twoje przypomnienia</strong></header><p>Sprawdź nadchodzące wydarzenia tutaj, a przypomnienia o lekach w zakładce Zdrowie.</p><button className="secondary-button" onClick={()=>goTo('Ustawienia')}>Ustawienia przypomnień</button></article>
       </section>
       <section className="connected-calendars-footer"><header><div><strong>🔗 Połączone kalendarze</strong><small>Nasza Rodzina jest kalendarzem domyślnym.</small></div></header><div><span className="connected active">● Nasza Rodzina</span>{schoolProjection.events.length > 0 && <span>SP4 — podgląd danych szkolnych</span>}{okruszekEvents.length > 0 && <span>Okruszek — plan Pawła</span>}<button type="button" onClick={() => goTo('Ustawienia')}>Google Calendar — {events.some(event => event.source === 'google') ? 'zapisane wydarzenia' : 'połącz w Ustawieniach'}</button><span>Apple / iCloud — ICS</span><span>Outlook — import ICS</span></div></section>
+      <div className="calendar-transfer-toolbar"><button className="secondary-button" onClick={() => { setTransferPerson(selectedPerson); setShowTransfer(true); }}>Importuj / pobierz kalendarz .ics</button></div>
 
       {showTransfer && <Modal title="Import i eksport kalendarza" subtitle="Pliki .ics" onClose={() => setShowTransfer(false)} wide>
         <div className="form-grid calendar-transfer-form">
