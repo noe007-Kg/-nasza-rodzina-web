@@ -4,6 +4,7 @@ import { getStorage } from 'firebase-admin/storage';
 import { EduServerError } from './edu-auth.mjs';
 import { activeHealthMember, activeHealthProfile, canManageHealthOwner, HEALTH_DOCUMENT_MAX_BYTES,
   HEALTH_DOCUMENT_MIME_TYPES, normalizeHealthDocumentMetadata, validHealthFileHeader } from './health-access.mjs';
+import { discardVisitAttachment, finalizeVisitAttachment, prepareVisitAttachment } from './health-visit-attachments.mjs';
 
 const fail = (code = 'HEALTH_FORBIDDEN', status = 403) => { throw new EduServerError(code, status,
   code === 'HEALTH_FORBIDDEN' ? 'Brak upoważnienia do tej kartoteki. W przypadku osoby dorosłej potrzebna jest jej zgoda lub potwierdzone umocowanie prawne.' : 'Nie udało się zapisać dokumentu. Spróbuj ponownie.'); };
@@ -50,6 +51,31 @@ function documentReaders(record, metadata) {
   return readers;
 }
 
+/** Admin queries may inspect only this authenticated UID's ready documents. */
+async function healthDocumentState(context) {
+  const actorSnapshot = await context.db.collection('members').doc(context.uid).get();
+  const actor = actorSnapshot.data();
+  if (!activeHealthMember(actor)) fail();
+  const snapshot = await context.db.collection('healthDocuments').where('state', '==', 'ready').where('readers', 'array-contains', context.uid).get();
+  const text = (record, key, maximum = 4000) => typeof record[key] === 'string' ? record[key].slice(0, maximum) : '';
+  const identities = value => Array.isArray(value) ? value.filter(identifier) : [];
+  const documents = snapshot.docs.flatMap(document => {
+    const record = document.data();
+    if (record.state !== 'ready' || !record.readers?.includes(context.uid)
+      || record.attachmentKind === 'health-record' && (record.familyId ?? null) !== (actor.familyId ?? null)
+      || !identifier(record.ownerProfileId) || typeof record.storagePath !== 'string'
+      || !record.storagePath.startsWith(`healthDocuments/${document.id}/`)) return [];
+    return [{ id: document.id, title: text(record, 'title', 300), documentType: text(record, 'documentType', 50),
+      ownerProfileId: record.ownerProfileId, ownerUid: identifier(record.ownerUid) ? record.ownerUid : null,
+      ownerPersonKey: text(record, 'ownerPersonKey', 128), readers: identities(record.readers), editors: identities(record.editors),
+      createdBy: text(record, 'createdBy', 128), state: 'ready', protected: true, storagePath: record.storagePath,
+      fileName: text(record, 'fileName', 250), mimeType: text(record, 'mimeType', 100), size: Number(record.size) || 0,
+      issuedOn: text(record, 'issuedOn', 10), expiresOn: text(record, 'expiresOn', 10), indefinite: record.indefinite === true,
+      number: text(record, 'number', 200), note: text(record, 'note', 4000), pinned: record.pinned === true, shareOwner: record.shareOwner === true }];
+  });
+  return { documentsReady: true, documents };
+}
+
 async function prepareDocument(context, body) {
   const metadata = normalizeHealthDocumentMetadata(body.metadata);
   if (!HEALTH_DOCUMENT_MIME_TYPES.includes(body.mimeType) || !Number.isInteger(body.size) || body.size <= 0
@@ -74,18 +100,11 @@ async function saveDocument(context, body) {
   const target = context.db.collection('healthDocuments').doc(identifier(body.documentId) ? body.documentId : 'invalid');
   const snapshot = await target.get();
   const record = snapshot.data();
+  if (record?.attachmentKind === 'health-record') fail('HEALTH_INVALID_DOCUMENT', 400);
   if (!record || record.createdBy !== context.uid || !record.editors?.includes(context.uid)
     || !['draft', 'ready'].includes(record.state)) fail();
   if (record.state === 'ready') return { documentId: snapshot.id, state: 'ready' };
-  const file = healthStorageBucket(context).file(record.storagePath);
-  let actual;
-  try { [actual] = await file.getMetadata(); }
-  catch { fail('HEALTH_FILE_NOT_READY', 409); }
-  if (Number(actual.size) !== record.size || actual.contentType !== record.mimeType) fail('HEALTH_INVALID_FILE', 400);
-  const [header] = await file.download({ start: 0, end: 15 });
-  if (!validHealthFileHeader(record.mimeType, header)) fail('HEALTH_INVALID_FILE', 400);
-  // Protected files are accessed using authenticated Storage rules, never a public bearer URL.
-  await file.setMetadata({ metadata: { ...(actual.metadata || {}), firebaseStorageDownloadTokens: null } });
+  await validateStoredDocument(context, record);
   await context.db.runTransaction(async transaction => {
     const current = await documentContext(transaction, context, body.documentId);
     if (current.record.state === 'ready') return;
@@ -95,11 +114,41 @@ async function saveDocument(context, body) {
   return { documentId: body.documentId, state: 'ready' };
 }
 
+async function validateStoredDocument(context, record) {
+  const file = await verifyStoredDocument(context, record);
+  const [actual] = await file.getMetadata();
+  // Protected files are accessed using authenticated Storage rules, never a public bearer URL.
+  await file.setMetadata({ metadata: { ...(actual.metadata || {}), firebaseStorageDownloadTokens: null } });
+}
+
+async function verifyStoredDocument(context, record) {
+  const file = healthStorageBucket(context).file(record.storagePath);
+  let actual;
+  try { [actual] = await file.getMetadata(); }
+  catch { fail('HEALTH_FILE_NOT_READY', 409); }
+  if (Number(actual.size) !== record.size || actual.contentType !== record.mimeType) fail('HEALTH_INVALID_FILE', 400);
+  const [header] = await file.download({ start: 0, end: 15 });
+  if (!validHealthFileHeader(record.mimeType, header)) fail('HEALTH_INVALID_FILE', 400);
+  return file;
+}
+
+async function healthDocumentStatus(context, body) {
+  if (!body.documentId) return { documentsReady: true };
+  const current = await context.db.runTransaction(transaction => documentContext(transaction, context, body.documentId));
+  if (current.record.attachmentKind !== 'health-record' || current.record.createdBy !== context.uid
+    || !['draft', 'ready'].includes(current.record.state)) fail();
+  let attachmentStored = false;
+  try { await verifyStoredDocument(context, current.record); attachmentStored = true; }
+  catch (error) { if (!['HEALTH_FILE_NOT_READY', 'HEALTH_INVALID_FILE'].includes(error.code)) throw error; }
+  return { documentsReady: true, documentId: body.documentId, attachmentStored };
+}
+
 async function updateDocument(context, body) {
   const metadata = normalizeHealthDocumentMetadata(body.metadata);
   await context.db.runTransaction(async transaction => {
     const { ref, record } = await documentContext(transaction, context, body.documentId);
     if (record.state !== 'ready') fail('HEALTH_INVALID_DOCUMENT', 409);
+    if (record.attachmentKind === 'health-record' && record.attachmentPrivate === true && metadata.shareOwner) fail('HEALTH_INVALID_DOCUMENT', 400);
     transaction.update(ref, { ...metadata, readers: documentReaders(record, metadata), updatedAt: stamp() });
   });
   return { documentId: body.documentId };
@@ -111,7 +160,14 @@ async function deleteDocument(context, body) {
   await context.db.runTransaction(async transaction => {
     const { ref, record } = await documentContext(transaction, context, body.documentId);
     storagePath = record.storagePath;
+    let linked;
+    if (record.attachmentKind === 'health-record' && identifier(record.attachmentRecordId)) {
+      linked = await transaction.get(context.db.collection('healthRecords').doc(record.attachmentRecordId));
+    }
     transaction.update(ref, { state: 'deleting', deletionRequestedBy: context.uid, deletionRequestedAt: stamp(), updatedAt: stamp() });
+    if (linked?.data()?.attachmentDocumentId === body.documentId) {
+      transaction.update(linked.ref, { attachmentDocumentId: FieldValue.delete(), updatedAt: stamp() });
+    }
   });
   try {
     await healthStorageBucket(context).file(storagePath).delete({ ignoreNotFound: true });
@@ -149,16 +205,40 @@ async function changeGrant(context, body, revoke) {
 
 export async function manageHealthAction(context, body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) fail('HEALTH_INVALID_DOCUMENT', 400);
-  if (body.operation === 'state' || body.operation === 'status') return { documentsReady: true };
+  if (body.operation === 'state') return healthDocumentState(context);
+  if (body.operation === 'status') return healthDocumentStatus(context, body);
+  const attachmentHelpers = { ownerContext, documentContext, validateStoredDocument };
   const actions = { prepare: prepareDocument, save: saveDocument, update: updateDocument, delete: deleteDocument,
+    'prepare-visit-attachment': (ctx, value) => prepareVisitAttachment(ctx, value, attachmentHelpers),
+    'finalize-visit-attachment': (ctx, value) => finalizeVisitAttachment(ctx, value, attachmentHelpers),
+    'discard-visit-attachment': async (ctx, value) => {
+      const result = await discardVisitAttachment(ctx, value, attachmentHelpers);
+      await retryHealthDocumentDeletes(ctx);
+      return result;
+    },
     grant: (ctx, value) => changeGrant(ctx, value, false), revoke: (ctx, value) => changeGrant(ctx, value, true) };
   const action = Object.hasOwn(actions, body.operation) ? actions[body.operation] : null;
   if (!action) fail('HEALTH_INVALID_DOCUMENT', 400);
   return action(context, body);
 }
 
-/** Only files whose authorized user explicitly requested deletion are retried. Expiry never deletes health documents. */
+/** Ready medical files never expire. Only explicit deletion and abandoned, unlinked upload drafts are cleaned. */
 export async function retryHealthDocumentDeletes(context) {
+  const drafts = await context.db.collection('healthDocuments').where('state', '==', 'draft').limit(100).get();
+  for (const snapshot of drafts.docs) {
+    const record = snapshot.data();
+    if (record.attachmentKind !== 'health-record' || !record.attachmentRecordId
+      || !record.uploadExpiresAt?.toMillis || record.uploadExpiresAt.toMillis() > (context.now || new Date()).getTime()) continue;
+    await context.db.runTransaction(async transaction => {
+      const current = await transaction.get(snapshot.ref);
+      const linked = await transaction.get(context.db.collection('healthRecords').doc(record.attachmentRecordId));
+      if (current.data()?.state !== 'draft' || current.data()?.attachmentKind !== 'health-record'
+        || current.data()?.uploadExpiresAt?.toMillis() > (context.now || new Date()).getTime()
+        || linked.data()?.attachmentDocumentId === snapshot.id) return;
+      transaction.update(snapshot.ref, { state: 'deleting', deletionRequestedBy: record.createdBy,
+        deletionRequestedAt: stamp(), updatedAt: stamp() });
+    });
+  }
   const pending = await context.db.collection('healthDocuments').where('state', '==', 'deleting').limit(100).get();
   let deleted = 0;
   for (const snapshot of pending.docs) {

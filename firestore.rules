@@ -241,8 +241,29 @@ service cloud.firestore {
     }
     // New medical documents have explicit server-issued UID ACLs. The parent role
     // grants no automatic access to an adult's document or to its authorization.
+    function healthDocumentFamily(data) {
+      return data.get('attachmentKind', '') != 'health-record'
+        || data.get('familyId', null) == profile().get('familyId', null);
+    }
+    function linkedHealthEditor(id, data) {
+      let document = get(/databases/$(database)/documents/healthDocuments/$(data.attachmentDocumentId)).data;
+      return document.state == 'ready' && document.get('attachmentKind', '') == 'health-record'
+        && document.attachmentRecordId == id && request.auth.uid in document.editors
+        && healthDocumentFamily(document);
+    }
+    function healthLinkPreserved(id) {
+      return !resource.data.keys().hasAny(['attachmentDocumentId'])
+        ? !request.resource.data.keys().hasAny(['attachmentDocumentId'])
+        : request.resource.data.get('attachmentDocumentId', '') == resource.data.attachmentDocumentId
+          && request.resource.data.person == resource.data.person
+          && request.resource.data.privateToParents == resource.data.privateToParents
+          && request.resource.data.get('documentPath', '') == resource.data.get('documentPath', '')
+          && request.resource.data.get('documentURL', '') == resource.data.get('documentURL', '')
+          && linkedHealthEditor(id, resource.data);
+    }
     match /healthDocuments/{id} {
-      allow read: if member() && resource.data.state == 'ready' && request.auth.uid in resource.data.readers;
+      allow read: if member() && resource.data.state == 'ready' && request.auth.uid in resource.data.readers
+        && healthDocumentFamily(resource.data);
       allow write: if false;
     }
     match /healthDocumentGrants/{ownerProfileId} {
@@ -256,13 +277,15 @@ service cloud.firestore {
     match /healthRecords/{id} {
       allow read: if member() && healthVisible(resource.data);
       allow create: if member() && creator(request.resource.data) && validHealth(request.resource.data)
+        && !request.resource.data.keys().hasAny(['attachmentDocumentId'])
         && (parent() || (request.resource.data.person == ownPerson() && request.resource.data.privateToParents == false));
       allow update: if member() && preserveCreator() && validHealth(request.resource.data)
+        && healthLinkPreserved(id)
         && (parent() || (resource.data.person == ownPerson() && resource.data.get('privateToParents', false) == false
           && resource.data.type == 'medicine'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmedDate', 'updatedAt'])
           && request.resource.data.confirmedDate is string && request.resource.data.confirmedDate.size() == 10));
-      allow delete: if parent();
+      allow delete: if parent() && (!resource.data.keys().hasAny(['attachmentDocumentId']) || linkedHealthEditor(id, resource.data));
     }
     match /medicalContacts/{id} {
       allow read: if member() && (parent() || ownOrFamily(resource.data.person));

@@ -4,7 +4,8 @@ import { db } from '../firebase';
 import { endOfDay, isParent, ownPerson, parseLocalDate, type CalendarEventData, type Member } from '../app-shared';
 import { useFamilyDirectory } from '../family-directory';
 import { memberPersonKey } from '../family-members';
-import { parseHealthDocument, validDocumentDate } from './document-model';
+import { validDocumentDate } from './document-model';
+import { useProtectedHealthDocuments } from './useProtectedHealthDocuments';
 
 /** A document expiry is always personal to this authorized viewer; it never enters family projections. */
 export function useCalendarHealthSources({ uid, member }: { uid: string; member: Member | null }) {
@@ -15,6 +16,7 @@ export function useCalendarHealthSources({ uid, member }: { uid: string; member:
   const parent = isParent(member);
   const own = ownPerson(member);
   const scope = JSON.stringify([uid, parent, own]);
+  const protectedDocuments = useProtectedHealthDocuments(uid);
   useEffect(() => {
     let active = true;
     setVisits({ scope, rows: [] });
@@ -25,6 +27,9 @@ export function useCalendarHealthSources({ uid, member }: { uid: string; member:
       const projected: CalendarEventData[] = [];
       for (const document of snapshot.docs) {
         const record = document.data();
+        // New attachment saves create this one stable calendar record atomically.
+        // A readonly health projection must not create a second visual copy.
+        if (typeof record.calendarEventId === 'string' && record.calendarEventId) continue;
         if (record.type !== 'visit' || record.status === 'cancelled' || !validDocumentDate(record.date)) continue;
         const privateVisit = record.privateToParents === true;
         if (privateVisit && !parent) continue;
@@ -41,21 +46,14 @@ export function useCalendarHealthSources({ uid, member }: { uid: string; member:
     return () => { active = false; unsubscribe(); };
   }, [uid, parent, own, profiles, scope]);
   useEffect(() => {
-    let active = true;
-    setExpiries({ uid, rows: [] });
-    const unsubscribe = onSnapshot(query(collection(db, 'healthDocuments'), where('readers', 'array-contains', uid), where('state', '==', 'ready')), snapshot => {
-      if (!active) return;
-      setExpiries({ uid, rows: snapshot.docs.flatMap(snapshot => {
-        const document = parseHealthDocument(snapshot.id, snapshot.data());
-        if (!document || document.indefinite || !validDocumentDate(document.expiresOn)) return [];
+    setExpiries({ uid, rows: protectedDocuments.rows.flatMap(document => {
+        if (document.indefinite || !validDocumentDate(document.expiresOn)) return [];
         const start = parseLocalDate(document.expiresOn, '00:00');
         return [{ id: `health-document-expiry:${document.id}:${document.expiresOn}`, title: 'Termin ważności dokumentu',
           person: document.ownerPersonKey, date: start, endDate: endOfDay(start),
           allDay: true, description: '', createdBy: document.createdBy, repeat: 'none' as const, repeatUntil: null, source: 'health' as const,
           sourceRecordId: document.id, readOnly: true, important: true, private: true, ownerUid: uid, ownerProfileId: document.ownerProfileId }];
       }) });
-    }, () => { /* Undeployed optional protected documents do not block legacy calendars or reveal their contents. */ });
-    return () => { active = false; unsubscribe(); };
-  }, [uid]);
+  }, [uid, protectedDocuments.rows]);
   return { events: [...(visitState.scope === scope ? visitState.rows : []), ...(expiryState.uid === uid ? expiryState.rows : [])], error };
 }

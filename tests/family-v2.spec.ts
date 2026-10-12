@@ -1,5 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { accounts, fixtureDatabase, password, seedEmulators } from './emulator-fixtures';
+import { getApps } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
+import { manageHealthAction } from '../server/health-service.mjs';
 
 const viewports = [{ width: 390, height: 844 }, { width: 844, height: 390 },
   { width: 900, height: 1440 }, { width: 1024, height: 768 }, { width: 1440, height: 900 }];
@@ -83,10 +86,14 @@ test('Tasks preserves legacy reads when its backend is unavailable and serialize
 
 test('Health Documents renders its compact UI and actual emulator queries deny another UID document even to a parent', async ({ page }) => {
   await page.route('**/api/family/health', async route => {
-    // Only availability is stubbed. Document queries and permission denial use
-    // the browser Firebase SDK against real local emulator Rules.
+    // The local transport uses the real authorized list service. Direct-document
+    // permission denial below still uses the browser SDK and emulator Rules.
     expect(route.request().postDataJSON().operation).toBe('state');
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, writesEnabled: false }) });
+    const app = getApps().find(candidate => candidate.name === 'browser-tests')!;
+    const token = route.request().headers().authorization?.replace(/^Bearer /, '') || '';
+    const decoded = await getAuth(app).verifyIdToken(token);
+    const result = await manageHealthAction({ db: fixtureDatabase(), uid: decoded.uid }, { operation: 'state' });
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, ...result, writesEnabled: false }) });
   });
   function protectedDocument(id: string, title: string, readers: string[]) {
     return { title, documentType: 'general', ownerProfileId: accounts.sibling.uid, ownerUid: accounts.sibling.uid,
@@ -109,12 +116,14 @@ test('Health Documents renders its compact UI and actual emulator queries deny a
 
   const actualAccess = await page.evaluate(async (uid) => {
     // @ts-expect-error Vite resolves this project module inside the browser.
-    const { db, collection, query, where, getDocs, getDoc, doc } = await import('/src/app-shared.tsx');
-    const visible = await getDocs(query(collection(db, 'healthDocuments'), where('readers', 'array-contains', uid), where('state', '==', 'ready')));
+    const { db, getDoc, doc } = await import('/src/app-shared.tsx');
+    // @ts-expect-error Vite resolves this project module inside the browser.
+    const { healthDocumentAction } = await import('/src/health/health-api.ts');
+    const visible = await healthDocumentAction({ operation: 'state' });
     let denied = '';
     try { await getDoc(doc(db, 'healthDocuments', 'v2-other-uid')); }
     catch (error) { denied = String((error as { code?: string }).code || ''); }
-    return { ids: visible.docs.map((item: { id: string }) => item.id), denied };
+    return { ids: visible.documents.map((item: { id: string }) => item.id), denied };
   }, accounts.parent.uid);
   expect(actualAccess.ids).toEqual(['v2-allowed']);
   expect(actualAccess.denied).toBe('permission-denied');

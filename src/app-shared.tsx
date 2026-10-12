@@ -245,6 +245,8 @@ export type HealthRecord = {
   callReminderDate: string;
   documentURL: string;
   documentPath: string;
+  /** Opaque reference; file metadata and bytes use the protected document API. */
+  attachmentDocumentId?: string;
   privateToParents: boolean;
   dose: string;
   medicineTime: string;
@@ -252,7 +254,7 @@ export type HealthRecord = {
   createdAt?: Date;
 };
 
-export type HealthForm = Omit<HealthRecord, 'id' | 'createdAt' | 'confirmedDate' | 'documentURL' | 'documentPath'> & {
+export type HealthForm = Omit<HealthRecord, 'id' | 'createdAt' | 'confirmedDate' | 'documentURL' | 'documentPath' | 'attachmentDocumentId'> & {
   addToCalendar: boolean;
   file: File | null;
 };

@@ -90,11 +90,17 @@ service firebase.storage {
     function medicalDocument(id) {
       return firestore.get(/databases/(default)/documents/healthDocuments/$(id)).data;
     }
+    function medicalDocumentFamily(id) {
+      return medicalDocument(id).get('attachmentKind', '') != 'health-record'
+        || medicalDocument(id).get('familyId', null) == profile().get('familyId', null);
+    }
     match /healthDocuments/{documentId}/{uploaderUid}/{filename} {
       allow read: if member() && medicalDocument(documentId).state == 'ready'
+        && medicalDocumentFamily(documentId)
         && request.auth.uid in medicalDocument(documentId).readers
         && medicalDocument(documentId).storagePath == 'healthDocuments/' + documentId + '/' + uploaderUid + '/' + filename;
       allow create: if resource == null && member() && uploaderUid == request.auth.uid
+        && medicalDocumentFamily(documentId)
         && medicalDocument(documentId).createdBy == request.auth.uid
         && request.auth.uid in medicalDocument(documentId).editors
         && medicalDocument(documentId).state == 'draft' && medicalDocument(documentId).uploadExpiresAt > request.time

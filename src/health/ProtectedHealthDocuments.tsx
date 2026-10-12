@@ -7,12 +7,13 @@ import { useFamilyDirectory } from '../family-directory';
 import { memberPersonKey } from '../family-members';
 import { HealthUploadStatus } from '../features/HealthUploadStatus';
 import { observeHealthUpload, type HealthUploadProgress } from '../features/health-upload';
-import { HEALTH_DOCUMENT_KINDS, documentValidity, emptyHealthDocument, parseHealthDocument,
+import { HEALTH_DOCUMENT_KINDS, documentValidity, emptyHealthDocument,
   type HealthDocumentKind, type HealthDocumentMetadata, type ProtectedHealthDocument } from './document-model';
 import { documentPagesFile } from './document-pages';
 import { healthDocumentAction, prepareHealthDocument } from './health-api';
 import { HealthDocumentViewer } from './HealthDocumentViewer';
 import { familyV2WritesAllowed } from '../family-v2-client';
+import { useProtectedHealthDocuments } from './useProtectedHealthDocuments';
 import './health-documents.css';
 
 export function ProtectedHealthDocuments({ user, member, person }: { user: User; member: Member | null; person: PersonKey }) {
@@ -20,9 +21,9 @@ export function ProtectedHealthDocuments({ user, member, person }: { user: User;
   const profiles = directory.filter(profile => profile.active !== false && !profile.archived && !profile.disabled && !profile.id.startsWith('legacy:'));
   const own = profiles.find(profile => profile.id === user.uid);
   const selectedProfile = profiles.find(profile => memberPersonKey(profile) === person);
-  const [documentState, setDocuments] = useState<{ uid: string; rows: ProtectedHealthDocument[] }>({ uid: '', rows: [] });
-  const documents = documentState.uid === user.uid ? documentState.rows : [];
-  const [accessError, setAccessError] = useState('');
+  const documentState = useProtectedHealthDocuments(user.uid);
+  const documents = documentState.rows;
+  const accessError = documentState.error;
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<ProtectedHealthDocument | null>(null);
   const [ownerProfileId, setOwnerProfileId] = useState(user.uid);
@@ -41,27 +42,9 @@ export function ProtectedHealthDocuments({ user, member, person }: { user: User;
   const [showConsent, setShowConsent] = useState(false);
   const [grantee, setGrantee] = useState('');
   const [grantUIDs, setGrantUIDs] = useState<string[]>([]);
-  const [writeState, setWriteState] = useState<{ uid: string; enabled: boolean; configured: boolean }>({ uid: '', enabled: false, configured: false });
-  const writesEnabled = writeState.uid === user.uid && writeState.enabled && familyV2WritesAllowed();
+  const writeState = { uid: user.uid, enabled: documentState.writesEnabled, configured: documentState.configured };
+  const writesEnabled = documentState.writesEnabled && familyV2WritesAllowed();
   const consentRecipients = profiles.filter(profile => profile.id !== user.uid && profile.canLogin === true && ['parent', 'adult'].includes(profile.role || ''));
-  useEffect(() => {
-    let active = true;
-    void healthDocumentAction<{ writesEnabled: boolean }>({ operation: 'state' }).then(result => {
-      if (active) setWriteState({ uid: user.uid, enabled: result.writesEnabled === true, configured: true });
-    }).catch(() => { if (active) setWriteState({ uid: user.uid, enabled: false, configured: false }); });
-    return () => { active = false; };
-  }, [user.uid]);
-  useEffect(() => {
-    let active = true;
-    setDocuments({ uid: user.uid, rows: [] }); setAccessError('');
-    const unsubscribe = onSnapshot(query(collection(db, 'healthDocuments'), where('readers', 'array-contains', user.uid), where('state', '==', 'ready')), snapshot => {
-      if (!active) return;
-      setDocuments({ uid: user.uid, rows: snapshot.docs.map(document => parseHealthDocument(document.id, document.data())).filter((document): document is ProtectedHealthDocument => !!document)
-        .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.issuedOn.localeCompare(a.issuedOn)) });
-      setAccessError('');
-    }, () => { if (active) setAccessError('Chronione dokumenty 2.0 wymagają przygotowanych reguł Firebase. Dotychczasowe wpisy pozostają dostępne.'); });
-    return () => { active = false; unsubscribe(); };
-  }, [user.uid]);
   useEffect(() => {
     if (!showConsent) return;
     return onSnapshot(query(collection(db, 'healthDocumentGrants'), where('ownerUid', '==', user.uid)), snapshot => {
