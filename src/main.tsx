@@ -13,6 +13,7 @@ import { schoolReadAccess, schoolReadAccessKey } from './school/read-access';
 import { CalendarPage } from "./features/CalendarPage";
 import { ChatPage } from "./features/ChatPage";
 import { FamilyPage } from "./features/FamilyPage";
+import { FinancePage } from "./features/FinancePage";
 import { HealthPage } from "./features/HealthPage";
 import { Login } from "./features/LoginPage";
 import { SettingsPage } from "./features/SettingsPage";
@@ -148,6 +149,7 @@ function FamilyApp({ user }: { user: User }) {
       case 'Kalendarz': return <CalendarPage user={user} member={displayedMember} requestedSelection={calendarSelection} goTo={goTo} />;
       case 'Zadania': return <TasksPage user={user} member={displayedMember} />;
       case 'Zakupy': return <ShoppingPage user={user} member={displayedMember} />;
+      case 'Finanse': return <FinancePage user={user} member={displayedMember} />;
       case 'Czat': return <ChatPage user={user} member={displayedMember} />;
       case 'Zdrowie': return <HealthPage user={user} member={displayedMember} />;
       case 'Szkoła': return <SchoolModule key={schoolReadAccessKey(user.uid, schoolReadAccess(member))} user={user} member={displayedMember} familyMembers={displayedMembers} />;
@@ -170,7 +172,7 @@ function FamilyApp({ user }: { user: User }) {
       </main>
       <MobileNavigation page={page} goTo={goTo} moreOpen={mobileMoreOpen} onMore={() => setMobileMoreOpen(true)} />
       {mobileMoreOpen && (
-        <MobileMoreMenu page={page} goTo={goTo} onClose={() => setMobileMoreOpen(false)} />
+        <MobileMoreMenu page={page} goTo={goTo} member={displayedMember} onClose={() => setMobileMoreOpen(false)} />
       )}
     </div></NotificationProvider></FamilyAggregateContext.Provider></FamilyDirectoryContext.Provider>
   );
@@ -178,7 +180,7 @@ function FamilyApp({ user }: { user: User }) {
 
 function Sidebar({ page, goTo, member }: { page: Page; goTo: (page: Page) => void; member: Member | null }) {
   const groups: Array<{ label: string; items: Page[] }> = [
-    { label: 'Na co dzień', items: ['Start', 'Kalendarz', 'Zadania', 'Zakupy'] },
+    { label: 'Na co dzień', items: ['Start', 'Kalendarz', 'Zadania', 'Zakupy', ...(member?.role === 'parent' ? ['Finanse' as Page] : [])] },
     { label: 'Dom i bliscy', items: ['Czat', 'Zdrowie', 'Szkoła'] },
     { label: 'Twoja aplikacja', items: ['Ustawienia'] },
   ];
@@ -218,8 +220,8 @@ function MobileNavigation({ page, goTo, moreOpen, onMore }: { page: Page; goTo: 
   );
 }
 
-function MobileMoreMenu({ page, goTo, onClose }: { page: Page; goTo: (page: Page) => void; onClose: () => void }) {
-  const items: Array<[Page, string]> = [['Czat', 'Rodzinne rozmowy'], ['Zdrowie', 'Wizyty i dokumenty'], ['Szkoła', 'Lekcje i oceny'], ['Ustawienia', 'Dopasuj aplikację']];
+function MobileMoreMenu({ page, goTo, member, onClose }: { page: Page; goTo: (page: Page) => void; member: Member | null; onClose: () => void }) {
+  const items: Array<[Page, string]> = [...(member?.role === 'parent' ? [['Finanse', 'Opłaty i terminy'] as [Page, string]] : []), ['Czat', 'Rodzinne rozmowy'], ['Zdrowie', 'Wizyty i dokumenty'], ['Szkoła', 'Lekcje i oceny'], ['Ustawienia', 'Dopasuj aplikację']];
   const panel = useRef<HTMLElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;

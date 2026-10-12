@@ -1,7 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { canReceiveNotification, eventDocumentId, inboxEvent, wantsNotification } from './notification-events.mjs';
 
-const REVALIDATED_SOURCES = new Set(['calendarEvents', 'privateCalendarEvents', 'tasks', 'shoppingItems', 'familyMessages', 'healthRecords']);
+const REVALIDATED_SOURCES = new Set(['calendarEvents', 'privateCalendarEvents', 'tasks', 'shoppingItems', 'familyMessages', 'healthRecords', 'financeBills']);
 
 /** Admin-only delivery shared by Vercel and Firebase Functions producers.
  * No client payload, FCM token or push queue is involved.
@@ -44,6 +44,11 @@ export async function enqueueInAppEvents(context, events, { recipientUid, revali
           // in the inbox transaction gives Firestore a conflict/retry boundary
           // and prevents delivery using stale visibility/participant metadata.
           if (revalidateSource && !sources[index].exists) return;
+          // A queued finance reminder must never survive payment, a changed due
+          // date, archiving, or a revoked per-bill reader grant.
+          if (revalidateSource && event.collection === 'financeBills'
+            && (sources[index].data().status !== 'unpaid' || sources[index].data().archived === true
+              || sources[index].data().dueDate !== event.record?.dueDate)) return;
           const currentEvent = revalidateSource ? { ...event, record: sources[index].data() } : event;
           if (prior[index].exists || !canReceiveNotification({ ...member.data(), id: uid }, currentEvent)
             || !wantsNotification(preference.data()?.notifications, event)) return;

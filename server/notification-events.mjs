@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { canReadFinanceBill } from './finance-model.mjs';
 
 // Shared, dependency-free event semantics used by Vercel IN-APP backends.
 export const CATEGORIES = Object.freeze(['calendar', 'tasks', 'shopping', 'familyChat', 'privateChat', 'health', 'school', 'important']);
@@ -54,6 +55,7 @@ export function canReceiveNotification(member, event) {
   if (member.id === event.excludeUid) return false;
   const record = event.record || {};
   const ownPerson = member.personKey || member.name;
+  if (event.collection === 'financeBills') return record.status === 'unpaid' && record.dueDate === event.record?.dueDate && canReadFinanceBill(member, record);
   if (event.collection === 'schoolParentMessages') return member.role === 'parent';
   if (event.collection === 'schoolStudentMessages') return member.role === 'child' && member.id === record.sourceOwnerUid && record.person === ownPerson;
   if (event.collection === 'schoolItems') return record.sourceConnectionScope === 'student'

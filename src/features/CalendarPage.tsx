@@ -20,6 +20,7 @@ import { calendarOccurrencesOnDay, calendarRangeDisplaySources, calendarTimeline
 import { CalendarOwnerBadge } from '../CalendarOwnerBadge';
 import { generateCalendarOccurrencesFromSources } from '../calendars/google-occurrences';
 import { useCalendarHealthSources } from '../health/useCalendarHealthSources';
+import { useFinanceCalendarSources } from '../finance/useFinanceCalendarSources';
 import { CalendarGoogleExportControls, CalendarGoogleBulkSharing, CalendarGoogleEditControls } from '../calendars/GoogleCalendarV2Controls';
 
 
@@ -38,8 +39,9 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
   const manualSchoolProjection = useMemo(() => projectManualSchoolCalendar(schoolSources.rows, events, schoolSources.access), [schoolSources.rows, schoolSources.scope, events]);
   const okruszekEvents = useMemo(() => projectOkruszekCalendar(schoolSources.rows, events, schoolSources.access, activeProfiles), [schoolSources.rows, schoolSources.scope, events, activeProfiles]);
   const healthSources = useCalendarHealthSources({ uid: user.uid, member });
+  const financeSources = useFinanceCalendarSources({ uid: user.uid, member });
   const birthdayEvents = useMemo(() => projectFamilyBirthdays(activeProfiles), [activeProfiles]);
-  const projectionEvents = useMemo(() => [...schoolProjection.events, ...manualSchoolProjection.events, ...okruszekEvents, ...healthSources.events, ...birthdayEvents], [schoolProjection.events, manualSchoolProjection.events, okruszekEvents, healthSources.events, birthdayEvents]);
+  const projectionEvents = useMemo(() => [...schoolProjection.events, ...manualSchoolProjection.events, ...okruszekEvents, ...healthSources.events, ...financeSources.events, ...birthdayEvents], [schoolProjection.events, manualSchoolProjection.events, okruszekEvents, healthSources.events, financeSources.events, birthdayEvents]);
   const projectionScope = `${schoolSources.scope}|${user.uid}`;
   const displayEvents = useMemo(() => [...events.map(calendarSourceDisplayEvent), ...projectionEvents], [events, projectionEvents]);
   const own = ownPerson(member);
@@ -490,7 +492,7 @@ export function CalendarEventButton({ occurrence, onClick, timelineBlock }: { oc
 }
 
 function calendarSourceLabel(event: CalendarEventData): string {
-  return { google: 'Google Calendar', sp4: 'SP4', okruszek: 'Okruszek', health: 'Zdrowie', fryderyk: 'Fryderyk', ics: 'ICS', manual: 'Profil rodziny' }[event.source || 'manual'];
+  return { google: 'Google Calendar', sp4: 'SP4', okruszek: 'Okruszek', health: 'Zdrowie', finance: 'Finanse', fryderyk: 'Fryderyk', ics: 'ICS', manual: 'Profil rodziny' }[event.source || 'manual'];
 }
 
 function CalendarSourceBadges({ event }: { event: CalendarEventData }) {

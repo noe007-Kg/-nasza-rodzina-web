@@ -60,6 +60,7 @@ export type Page =
   | 'Kalendarz'
   | 'Zadania'
   | 'Zakupy'
+  | 'Finanse'
   | 'Czat'
   | 'Zdrowie'
   | 'Szkoła'
@@ -96,9 +97,10 @@ export type CalendarEventData = {
   location?: string;
   timeZone?: string;
   /** Local read-only views; school projections are never written as calendar documents. */
-  source?: 'manual' | 'sp4' | 'google' | 'health' | 'fryderyk' | 'ics' | 'okruszek';
+  source?: 'manual' | 'sp4' | 'google' | 'health' | 'fryderyk' | 'ics' | 'okruszek' | 'finance';
   important?: boolean;
   sourceRecurrence?: string[];
+  sourceImportWindow?: { from: string; to: string; futureFrom?: string };
   externalOriginalStart?: string | null;
   sourceExceptionTombstone?: boolean;
   providerEtag?: string;
@@ -462,7 +464,7 @@ export function memberEmoji(name: string) {
   return '🙂';
 }
 
-export const PAGES: Page[] = ['Start', 'Kalendarz', 'Zadania', 'Zakupy', 'Czat', 'Zdrowie', 'Szkoła', 'Rodzina', 'Ustawienia'];
+export const PAGES: Page[] = ['Start', 'Kalendarz', 'Zadania', 'Zakupy', 'Finanse', 'Czat', 'Zdrowie', 'Szkoła', 'Rodzina', 'Ustawienia'];
 
 export function pageFromHash(): Page {
   try { const value = decodeURIComponent(location.hash.slice(1)) as Page; return PAGES.includes(value) ? value : 'Start'; } catch { return 'Start'; }
@@ -475,6 +477,7 @@ export function AppIcon({ page, size = 20 }: { page: Page; size?: number }) {
     case 'Kalendarz': return <svg {...common}><rect x="3.5" y="5.5" width="17" height="15" rx="2.5"/><path d="M7 3.5v4M17 3.5v4M3.5 10h17"/><path d="M7.5 13.5h2M12 13.5h2M16.5 13.5h.1M7.5 17h2M12 17h2"/></svg>;
     case 'Zadania': return <svg {...common}><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 2.2 2.2L16.5 8"/></svg>;
     case 'Zakupy': return <svg {...common}><path d="M3 4h2l2.1 10.2a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.6L20.5 8H6"/><circle cx="9.5" cy="19" r="1"/><circle cx="17" cy="19" r="1"/></svg>;
+    case 'Finanse': return <svg {...common}><ellipse cx="9" cy="6" rx="5" ry="2.5"/><path d="M4 6v4c0 1.4 2.2 2.5 5 2.5M4 10v4c0 1.4 2.2 2.5 5 2.5"/><ellipse cx="16" cy="14" rx="4" ry="2"/><path d="M12 14v4c0 1.1 1.8 2 4 2s4-.9 4-2v-4"/></svg>;
     case 'Czat': return <svg {...common}><path d="M4 5.5h16v11H9l-5 4v-15Z"/><path d="M8 10h8M8 13h5"/></svg>;
     case 'Zdrowie': return <svg {...common}><path d="M12 20s-7.5-4.7-7.5-10.2A4.3 4.3 0 0 1 12 6.9a4.3 4.3 0 0 1 7.5 2.9C19.5 15.3 12 20 12 20Z"/></svg>;
     case 'Szkoła': return <svg {...common}><path d="m3 9 9-5 9 5-9 5-9-5Z"/><path d="M7 12.2V16c3 2 7 2 10 0v-3.8M21 9v6"/></svg>;
@@ -484,7 +487,7 @@ export function AppIcon({ page, size = 20 }: { page: Page; size?: number }) {
 }
 
 export function ModuleHeader({ icon: _icon, title, text, action }: { icon: string; title: string; text: string; action?: React.ReactNode }) {
-  const pageIcon = (['Kalendarz','Zadania','Zakupy','Czat','Zdrowie','Szkoła','Rodzina','Ustawienia'] as Page[]).includes(title as Page) ? title as Page : 'Start';
+  const pageIcon = (['Kalendarz','Zadania','Zakupy','Finanse','Czat','Zdrowie','Szkoła','Rodzina','Ustawienia'] as Page[]).includes(title as Page) ? title as Page : 'Start';
   return (
     <section className="page-header compact-header">
       <div className="module-heading"><span className="module-title-icon"><AppIcon page={pageIcon} size={20} /></span><div><small>Nasza Rodzina</small><h1>{title}</h1><p>{text}</p></div></div>

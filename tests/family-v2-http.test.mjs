@@ -111,3 +111,22 @@ test('internal errors never expose secrets or upstream stack traces and raw body
   assert.doesNotMatch(JSON.stringify(res.body), /synthetic-private-value|session-token-placeholder|cookie=|stack/);
   assert.equal(req.body, undefined); assert.equal(body.every(byte => byte === 0), true);
 });
+
+test('finance reuses the authenticated family route and Preview never enables its writes', async () => {
+  let financeCalls = 0;
+  const { router } = mocked({ financeAction: async ctx => {
+    assert.equal(ctx.uid, context.uid); financeCalls++; return { bills: [] };
+  } });
+  const read = response();
+  await router(request('state', { url: '/api/family/finance' }), read);
+  assert.equal(read.statusCode, 200);
+  assert.equal(read.body.writesEnabled, false);
+  assert.equal(financeCalls, 1);
+  for (const operation of ['save', 'markPaid', 'generatePeriods']) {
+    const result = response();
+    await router(request(operation, { url: '/api/family/finance' }), result);
+    assert.equal(result.statusCode, 503);
+    assert.equal(result.body.error.code, 'FAMILY_V2_READ_ONLY');
+  }
+  assert.equal(financeCalls, 1);
+});

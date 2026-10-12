@@ -83,3 +83,13 @@ test('a valid São Paulo DATE beginning after a midnight DST gap keeps the sourc
     assert.equal(original.date.toISOString(), '2018-11-04T03:00:00.000Z');
   } finally { if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous; }
 });
+
+test('approved Google import windows preserve valid instant boundaries but reject malformed metadata', () => {
+  const sourceImportWindow = { from: '2024-01-01T00:00:00Z', to: '2025-01-01T00:00:00Z', futureFrom: '2026-10-12T08:00:00Z' };
+  assert.deepEqual(readCalendarSourceMetadata({ source: 'google', sourceImportWindow }).sourceImportWindow, sourceImportWindow);
+  for (const range of [{ from: 'today', to: 'tomorrow' }, { from: sourceImportWindow.to, to: sourceImportWindow.from },
+    { ...sourceImportWindow, futureFrom: 'unknown' }]) {
+    assert.equal(readCalendarSourceMetadata({ source: 'google', sourceImportWindow: range }).sourceImportWindow, undefined);
+  }
+  assert.equal(readCalendarSourceMetadata({ source: 'manual', sourceImportWindow }).sourceImportWindow, undefined);
+});

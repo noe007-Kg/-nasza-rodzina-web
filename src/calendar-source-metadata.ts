@@ -1,11 +1,11 @@
 import type { CalendarEventData } from './app-shared';
 
-type SourceMetadata = Pick<CalendarEventData, 'source' | 'sourceRecordId' | 'sourceConnectionId' | 'sourceOwnerUid' | 'externalCalendarId' | 'externalEventId' | 'externalSeriesId' | 'sourceStartDate' | 'sourceEndDateExclusive' | 'ownerProfileId' | 'readOnly' | 'cancelled' | 'sourceRecurrence' | 'externalOriginalStart' | 'sourceExceptionTombstone' | 'providerEtag'>;
+type SourceMetadata = Pick<CalendarEventData, 'source' | 'sourceRecordId' | 'sourceConnectionId' | 'sourceOwnerUid' | 'externalCalendarId' | 'externalEventId' | 'externalSeriesId' | 'sourceStartDate' | 'sourceEndDateExclusive' | 'ownerProfileId' | 'readOnly' | 'cancelled' | 'sourceRecurrence' | 'sourceImportWindow' | 'externalOriginalStart' | 'sourceExceptionTombstone' | 'providerEtag'>;
 const fields = ['sourceRecordId', 'sourceConnectionId', 'sourceOwnerUid', 'externalCalendarId', 'externalEventId', 'externalSeriesId', 'ownerProfileId'] as const;
 
 /** Provenance is read from existing documents; this never creates provider records. */
 export function readCalendarSourceMetadata(data: Record<string, unknown>): SourceMetadata {
-  const source = ['google', 'sp4', 'manual', 'health', 'fryderyk', 'ics'].includes(String(data.source)) ? data.source as CalendarEventData['source'] : undefined;
+  const source = ['google', 'sp4', 'manual', 'health', 'fryderyk', 'ics', 'finance'].includes(String(data.source)) ? data.source as CalendarEventData['source'] : undefined;
   const result: SourceMetadata = {};
   if (source) result.source = source;
   // Google content belongs to its source even if an old record omitted this flag.
@@ -22,6 +22,16 @@ export function readCalendarSourceMetadata(data: Record<string, unknown>): Sourc
     if (typeof data.providerEtag === 'string' && data.providerEtag.length <= 2048) result.providerEtag = data.providerEtag;
     if (validCivilDay(data.sourceStartDate)) result.sourceStartDate = data.sourceStartDate as string;
     if (validCivilDay(data.sourceEndDateExclusive)) result.sourceEndDateExclusive = data.sourceEndDateExclusive as string;
+    const window = data.sourceImportWindow;
+    const instant = (value: unknown): value is string => typeof value === 'string' && value.length <= 64
+      && /T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value));
+    if (window && typeof window === 'object' && !Array.isArray(window)) {
+      const range = window as Record<string, unknown>;
+      if (instant(range.from) && instant(range.to) && Date.parse(range.from) < Date.parse(range.to)
+        && (range.futureFrom === undefined || instant(range.futureFrom))) {
+        result.sourceImportWindow = { from: range.from, to: range.to, ...(range.futureFrom ? { futureFrom: range.futureFrom as string } : {}) };
+      }
+    }
   }
   return result;
 }

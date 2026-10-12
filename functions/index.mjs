@@ -15,6 +15,7 @@ import { processNotificationWrite, processSchoolNotificationBatch } from './noti
 import { runTaskPhotoCleanup } from './server/tasks-photos.mjs';
 import { runHealthDocumentReminders } from './server/health-reminders.mjs';
 import { retryHealthDocumentDeletes } from './server/health-service.mjs';
+import { runFinanceReminders } from './server/finance-reminders.mjs';
 import { GOOGLE_CALENDAR_SCHEDULE, GOOGLE_CALENDAR_TIME_ZONE, runScheduledGoogleCalendarSync } from './server/calendar-scheduler.mjs';
 
 // Functions use the project's managed identity, never a shipped Admin key.
@@ -153,4 +154,13 @@ export const healthDocumentReminders = onSchedule({ ...familyJobOptions, schedul
   // Only explicitly requested deletions are retried; expiry never deletes a document.
   const deletions = await retryHealthDocumentDeletes(context);
   info('Protected health document maintenance', { ...reminders, ...deletions });
+});
+
+// Prepared only: the existing deployment opt-in keeps this job inert until
+// financial ACLs and notification permissions have been reviewed and published.
+export const financeReminders = onSchedule({ ...familyJobOptions, schedule: '0 9 * * *', retryCount: 3,
+  maxRetrySeconds: 1800, minBackoffSeconds: 60, maxBackoffSeconds: 300 }, async () => {
+  if (familyV2WritesEnabled.value() !== 'true') return;
+  const result = await runFinanceReminders({ app, db });
+  info('Finance reminder maintenance', result); // Counts only; no invoice details.
 });
