@@ -63,7 +63,7 @@ async function rewardContext(points = 12, cost = 5) {
   const context = familyMemoryContext({ 'tasks/earned': task({}) });
   context.rows.get('tasks/earned').points = points;
   await manageTasksAction(context.as('child'), { action: 'submit', taskId: 'earned' });
-  await manageTasksAction(context, { action: 'save-reward', id: 'reward-one', title: 'Nagroda testowa', note: '', cost, people: ['child-person'], active: true });
+  await manageTasksAction(context, { action: 'save-reward', id: 'reward-one', title: 'Nagroda testowa', note: 'Opis nagrody testowej', cost, people: ['child-person'], active: true });
   const request = await manageTasksAction(context.as('child'), { action: 'request-reward', rewardId: 'reward-one' });
   return { context, request };
 }

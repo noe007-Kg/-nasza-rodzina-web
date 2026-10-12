@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { EduServerError } from './edu-auth.mjs';
 import { TASK_PHOTO_TYPES, validTaskPhotoMetadata, taskPhotoBucket, verifyTaskPhoto, enqueueTaskPhotoCleanup, deleteQueuedTaskPhoto } from './tasks-photos.mjs';
+import { verifyRewardImage, revokeRewardImage, deleteQueuedRewardImage } from './tasks-reward-images.mjs';
 export { runTaskPhotoCleanup } from './tasks-photos.mjs';
 
 const fail = (code, status, message) => { throw new EduServerError(code, status, message); };
@@ -271,20 +272,68 @@ async function archiveTask(context, body, now) {
   return { taskId: ref.id, archived: true };
 }
 
-async function saveReward(context, body) {
-  fields(body, ['id', 'title', 'note', 'cost', 'people', 'active']);
-  const title = text(body.title, 200); const note = text(body.note ?? '', 1000, false); const cost = integer(body.cost, 100000);
+async function beginRewardImage(context, body, now) {
+  fields(body, ['rewardId', 'contentType', 'size']);
+  if (!validTaskPhotoMetadata(body.contentType, body.size)) fail('TASK_REWARD_IMAGE_INVALID', 400, 'Wybierz zdjęcie nagrody JPG, PNG lub WebP do 8 MB.');
+  taskPhotoBucket(context);
+  const rewardId = taskId(body.rewardId); const uploadId = randomUUID(); let path;
+  await context.db.runTransaction(async transaction => {
+    const actor = await freshActor(transaction, context); requireParent(actor);
+    const reward = await transaction.get(context.db.collection('taskRewards').doc(rewardId));
+    if (reward.exists && !sameFamily(actor, reward.data())) fail('TASK_FORBIDDEN', 403, 'Nagroda należy do innej rodziny.');
+    const uploads = await transaction.get(context.db.collection('_taskRewardImageUploads').where('uid', '==', context.uid));
+    if (uploads.docs.filter(item => item.data().state === 'open' && item.data().expiresAt?.toMillis() > now.getTime()).length >= 8) fail('TASK_UPLOAD_LIMIT', 429, 'Dokończ rozpoczęte przesyłanie lub spróbuj ponownie za chwilę.');
+    path = `taskRewardImages/${rewardId}/${context.uid}/${uploadId}.${TASK_PHOTO_TYPES[body.contentType]}`;
+    transaction.create(context.db.collection('_taskRewardImageUploads').doc(uploadId), {
+      rewardId, uid: context.uid, path, state: 'open', people: [], active: false,
+      ...(actor.familyId ? { familyId: actor.familyId } : {}), contentType: body.contentType, size: body.size,
+      expiresAt: Timestamp.fromMillis(now.getTime() + 30 * 60_000), orphanAfter: Timestamp.fromMillis(now.getTime() + 86_400_000), createdAt: stamp(),
+    });
+  });
+  return { rewardId, uploadId, path };
+}
+
+async function saveReward(context, body, now) {
+  fields(body, ['id', 'title', 'note', 'cost', 'people', 'active', 'imageUploadId', 'removeImage']);
+  const title = text(body.title, 200); const note = text(body.note, 1000); const cost = integer(body.cost, 100000);
   if (cost < 1 || !Array.isArray(body.people) || body.people.length > 100 || !body.people.every(person => typeof person === 'string') || typeof body.active !== 'boolean') fail('TASK_INVALID_REWARD', 400, 'Nagroda wymaga dodatniego kosztu i poprawnych osób.');
+  if (body.removeImage !== undefined && typeof body.removeImage !== 'boolean' || body.imageUploadId && body.removeImage) fail('TASK_INVALID_REWARD', 400, 'Wybierz dodanie albo usunięcie zdjęcia nagrody.');
   const people = [...new Set(body.people)]; const ref = context.db.collection('taskRewards').doc(body.id ? taskId(body.id) : randomUUID());
+  let uploaded = null; let replaced = null;
+  if (body.imageUploadId !== undefined) {
+    requireParent(context.profile);
+    const upload = await context.db.collection('_taskRewardImageUploads').doc(taskId(body.imageUploadId)).get();
+    uploaded = upload.exists ? { id: upload.id, ...upload.data() } : null;
+    if (!uploaded || uploaded.uid !== context.uid || uploaded.rewardId !== ref.id || !sameFamily(context.profile, uploaded)
+      || !['open', 'attached'].includes(uploaded.state)) fail('TASK_REWARD_IMAGE_FORBIDDEN', 403, 'To zdjęcie nie należy do tej nagrody.');
+    await verifyRewardImage(context, uploaded);
+  }
   await context.db.runTransaction(async transaction => {
     const actor = await freshActor(transaction, context); requireParent(actor);
     const profiles = await roster(transaction, context.db);
     if (people.some(person => !memberForPerson(profiles, person, actor))) fail('TASK_INVALID_PERSON', 400, 'Nagrodę można przypisać aktywnym członkom rodziny.');
     const previous = await transaction.get(ref);
     if (previous.exists && !sameFamily(actor, previous.data())) fail('TASK_FORBIDDEN', 403, 'Nagroda należy do innej rodziny.');
+    const old = previous.exists ? previous.data() : null;
+    const oldTicket = old?.imageUploadId ? await transaction.get(context.db.collection('_taskRewardImageUploads').doc(old.imageUploadId)) : null;
+    const newTicket = uploaded ? await transaction.get(context.db.collection('_taskRewardImageUploads').doc(uploaded.id)) : null;
+    const image = newTicket?.exists ? { id: newTicket.id, ...newTicket.data() } : null;
+    if (uploaded && (!image || image.uid !== context.uid || image.rewardId !== ref.id || image.path !== uploaded.path || !sameFamily(actor, image)
+      || !['open', 'attached'].includes(image.state) || image.state === 'open' && image.expiresAt?.toMillis() <= now.getTime()
+      || image.state === 'attached' && old?.imageUploadId !== image.id)) fail('TASK_REWARD_IMAGE_FORBIDDEN', 403, 'Przesłanie zdjęcia wygasło albo zdjęcie nie należy do tej nagrody. Spróbuj ponownie.');
+    if (oldTicket?.exists && oldTicket.data().state === 'attached' && (body.removeImage || image && image.id !== oldTicket.id)) {
+      replaced = { id: oldTicket.id, ...oldTicket.data() };
+      revokeRewardImage(transaction, context.db, replaced, body.removeImage ? 'removed' : 'replaced', now);
+    }
+    if (image) transaction.update(newTicket.ref, { state: 'attached', people, active: body.active, attachedAt: stamp() });
+    else if (!body.removeImage && oldTicket?.exists && oldTicket.data().state === 'attached') {
+      transaction.update(oldTicket.ref, { people, active: body.active, updatedAt: stamp() });
+    }
     transaction.set(ref, { title, note, cost, people, active: body.active, ...(actor.familyId ? { familyId: actor.familyId } : {}),
+      ...(image ? { imagePath: image.path, imageUploadId: image.id } : body.removeImage ? { imagePath: FieldValue.delete(), imageUploadId: FieldValue.delete() } : {}),
       ...(previous.exists ? {} : { createdBy: context.uid, createdAt: stamp() }), updatedAt: stamp() }, { merge: true });
   });
+  if (replaced) await deleteQueuedRewardImage(context, { ...replaced, uploadId: replaced.id }, now);
   return { rewardId: ref.id };
 }
 
@@ -357,7 +406,8 @@ async function state(context, body) {
     return { person, name: profile.name || person, ...(stored ? { balance: stored.balance, earned: stored.earned, spent: stored.spent, completedCount: stored.completedCount }
       : { balance: legacyTaskPoints(allTasks, person), earned: legacyTaskPoints(allTasks, person), spent: 0, completedCount: allTasks.filter(task => task.person === person && task.done).length }) };
   }), rewards: rewards.docs.map(item => ({ id: item.id, ...item.data() })).filter(reward => sameFamily(actor, reward) && (parent(actor) || reward.active && (!reward.people?.length || reward.people.includes(own))))
-    .map(reward => ({ id: reward.id, title: reward.title, note: reward.note || '', cost: reward.cost, people: reward.people || [], active: reward.active === true })),
+    .map(reward => ({ id: reward.id, title: reward.title, note: reward.note || '', cost: reward.cost, people: reward.people || [], active: reward.active === true,
+      ...(typeof reward.imagePath === 'string' ? { imagePath: reward.imagePath } : {}) })),
   requests: requests.docs.map(item => ({ id: item.id, ...item.data() })).filter(request => sameFamily(actor, request) && (parent(actor) || request.person === own))
     .sort((a, b) => millis(b.requestedAt) - millis(a.requestedAt)).slice(0, 100).map(request => ({ id: request.id, rewardId: request.rewardId, person: request.person,
       title: request.title, cost: request.cost, state: request.state, requestedAt: millis(request.requestedAt), decidedAt: millis(request.decidedAt) })),
@@ -376,7 +426,8 @@ export async function manageTasksAction(context, body, { now = new Date() } = {}
     case 'submit': return submit(context, body, now);
     case 'approve': return decideTask(context, body, true, now);
     case 'rework': return decideTask(context, body, false, now);
-    case 'save-reward': return saveReward(context, body);
+    case 'begin-reward-image': return beginRewardImage(context, body, now);
+    case 'save-reward': return saveReward(context, body, now);
     case 'request-reward': return requestReward(context, body);
     case 'decide-reward': return decideReward(context, body);
     default: fail('TASK_INVALID_REQUEST', 400, 'Wybierz poprawną operację zadań.');

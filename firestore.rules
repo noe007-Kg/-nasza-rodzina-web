@@ -162,6 +162,8 @@ service cloud.firestore {
     match /taskRewardRequests/{id} { allow read, write: if false; }
     match /_taskPhotoUploads/{id} { allow read, write: if false; }
     match /_taskPhotoCleanup/{id} { allow read, write: if false; }
+    match /_taskRewardImageUploads/{id} { allow read, write: if false; }
+    match /_taskRewardImageCleanup/{id} { allow read, write: if false; }
 
     function shopIdAt(ids, index) {
       return ids.size() <= index || (ids[index] is string && ids[index].matches('[a-z0-9][a-z0-9-]{0,79}'));

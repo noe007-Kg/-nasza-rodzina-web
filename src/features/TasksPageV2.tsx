@@ -14,13 +14,29 @@ type VerificationMode = 'trust' | 'parent' | 'photo';
 type ManagedTask = TaskItem & { verificationMode: VerificationMode; proofPath?: string; reworkComment?: string; archived?: boolean };
 type Draft = { id: string; title: string; person: PersonKey; dueDate: string; priority: TaskPriority; note: string; points: number; verificationMode: VerificationMode; repeat: TaskRepeat };
 type Balance = { person: string; name: string; balance: number; earned: number; spent: number; completedCount: number };
-type Reward = { id: string; title: string; note: string; cost: number; people: string[]; active: boolean };
+type Reward = { id: string; title: string; note: string; cost: number; people: string[]; active: boolean; imagePath?: string };
 type RewardRequest = { id: string; rewardId: string; person: string; title: string; cost: number; state: 'pending' | 'approved' | 'rejected'; requestedAt: number };
 type Ledger = { id: string; person: string; delta: number; title: string; createdAt: number };
 type PointsState = { writesEnabled?: boolean; storageConfigured: boolean; balances: Balance[]; rewards: Reward[]; requests: RewardRequest[]; history: Ledger[] };
 const emptyPoints: PointsState = { storageConfigured: false, balances: [], rewards: [], requests: [], history: [] };
 const modeLabel: Record<VerificationMode, string> = { trust: 'Na zaufanie', parent: 'Zatwierdzenie rodzica', photo: 'Zdjęcie + zatwierdzenie' };
 const uploadLabels: Record<TaskUploadProgress['phase'], string> = { idle: '', preparing: 'Przygotowywanie zdjęcia', uploading: 'Przesyłanie zdjęcia', saving: 'Zapisywanie zgłoszenia', submitted: 'Wysłano do zatwierdzenia', error: 'Nie udało się przesłać — spróbuj ponownie' };
+const rewardUploadLabels: Record<TaskUploadProgress['phase'], string> = { ...uploadLabels, saving: 'Zapisywanie nagrody', submitted: 'Nagroda zapisana' };
+
+function RewardImage({ path, uid, title }: { path: string; uid: string; title: string }) {
+  const [loaded, setLoaded] = useState<{ uid: string; path: string; url: string } | null>(null);
+  useEffect(() => {
+    let active = true; let url = '';
+    void getBlob(storageRef(storage, path), TASK_PHOTO_LIMIT).then(blob => {
+      if (!active) return;
+      url = URL.createObjectURL(blob); setLoaded({ uid, path, url });
+    }).catch(() => { if (active) setLoaded(null); });
+    return () => { active = false; if (url) URL.revokeObjectURL(url); };
+  }, [path, uid]);
+  return loaded?.uid === uid && loaded.path === path
+    ? <img className="tasks-reward-image" src={loaded.url} alt={`Zdjęcie nagrody: ${title}`} />
+    : <span aria-label="Nagroda">🎁</span>;
+}
 
 export function TasksPage({ user, member }: { user: User; member: Member | null }) {
   const directory = useFamilyDirectory();
@@ -44,6 +60,11 @@ export function TasksPage({ user, member }: { user: User; member: Member | null 
   const uploadedProof = useRef<{ file: File; taskId: string; path: string; uploadId: string } | null>(null);
   const [proofPreview, setProofPreview] = useState<{ title: string; url: string } | null>(null);
   const [rewardForm, setRewardForm] = useState<Reward | null>(null);
+  const [rewardFile, setRewardFile] = useState<File | null>(null);
+  const [rewardRemoveImage, setRewardRemoveImage] = useState(false);
+  const [rewardProgress, setRewardProgress] = useState<TaskUploadProgress>({ phase: 'idle', percent: 0 });
+  const [rewardError, setRewardError] = useState('');
+  const uploadedReward = useRef<{ file: File; rewardId: string; path: string; uploadId: string } | null>(null);
   const [reworkTask, setReworkTask] = useState<ManagedTask | null>(null);
   const [reworkComment, setReworkComment] = useState('');
   const [historyExpanded, setHistoryExpanded] = useState(false);
@@ -76,12 +97,12 @@ export function TasksPage({ user, member }: { user: User; member: Member | null 
           createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt.toDate() : undefined,
           completedAt: raw.completedAt instanceof Timestamp ? raw.completedAt.toDate() : undefined,
           proofPath: typeof raw.proofPath === 'string' ? raw.proofPath : undefined, reworkComment: typeof raw.reworkComment === 'string' ? raw.reworkComment : undefined, archived: raw.archived === true };
-      }).filter(item => !item.archived);
+      }).filter(item => !item.archived && (parent || item.person === own || item.person === 'family'));
       next.sort((a, b) => Number(a.done) - Number(b.done) || (a.dueDate || '9999').localeCompare(b.dueDate || '9999') || (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0));
       setItems(next);
     });
     return () => { alive.current = false; stop(); };
-  }, [user.uid]);
+  }, [user.uid, parent, own]);
   useEffect(() => () => { if (proofPreview) URL.revokeObjectURL(proofPreview.url); }, [proofPreview]);
 
   const visible = items.filter(item => filter === 'today' ? !item.done && item.dueDate === today
@@ -133,6 +154,40 @@ export function TasksPage({ user, member }: { user: User; member: Member | null 
     try { const blob = await getBlob(storageRef(storage, item.proofPath), TASK_PHOTO_LIMIT); setProofPreview({ title: item.title, url: URL.createObjectURL(blob) }); }
     catch (error) { notify(errorMessage(error), 'error'); }
   }
+  function openRewardForm(reward?: Reward) {
+    setRewardForm(reward ? { ...reward, people: [...reward.people] } : { id: crypto.randomUUID(), title: '', note: '', cost: 100, people: [], active: true });
+    setRewardFile(null); setRewardRemoveImage(false); setRewardProgress({ phase: 'idle', percent: 0 }); setRewardError(''); uploadedReward.current = null;
+  }
+  async function saveReward(event: React.FormEvent) {
+    event.preventDefault(); if (!rewardForm || busyRef.current || !writesAllowed) return;
+    busyRef.current = true; setBusy(rewardForm.id); setRewardError('');
+    try {
+      let imageUploadId: string | undefined;
+      if (rewardFile) {
+        validateTaskPhoto(rewardFile); setRewardProgress({ phase: 'preparing', percent: 0 });
+        let image = uploadedReward.current;
+        if (!image || image.file !== rewardFile || image.rewardId !== rewardForm.id) {
+          const ticket = await familyAction<{ uploadId: string; path: string }>('tasks', {
+            action: 'begin-reward-image', rewardId: rewardForm.id, contentType: rewardFile.type, size: rewardFile.size,
+          });
+          await uploadTaskPhoto(uploadBytesResumable(storageRef(storage, ticket.path), rewardFile, {
+            contentType: rewardFile.type, customMetadata: { rewardId: rewardForm.id, uploadId: ticket.uploadId, uploaderUid: user.uid },
+          }), setRewardProgress);
+          image = { file: rewardFile, rewardId: rewardForm.id, ...ticket }; uploadedReward.current = image;
+        }
+        imageUploadId = image.uploadId;
+        setRewardProgress({ phase: 'saving', percent: 100 });
+      }
+      await familyAction('tasks', { action: 'save-reward', id: rewardForm.id, title: rewardForm.title, note: rewardForm.note,
+        cost: rewardForm.cost, people: rewardForm.people, active: rewardForm.active,
+        ...(imageUploadId ? { imageUploadId } : rewardRemoveImage ? { removeImage: true } : {}) });
+      setRewardProgress({ phase: 'submitted', percent: rewardFile ? 100 : 0 });
+      notify('Zapisano nagrodę. Zdjęcie nagrody pozostaje w katalogu.'); await reloadPoints(); setRewardForm(null);
+    } catch (error) {
+      setRewardError(error instanceof Error ? error.message : errorMessage(error));
+      setRewardProgress(progress => ({ ...progress, phase: 'error' }));
+    } finally { busyRef.current = false; if (alive.current) setBusy(''); }
+  }
 
   return <div className="page-content compact-page tasks-v130 tasks-v2" data-testid="tasks-v2">
     <ModuleHeader icon="✅" title="Zadania" text="Rodzinne obowiązki, postępy i wspólnie ustalone nagrody." action={<button className="primary-button" disabled={!writesAllowed || !!busy} onClick={() => openAdd()}>＋ Dodaj zadanie</button>} />
@@ -163,8 +218,8 @@ export function TasksPage({ user, member }: { user: User; member: Member | null 
         </article>)}</section>
       </section><aside className="points-panel"><header><strong>🏆 Ranking rodzinny</strong><small>Według wszystkich zdobytych punktów</small></header>{balances.length === 0 ? <p className="tasks-muted">Saldo jest dostępne po konfiguracji backendu.</p> : balances.map((balance, index) => <article key={balance.person}><div><span className="points-avatar">{index + 1}</span><div><strong>{balance.name}</strong><small>{balance.earned} zdobytych · {balance.balance} do wykorzystania</small></div></div><div className="tasks-badges">{balance.completedCount >= 1 && <span>🌟 Pierwszy krok</span>}{balance.completedCount >= 10 && <span>🏅 10 obowiązków</span>}{balance.earned >= 100 && <span>🏆 100 punktów</span>}</div></article>)}<button className="secondary-button" onClick={() => setTab('rewards')}>Punkty i nagrody →</button><small className="points-note">Saldo i wymiany zatwierdza serwer. Odznaki wynikają z historii wykonania.</small></aside></div>
     </> : <section className="tasks-rewards-view">
-      <header><div><h2>Punkty i nagrody</h2><p>{parent ? 'Ustal nagrody i zatwierdzaj prośby dzieci.' : `Masz ${ownBalance} pkt do wykorzystania.`}</p></div>{parent && <button className="primary-button" disabled={!writesAllowed || !!busy} onClick={() => setRewardForm({ id: crypto.randomUUID(), title: '', note: '', cost: 100, people: [], active: true })}>＋ Dodaj nagrodę</button>}</header>
-      <div className="tasks-reward-grid">{backend.rewards.length === 0 ? <EmptyState icon="🎁" text="Nie dodano jeszcze nagród." /> : backend.rewards.map(reward => <article key={reward.id}><span aria-hidden="true">🎁</span><h3>{reward.title}</h3><p>{reward.note}</p><strong>{reward.cost} pkt</strong>{!reward.active && <small>Nieaktywna</small>}{parent ? <button className="secondary-button" disabled={!writesAllowed || !!busy} onClick={() => setRewardForm({ ...reward })}>Edytuj nagrodę</button> : <><progress value={Math.min(ownBalance, reward.cost)} max={reward.cost} aria-label={`Postęp do nagrody ${reward.title}`} /><small>{ownBalance} / {reward.cost} pkt</small><button className="primary-button" disabled={!writesAllowed || !!busy || backend.requests.some(request => request.rewardId === reward.id && request.state === 'pending')} onClick={() => void action({ action: 'request-reward', rewardId: reward.id }, 'Prośba wysłana. Punkty zostaną odjęte dopiero po zatwierdzeniu.')}>Poproś o nagrodę</button></>}</article>)}</div>
+      <header><div><h2>Punkty i nagrody</h2><p>{parent ? 'Ustal nagrody i zatwierdzaj prośby dzieci.' : `Masz ${ownBalance} pkt do wykorzystania.`}</p></div>{parent && <button className="primary-button" disabled={!writesAllowed || !!busy} onClick={() => openRewardForm()}>＋ Dodaj nagrodę</button>}</header>
+      <div className="tasks-reward-grid">{backend.rewards.length === 0 ? <EmptyState icon="🎁" text="Nie dodano jeszcze nagród." /> : backend.rewards.map(reward => <article key={reward.id}>{reward.imagePath ? <RewardImage path={reward.imagePath} uid={user.uid} title={reward.title} /> : <span aria-hidden="true">🎁</span>}<h3>{reward.title}</h3><p>{reward.note}</p><strong>{reward.cost} pkt</strong>{!reward.active && <small>Nieaktywna</small>}{parent ? <button className="secondary-button" disabled={!writesAllowed || !!busy} onClick={() => openRewardForm(reward)}>Edytuj nagrodę</button> : <><progress value={Math.min(ownBalance, reward.cost)} max={reward.cost} aria-label={`Postęp do nagrody ${reward.title}`} /><small>{ownBalance} / {reward.cost} pkt</small><button className="primary-button" disabled={!writesAllowed || !!busy || backend.requests.some(request => request.rewardId === reward.id && request.state === 'pending')} onClick={() => void action({ action: 'request-reward', rewardId: reward.id }, 'Prośba wysłana. Punkty zostaną odjęte dopiero po zatwierdzeniu.')}>Poproś o nagrodę</button></>}</article>)}</div>
       <section className="tasks-request-list"><h3>{parent ? 'Prośby o nagrody' : 'Moje prośby'}</h3>{backend.requests.length === 0 ? <p className="tasks-muted">Brak próśb o nagrody.</p> : backend.requests.map(request => <article key={request.id}><div><strong>{request.title}</strong><small>{profileName(request.person)} · {request.cost} pkt · {request.requestedAt ? new Date(request.requestedAt).toLocaleDateString('pl-PL') : ''}</small></div><span className={`tasks-request-status ${request.state}`}>{request.state === 'pending' ? 'Do zatwierdzenia' : request.state === 'approved' ? 'Zatwierdzono' : 'Odmowa'}</span>{parent && request.state === 'pending' && <div className="approval-actions"><button disabled={!writesAllowed || !!busy} onClick={() => void action({ action: 'decide-reward', requestId: request.id, approved: true }, 'Zatwierdzono wymianę punktów.')}>Zatwierdź</button><button disabled={!writesAllowed || !!busy} onClick={() => void action({ action: 'decide-reward', requestId: request.id, approved: false }, 'Odmowa zapisana. Saldo bez zmian.')}>Odmów</button></div>}</article>)}</section>
       <section className="tasks-ledger"><h3>Historia punktów</h3>{backend.history.length === 0 ? <p className="tasks-muted">Nowe operacje pojawią się tutaj. Punkty ze starych wykonanych zadań zachowano jako saldo początkowe.</p> : <><ul>{(historyExpanded ? backend.history : backend.history.slice(0, 5)).map(entry => <li key={entry.id}><div><strong>{entry.title}</strong><small>{profileName(entry.person)} · {entry.createdAt ? new Date(entry.createdAt).toLocaleString('pl-PL') : ''}</small></div><b className={entry.delta < 0 ? 'spent' : ''}>{entry.delta > 0 ? '+' : ''}{entry.delta} pkt</b></li>)}</ul>{backend.history.length > 5 && <button className="secondary-button" onClick={() => setHistoryExpanded(!historyExpanded)}>{historyExpanded ? 'Zwiń listę' : `Pokaż wszystkie (${backend.history.length})`}</button>}</>}</section>
     </section>}
@@ -189,10 +244,16 @@ export function TasksPage({ user, member }: { user: User; member: Member | null 
     </form></Modal>}
     {proofPreview && <Modal title={`Zdjęcie wykonania: ${proofPreview.title}`} onClose={() => setProofPreview(null)}><img className="tasks-proof-preview" src={proofPreview.url} alt={`Potwierdzenie zadania ${proofPreview.title}`} /></Modal>}
     {reworkTask && <Modal title="Zadanie do poprawy" onClose={() => !busy && setReworkTask(null)}><form onSubmit={async event => { event.preventDefault(); if (await action({ action: 'rework', taskId: reworkTask.id, comment: reworkComment }, 'Wysłano zadanie do poprawy.')) setReworkTask(null); }}><label className="field"><span>Wskazówka dla wykonującego</span><textarea maxLength={1000} value={reworkComment} onChange={event => setReworkComment(event.target.value)} /></label><div className="form-actions"><button type="button" className="secondary-button" onClick={() => setReworkTask(null)} disabled={!!busy}>Anuluj</button><button className="primary-button" disabled={!writesAllowed || !!busy}>Do poprawy</button></div></form></Modal>}
-    {rewardForm && <Modal title="Nagroda" onClose={() => !busy && setRewardForm(null)}><form className="form-grid" onSubmit={async event => { event.preventDefault(); if (await action({ action: 'save-reward', ...rewardForm }, 'Zapisano nagrodę.')) setRewardForm(null); }}>
-      <label className="field field-wide"><span>Nazwa nagrody</span><input value={rewardForm.title} required maxLength={200} onChange={event => setRewardForm({ ...rewardForm, title: event.target.value })} /></label><label className="field"><span>Koszt punktowy</span><input type="number" min={1} max={100000} step={1} value={rewardForm.cost} onChange={event => setRewardForm({ ...rewardForm, cost: Number(event.target.value) })} /></label><label className="checkbox-field"><input type="checkbox" checked={rewardForm.active} onChange={event => setRewardForm({ ...rewardForm, active: event.target.checked })} /><span>Nagroda aktywna</span></label><label className="field field-wide"><span>Opis</span><textarea maxLength={1000} value={rewardForm.note} onChange={event => setRewardForm({ ...rewardForm, note: event.target.value })} /></label>
-      <fieldset className="field-wide tasks-reward-people"><legend>Dostępna dla (brak zaznaczeń = wszyscy)</legend>{profiles.filter(profile => profile.role !== 'parent').map(profile => { const person = memberPersonKey(profile); return <label className="checkbox-field" key={profile.id}><input type="checkbox" checked={rewardForm.people.includes(person)} onChange={event => setRewardForm({ ...rewardForm, people: event.target.checked ? [...rewardForm.people, person] : rewardForm.people.filter(value => value !== person) })} /><span>{profile.name || person}</span></label>; })}</fieldset>
-      <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={() => setRewardForm(null)} disabled={!!busy}>Anuluj</button><button className="primary-button" disabled={!writesAllowed || !!busy}>Zapisz nagrodę</button></div>
+    {rewardForm && <Modal title="Nagroda" onClose={() => !busy && setRewardForm(null)}><form className="form-grid" onSubmit={saveReward}>
+      <label className="field field-wide"><span>Nazwa nagrody</span><input value={rewardForm.title} required maxLength={200} disabled={!!busy} onChange={event => setRewardForm({ ...rewardForm, title: event.target.value })} /></label><label className="field"><span>Koszt punktowy</span><input type="number" min={1} max={100000} step={1} value={rewardForm.cost} disabled={!!busy} onChange={event => setRewardForm({ ...rewardForm, cost: Number(event.target.value) })} /></label><label className="checkbox-field"><input type="checkbox" checked={rewardForm.active} disabled={!!busy} onChange={event => setRewardForm({ ...rewardForm, active: event.target.checked })} /><span>Nagroda aktywna</span></label><label className="field field-wide"><span id="task-reward-description-label">Opis</span><textarea aria-labelledby="task-reward-description-label" required maxLength={1000} value={rewardForm.note} disabled={!!busy} onChange={event => setRewardForm({ ...rewardForm, note: event.target.value })} /></label>
+      <label className="field field-wide"><span>Zdjęcie nagrody (opcjonalnie)</span><input type="file" accept="image/jpeg,image/png,image/webp" disabled={!!busy || !backend.storageConfigured} onChange={event => { setRewardFile(event.target.files?.[0] || null); setRewardRemoveImage(false); uploadedReward.current = null; setRewardError(''); setRewardProgress({ phase: 'idle', percent: 0 }); }} /></label>
+      {rewardForm.imagePath && !rewardRemoveImage && <div className="field-wide tasks-reward-edit-image"><RewardImage path={rewardForm.imagePath} uid={user.uid} title={rewardForm.title} /><button type="button" className="secondary-button" disabled={!!busy} onClick={() => { setRewardFile(null); setRewardRemoveImage(true); uploadedReward.current = null; }}>Usuń zdjęcie nagrody</button></div>}
+      <p className="field-wide tasks-muted">Zdjęcie nagrody pozostaje w katalogu po wymianie punktów. Usuwane są tylko zdjęcia potwierdzające wykonanie zadania.</p>
+      {!backend.storageConfigured && <p className="field-wide tasks-muted" role="status">Zdjęcie wymaga konfiguracji chronionego Storage. Nagrodę możesz zapisać bez zdjęcia.</p>}
+      {rewardProgress.phase !== 'idle' && <div className="field-wide tasks-reward-upload-progress" role="status"><strong>{rewardUploadLabels[rewardProgress.phase]}</strong>{rewardFile && <><progress max={100} value={rewardProgress.percent} aria-label="Postęp przesyłania zdjęcia nagrody" /><span>{rewardProgress.percent}%</span></>}</div>}
+      {rewardError && <p className="field-wide tasks-rework" role="alert">{rewardError}</p>}
+      <fieldset className="field-wide tasks-reward-people" disabled={!!busy}><legend>Dostępna dla (brak zaznaczeń = wszyscy)</legend>{profiles.filter(profile => profile.role !== 'parent').map(profile => { const person = memberPersonKey(profile); return <label className="checkbox-field" key={profile.id}><input type="checkbox" checked={rewardForm.people.includes(person)} onChange={event => setRewardForm({ ...rewardForm, people: event.target.checked ? [...rewardForm.people, person] : rewardForm.people.filter(value => value !== person) })} /><span>{profile.name || person}</span></label>; })}</fieldset>
+      <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={() => setRewardForm(null)} disabled={!!busy}>Anuluj</button><button className="primary-button" disabled={!writesAllowed || !!busy}>{busy ? 'Zapisuję…' : rewardError ? 'Spróbuj ponownie' : 'Zapisz nagrodę'}</button></div>
     </form></Modal>}
   </div>;
 }

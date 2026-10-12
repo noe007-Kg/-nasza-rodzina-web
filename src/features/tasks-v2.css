@@ -34,6 +34,12 @@
 .tasks-v2 .tasks-reward-grid article { display: flex; flex-direction: column; align-items: start; gap: 7px; min-width: 0; padding: 15px; border-radius: 21px; background: var(--nr-panel-2); border: 1px solid var(--nr-line); }
 .tasks-v2 .tasks-reward-grid h3, .tasks-v2 .tasks-reward-grid p { margin: 0; overflow-wrap: anywhere; }
 .tasks-v2 .tasks-reward-grid article > span { font-size: 27px; }
+.tasks-v2 .tasks-reward-image { width: 100%; height: 112px; object-fit: cover; border-radius: 14px; }
+.tasks-reward-edit-image { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.tasks-reward-edit-image .tasks-reward-image { width: 100px; height: 100px; object-fit: cover; border-radius: 12px; }
+.tasks-reward-upload-progress { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.tasks-reward-upload-progress strong { grid-column: 1 / -1; font-size: 13px; }
+.tasks-reward-upload-progress progress { width: 100%; accent-color: #e83e9f; }
 .tasks-v2 .tasks-reward-grid p { color: var(--nr-muted); font-size: 12px; }
 .tasks-v2 .tasks-reward-grid article > button { margin-top: 5px; }
 .tasks-v2 .tasks-request-list, .tasks-v2 .tasks-ledger { margin-top: 16px; padding: 13px; border: 1px solid var(--nr-line); border-radius: 21px; background: var(--nr-panel-2); }

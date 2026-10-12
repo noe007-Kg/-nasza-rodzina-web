@@ -39,6 +39,22 @@
         { "fieldPath": "state", "order": "ASCENDING" },
         { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "_taskRewardImageUploads",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "orphanAfter", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "_taskRewardImageCleanup",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "state", "order": "ASCENDING" },
+        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -103,5 +103,7 @@ export async function runTaskPhotoCleanup(context, { now = new Date(), limit = 1
     .where('nextAttemptAt', '<=', Timestamp.fromDate(now)).limit(count).get();
   let deleted = 0;
   for (const item of jobs.docs) if (await deleteQueuedTaskPhoto(context, item.data(), now)) deleted += 1;
-  return { abandoned: stale.size, attempted: jobs.size, deleted, retry: jobs.size - deleted };
+  const { runTaskRewardImageCleanup } = await import('./tasks-reward-images.mjs');
+  const rewardImages = await runTaskRewardImageCleanup(context, { now, limit: count });
+  return { abandoned: stale.size, attempted: jobs.size, deleted, retry: jobs.size - deleted, rewardImages };
 }

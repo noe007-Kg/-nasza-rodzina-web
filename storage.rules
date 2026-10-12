@@ -87,6 +87,31 @@ service firebase.storage {
         && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
       allow update, delete: if false;
     }
+    function rewardImageTicket(filename) {
+      return firestore.get(/databases/(default)/documents/_taskRewardImageUploads/$(filename.split('[.]')[0])).data;
+    }
+    function rewardImageAccess(rewardId, uid, filename) {
+      let ticket = rewardImageTicket(filename);
+      let personKey = profile().get('personKey', '');
+      let rewardPerson = personKey is string && personKey.size() > 0 ? personKey : profile().get('name', '');
+      return ticket.get('familyId', null) == profile().get('familyId', null)
+        && ticket.rewardId == rewardId && ticket.uid == uid
+        && ticket.path == 'taskRewardImages/' + rewardId + '/' + uid + '/' + filename
+        && (ticket.state == 'open' && parent() && uid == request.auth.uid
+          || ticket.state == 'attached' && (parent()
+            || (ticket.active == true && (ticket.people.size() == 0 || rewardPerson in ticket.people))));
+    }
+    match /taskRewardImages/{rewardId}/{uid}/{filename} {
+      allow read: if member() && proofFilename(filename) && rewardImageAccess(rewardId, uid, filename);
+      allow create: if resource == null && member() && parent() && uid == request.auth.uid
+        && proofFilename(filename) && rewardImageAccess(rewardId, uid, filename)
+        && rewardImageTicket(filename).state == 'open' && rewardImageTicket(filename).expiresAt > request.time
+        && request.resource.size > 0 && request.resource.size <= 8 * 1024 * 1024
+        && request.resource.size == rewardImageTicket(filename).size
+        && request.resource.contentType == rewardImageTicket(filename).contentType
+        && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
+      allow update, delete: if false;
+    }
     function medicalDocument(id) {
       return firestore.get(/databases/(default)/documents/healthDocuments/$(id)).data;
     }
