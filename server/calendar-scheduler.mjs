@@ -1,4 +1,4 @@
-import { calendarConfiguration, calendarSelection, activeCalendarMember, calendarError } from './calendar-config.mjs';
+import { calendarConfiguration, calendarSelection, activeCalendarMember, calendarError, googleCalendarImportOwner } from './calendar-config.mjs';
 import { calendarEncryptionConfigured } from './calendar-secrets.mjs';
 import { assertCalendarSelection, timestampMillis } from './calendar-storage.mjs';
 import { syncGoogleCalendar } from './calendar-service.mjs';
@@ -33,7 +33,7 @@ export function googleCalendarScheduleSlot(scheduleTime, now = Date.now()) {
 }
 
 function configured() {
-  try { calendarConfiguration(); return calendarEncryptionConfigured(); } catch { return false; }
+  try { calendarConfiguration(); return !!googleCalendarImportOwner() && calendarEncryptionConfigured(); } catch { return false; }
 }
 
 /** Orchestration only. OAuth refresh, decryption, idempotent writes, version
@@ -84,6 +84,9 @@ export async function runScheduledGoogleCalendarSync(context, event = {}, depend
       summary.deferred += remaining; count(summary, 'CALENDAR_SCHEDULE_BUDGET', remaining); break;
     }
     const snapshot = rows[index], data = snapshot.data();
+    if (data.ownerUid !== googleCalendarImportOwner()) {
+      summary.skipped++; count(summary, 'CALENDAR_SCHEDULE_OWNER_UNAVAILABLE'); continue;
+    }
     if (data.provider !== 'google' || data.mode !== 'sync' || data.status !== 'connected' || data.selectionConfirmed !== true
       || !data.envelope || !sourceId(snapshot.id) || !identifier(data.ownerUid)) {
       summary.skipped++; count(summary, 'CALENDAR_SCHEDULE_INELIGIBLE'); continue;

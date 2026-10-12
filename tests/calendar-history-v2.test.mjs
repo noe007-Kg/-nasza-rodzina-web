@@ -9,6 +9,7 @@ import { googleAuthorizationUrl, googleCalendarClient, GOOGLE_CALENDAR_SCOPE, GO
 import { calendarConnection, calendarId, calendarMemoryContext, calendarTestEnvironment, googleFixtureEvent, testNow } from './calendar-test-helpers.mjs';
 
 const clock = () => testNow;
+const range = { from: '2026-10-01', to: '2026-10-31' };
 const refPath = `_calendarConnections/${calendarId}`;
 const binding = { uid: 'actor', id: calendarId, purpose: 'connection' };
 const tokens = { accessToken: 'test-only-access', refreshToken: 'test-only-refresh', expiresAt: testNow + 3600000, scopes: [GOOGLE_CALENDAR_SCOPE] };
@@ -67,16 +68,16 @@ test('preview count and resumed import preserve encrypted cursors and import eve
   const ctx = context({ historyComplete: false, ownerProfileId: 'family', person: 'family', visibility: 'family' });
   const event = googleFixtureEvent('history-1', { sourceRecurrence: ['RRULE:FREQ=WEEKLY'] });
   const requests = [], options = { clock, clientFactory: clientFactory(request => { requests.push(request); return request.pageToken ? page([googleFixtureEvent('history-2')]) : page([event], 'page-two'); }) };
-  let result = await googleHistoryStep(ctx, { connectionId: calendarId, operation: 'preview' }, options);
+  let result = await googleHistoryStep(ctx, { connectionId: calendarId, operation: 'preview', ...range }, options);
   assert.equal(result.complete, false); assert.equal(result.historyProgress.processed, 1);
   assert.equal([...ctx.rows.keys()].some(key => key.startsWith('privateCalendarEvents/')), false);
-  result = await googleHistoryStep(ctx, { connectionId: calendarId, operation: 'preview' }, options);
+  result = await googleHistoryStep(ctx, { connectionId: calendarId, operation: 'preview', ...range }, options);
   assert.equal(result.complete, true); assert.equal(result.historyProgress.processed, 2);
-  result = await googleHistoryStep(ctx, { connectionId: calendarId, operation: 'import' }, options);
+  result = await googleHistoryStep(ctx, { connectionId: calendarId, operation: 'import', ...range }, options);
   assert.equal(result.historyProgress.total, 2); assert.equal(result.complete, false);
   const secret = decryptCalendarSecrets(ctx.rows.get(refPath).envelope, binding);
   assert.equal(secret.historyJob.pageToken, 'page-two'); assert.equal(result.historyProgress.pageToken, undefined);
-  result = await googleHistoryStep(ctx, { connectionId: calendarId, operation: 'import' }, options);
+  result = await googleHistoryStep(ctx, { connectionId: calendarId, operation: 'import', ...range }, options);
   assert.equal(result.complete, true); assert.equal(ctx.rows.get(refPath).historyComplete, true);
   const docs = [...ctx.rows].filter(([key]) => key.startsWith('privateCalendarEvents/')).map(([, value]) => value);
   assert.equal(docs.length, 2); assert.equal([...ctx.rows.keys()].some(key => key.startsWith('calendarEvents/')), false);
@@ -116,58 +117,57 @@ test('cancelled master occurrence is stored as private tombstone and can be rein
 test('a read-only connection never issues provider writes and write scope requires separate OAuth consent', async () => {
   const config = { clientId: 'fixture', redirectUri: 'https://family.example.test/api/calendars/callback' }, plain = new URL(googleAuthorizationUrl(config, 'state', 'challenge'));
   assert.equal(plain.searchParams.get('scope'), GOOGLE_CALENDAR_SCOPE);
-  const writable = new URL(googleAuthorizationUrl(config, 'state', 'challenge', { write: true }));
-  assert.deepEqual(writable.searchParams.get('scope').split(' '), [GOOGLE_CALENDAR_SCOPE, GOOGLE_CALENDAR_WRITE_SCOPE]);
+  assert.throws(() => googleAuthorizationUrl(config, 'state', 'challenge', { write: true }), { code: 'CALENDAR_READ_ONLY_STAGE' });
   let calls = 0;
   const client = googleCalendarClient({}, tokens, { now: testNow, fetchImpl: async () => { calls++; throw new Error('Must not call provider'); } });
-  await assert.rejects(client.writeEvent('primary-id', 'event-id', {}, { insert: true }), { code: 'CALENDAR_WRITE_PERMISSION_REQUIRED' });
+  await assert.rejects(client.writeEvent('primary-id', 'event-id', {}, { insert: true }), { code: 'CALENDAR_READ_ONLY_STAGE' });
   assert.equal(calls, 0);
   const ctx = context();
-  await assert.rejects(configureGoogleTwoWay(ctx, { connectionId: calendarId, enabled: true }, { clock, clientFactory: clientFactory(page([])) }), { code: 'CALENDAR_WRITE_PERMISSION_REQUIRED' });
+  await assert.rejects(configureGoogleTwoWay(ctx, { connectionId: calendarId, enabled: true }, { clock, clientFactory: clientFactory(page([])) }), { code: 'CALENDAR_READ_ONLY_STAGE' });
   assert.notEqual(ctx.rows.get(refPath).twoWayEnabled, true);
 });
 
-test('refresh that removes write permission prevents a provider write after token renewal', async () => {
+test('READ-ONLY refuses provider writes even with an expired formerly writable token', async () => {
   const calls = [];
   const client = googleCalendarClient({}, { ...tokens, expiresAt: testNow, scopes: [GOOGLE_CALENDAR_SCOPE, GOOGLE_CALENDAR_WRITE_SCOPE] }, { now: testNow, fetchImpl: async (url, init) => {
     calls.push({ url, method: init.method });
     if (url === 'https://oauth2.googleapis.com/token') return Response.json({ access_token: 'test-only-renewed', token_type: 'Bearer', expires_in: 3600, scope: GOOGLE_CALENDAR_SCOPE });
     return Response.json({ id: 'event', etag: 'etag' });
   } });
-  await assert.rejects(client.writeEvent('primary-id', 'event-id', {}, { insert: true }), { code: 'CALENDAR_WRITE_PERMISSION_REQUIRED' });
-  assert.deepEqual(calls.map(value => value.url), ['https://oauth2.googleapis.com/token']);
+  await assert.rejects(client.writeEvent('primary-id', 'event-id', {}, { insert: true }), { code: 'CALENDAR_READ_ONLY_STAGE' });
+  assert.deepEqual(calls, []);
 });
 
-test('provider conditional writes send If-Match and preserve the remote version on conflict', async () => {
+test('READ-ONLY blocks conditional provider writes before any PATCH', async () => {
   let request;
   const client = googleCalendarClient({}, { ...tokens, scopes: [GOOGLE_CALENDAR_SCOPE, GOOGLE_CALENDAR_WRITE_SCOPE] }, { now: testNow, fetchImpl: async (_url, init) => { request = init; return Response.json({}, { status: 412 }); } });
-  await assert.rejects(client.writeEvent('primary-id', 'event-id', { summary: 'Nowa nazwa' }, { etag: 'old-etag' }), { code: 'CALENDAR_WRITE_CONFLICT' });
-  assert.equal(request.method, 'PATCH'); assert.equal(request.headers['If-Match'], 'old-etag');
+  await assert.rejects(client.writeEvent('primary-id', 'event-id', { summary: 'Nowa nazwa' }, { etag: 'old-etag' }), { code: 'CALENDAR_READ_ONLY_STAGE' });
+  assert.equal(request, undefined);
 });
 
-test('two-way mode requires a completed history, writable selected calendar and write grant', async () => {
+test('READ-ONLY rejects two-way mode even with completed history and earlier write consent', async () => {
   const writableTokens = { ...tokens, scopes: [GOOGLE_CALENDAR_SCOPE, GOOGLE_CALENDAR_WRITE_SCOPE] };
   for (const changes of [{ historyComplete: false }, { googleCalendarCanWrite: false }, { writeAuthorized: false }, { mode: 'import' }]) {
     const ctx = context({ writeAuthorized: true, googleCalendarCanWrite: true, ...changes }, { tokens: writableTokens });
-    await assert.rejects(configureGoogleTwoWay(ctx, { connectionId: calendarId, enabled: true }, { clock, clientFactory: clientFactory(page([]), { tokens: () => writableTokens }) }), { code: 'CALENDAR_WRITE_PERMISSION_REQUIRED' });
+    await assert.rejects(configureGoogleTwoWay(ctx, { connectionId: calendarId, enabled: true }, { clock, clientFactory: clientFactory(page([]), { tokens: () => writableTokens }) }), { code: 'CALENDAR_READ_ONLY_STAGE' });
   }
   const ctx = context({ writeAuthorized: true, googleCalendarCanWrite: true }, { tokens: writableTokens });
-  await configureGoogleTwoWay(ctx, { connectionId: calendarId, enabled: true }, { clock, clientFactory: clientFactory(page([]), { tokens: () => writableTokens }) });
-  assert.equal(ctx.rows.get(refPath).twoWayEnabled, true);
+  await assert.rejects(configureGoogleTwoWay(ctx, { connectionId: calendarId, enabled: true }, { clock, clientFactory: clientFactory(page([]), { tokens: () => writableTokens }) }), { code: 'CALENDAR_READ_ONLY_STAGE' });
+  assert.notEqual(ctx.rows.get(refPath).twoWayEnabled, true);
 });
 
-test('explicit local export uses stable mapping and retries do not create a second Google event', async () => {
+test('READ-ONLY refuses local exports and retries without changing private events', async () => {
   const writableTokens = { ...tokens, scopes: [GOOGLE_CALENDAR_SCOPE, GOOGLE_CALENDAR_WRITE_SCOPE] };
   const ctx = context({ writeAuthorized: true, googleCalendarCanWrite: true }, { tokens: writableTokens }); ctx.rows.set('privateCalendarEvents/local-event', localEvent());
   let writes = 0;
   const options = { clock, clientFactory: clientFactory(page([]), { tokens: () => writableTokens, writeEvent: async (_calendarId, id, body, options) => { writes++; assert.equal(options.insert, true); return { ...body, id, etag: 'created-etag' }; } }) };
-  assert.equal((await exportLocalEventToGoogle(ctx, { connectionId: calendarId, eventId: 'local-event' }, options)).exported, true);
-  assert.equal((await exportLocalEventToGoogle(ctx, { connectionId: calendarId, eventId: 'local-event' }, options)).alreadyExported, true);
-  assert.equal(writes, 1); assert.equal([...ctx.rows.keys()].filter(path => path.startsWith('_calendarExports/')).length, 1);
+  await assert.rejects(exportLocalEventToGoogle(ctx, { connectionId: calendarId, eventId: 'local-event' }, options), { code: 'CALENDAR_READ_ONLY_STAGE' });
+  await assert.rejects(exportLocalEventToGoogle(ctx, { connectionId: calendarId, eventId: 'local-event' }, options), { code: 'CALENDAR_READ_ONLY_STAGE' });
+  assert.equal(writes, 0); assert.equal([...ctx.rows.keys()].filter(path => path.startsWith('_calendarExports/')).length, 0);
   assert.equal(ctx.rows.get('privateCalendarEvents/local-event').private, true);
 });
 
-test('two-way conflicting modifications and remote cancellations preserve local events for explicit resolution', async () => {
+test('READ-ONLY ignores an old two-way flag and preserves old mappings and local events', async () => {
   for (const cancelled of [false, true]) {
     const writableTokens = { ...tokens, scopes: [GOOGLE_CALENDAR_SCOPE, GOOGLE_CALENDAR_WRITE_SCOPE] };
     const ctx = context({ writeAuthorized: true, googleCalendarCanWrite: true, twoWayEnabled: true }, { tokens: writableTokens });
@@ -177,13 +177,13 @@ test('two-way conflicting modifications and remote cancellations preserve local 
     let writes = 0;
     const options = { clock, clientFactory: clientFactory(page([]), { tokens: () => writableTokens, event: async () => ({ id: 'remote-event', etag: 'new-etag', status: cancelled ? 'cancelled' : 'confirmed' }), writeEvent: async () => { writes++; } }) };
     await syncGoogleHistory(ctx, { connectionId: calendarId }, options);
-    assert.equal(writes, 0); assert.equal(ctx.rows.get('_calendarExports/test-map').conflict, true);
+    assert.equal(writes, 0); assert.equal(ctx.rows.get('_calendarExports/test-map').conflict, false);
     assert.equal(ctx.rows.has('privateCalendarEvents/local-event'), true);
     assert.equal(ctx.rows.get('privateCalendarEvents/local-event').title, cancelled ? initial.title : 'Nowsza lokalna nazwa');
   }
 });
 
-test('a Google-side recurrence change is flagged for resolution rather than silently flattening a local series', async () => {
+test('READ-ONLY never polls or writes an old outbound recurring export mapping', async () => {
   const writableTokens = { ...tokens, scopes: [GOOGLE_CALENDAR_SCOPE, GOOGLE_CALENDAR_WRITE_SCOPE] };
   const ctx = context({ writeAuthorized: true, googleCalendarCanWrite: true, twoWayEnabled: true }, { tokens: writableTokens });
   const initial = localEvent({ repeat: 'weekly' }); ctx.rows.set('privateCalendarEvents/local-event', initial);
@@ -193,18 +193,18 @@ test('a Google-side recurrence change is flagged for resolution rather than sile
   await syncGoogleHistory(ctx, { connectionId: calendarId }, { clock, clientFactory: clientFactory(page([]), { tokens: () => writableTokens,
     event: async () => ({ id: 'remote-event', etag: 'new-etag', summary: 'Termin w Google', start: { dateTime: '2026-10-08T11:00:00+02:00' }, end: { dateTime: '2026-10-08T12:00:00+02:00' }, recurrence: ['RRULE:FREQ=MONTHLY'] }),
     writeEvent: async () => { writes++; } }) });
-  assert.equal(writes, 0); assert.equal(ctx.rows.get('_calendarExports/test-map').conflict, true);
+  assert.equal(writes, 0); assert.equal(ctx.rows.get('_calendarExports/test-map').conflict, false);
   assert.equal(ctx.rows.get('privateCalendarEvents/local-event').repeat, 'weekly'); assert.equal(ctx.rows.get('privateCalendarEvents/local-event').title, initial.title);
 });
 
-test('editing an imported event with a newer Google etag refuses the update before issuing PATCH', async () => {
+test('READ-ONLY refuses imported event updates before consulting etags or issuing PATCH', async () => {
   const writableTokens = { ...tokens, scopes: [GOOGLE_CALENDAR_SCOPE, GOOGLE_CALENDAR_WRITE_SCOPE] }, ctx = context({ writeAuthorized: true, googleCalendarCanWrite: true, twoWayEnabled: true }, { tokens: writableTokens });
   const { lease } = await acquireCalendarLease(ctx, calendarId, { now: testNow }), connection = { ...ctx.rows.get(refPath), id: calendarId };
   await upsertGoogleEvents(ctx, connection, lease, [googleFixtureEvent('imported', { providerEtag: 'old-etag' })], { clock, now: testNow });
   ctx.rows.set(refPath, { ...ctx.rows.get(refPath), leaseId: null, leaseExpiresAt: null });
   const eventId = googleEventDocumentId('actor', calendarId, connection.calendarId, 'imported'); let writes = 0;
   await assert.rejects(updateImportedGoogleEvent(ctx, { connectionId: calendarId, eventId, patch: { title: 'Zmiana', description: '', location: '', date: new Date(testNow).toISOString(), endDate: new Date(testNow + 3600000).toISOString(), allDay: false } },
-    { clock, clientFactory: clientFactory(page([]), { tokens: () => writableTokens, event: async () => ({ etag: 'new-etag' }), writeEvent: async () => { writes++; } }) }), { code: 'CALENDAR_WRITE_CONFLICT' });
+    { clock, clientFactory: clientFactory(page([]), { tokens: () => writableTokens, event: async () => ({ etag: 'new-etag' }), writeEvent: async () => { writes++; } }) }), { code: 'CALENDAR_READ_ONLY_STAGE' });
   assert.equal(writes, 0); assert.equal(ctx.rows.get(`privateCalendarEvents/${eventId}`).title, 'Wizyta');
 });
 

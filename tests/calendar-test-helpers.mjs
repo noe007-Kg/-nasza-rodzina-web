@@ -7,10 +7,10 @@ export const testNow = Date.parse('2026-10-08T08:00:00Z');
 
 /** Test-only deterministic bytes. These never leave the in-memory fixture or represent a real key. */
 export function calendarTestEnvironment() {
-  const names = ['GOOGLE_CALENDAR_CLIENT_ID', 'GOOGLE_CALENDAR_CLIENT_SECRET', 'CALENDAR_SITE_ORIGIN', 'CALENDAR_ENCRYPTION_KEY_BASE64', 'CALENDAR_ENCRYPTION_KEY_ID'];
+  const names = ['GOOGLE_CALENDAR_CLIENT_ID', 'GOOGLE_CALENDAR_CLIENT_SECRET', 'CALENDAR_SITE_ORIGIN', 'CALENDAR_ENCRYPTION_KEY_BASE64', 'CALENDAR_ENCRYPTION_KEY_ID', 'CALENDAR_GOOGLE_OWNER_UID', 'FAMILY_V2_WRITES_ENABLED'];
   const saved = Object.fromEntries(names.map(name => [name, process.env[name]]));
   Object.assign(process.env, { GOOGLE_CALENDAR_CLIENT_ID: '123-calendar-fixture.apps.googleusercontent.com', GOOGLE_CALENDAR_CLIENT_SECRET: 'test-only-oauth-client-placeholder',
-    CALENDAR_SITE_ORIGIN: 'https://family.example.test', CALENDAR_ENCRYPTION_KEY_BASE64: Buffer.alloc(32, 61).toString('base64'), CALENDAR_ENCRYPTION_KEY_ID: 'fixture' });
+    CALENDAR_SITE_ORIGIN: 'https://family.example.test', CALENDAR_ENCRYPTION_KEY_BASE64: Buffer.alloc(32, 61).toString('base64'), CALENDAR_ENCRYPTION_KEY_ID: 'fixture', CALENDAR_GOOGLE_OWNER_UID: 'actor', FAMILY_V2_WRITES_ENABLED: 'true' });
   return () => { for (const name of names) if (saved[name] === undefined) delete process.env[name]; else process.env[name] = saved[name]; };
 }
 function clone(value) {
@@ -63,6 +63,6 @@ export function calendarMemoryContext(initial = {}, uid = 'actor') {
 }
 
 export const calendarConnection = (changes = {}) => ({ ownerUid: 'actor', provider: 'google', ownerProfileId: 'actor', person: 'Sebastian', visibility: 'private', mode: 'sync',
-  calendarId: 'primary-id', calendarName: 'Test Calendar', selectionConfirmed: true, status: 'connected', version: 'first-version', leaseId: null, leaseExpiresAt: null, ...changes });
+  historyImportWindow: { from: '1900-01-01T00:00:00.000Z', to: '2201-01-01T00:00:00.000Z', futureFrom: new Date(testNow).toISOString() }, calendarId: 'primary-id', calendarName: 'Test Calendar', selectionConfirmed: true, status: 'connected', version: 'first-version', leaseId: null, leaseExpiresAt: null, ...changes });
 export const googleFixtureEvent = (id = 'event-1', changes = {}) => ({ externalEventId: id, title: 'Wizyta', description: 'Opis', location: 'Kołobrzeg',
   start: testNow + 3600000, end: testNow + 7200000, allDay: false, timeZone: 'Europe/Warsaw', cancelled: false, ...changes });

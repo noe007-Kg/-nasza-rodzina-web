@@ -23,6 +23,11 @@ test('missing configuration remains quiet and does not require Google Auth or VA
   const coordinator = createCalendarActivationSync({ status: async () => ({ ...status(), configured: false }), sync: async () => { syncs++; } });
   assert.equal(await coordinator.activate(), 'current'); assert.equal(syncs, 0);
 });
+test('an account without explicit private-import authorization never autosyncs even an old connected source', async () => {
+  let syncs = 0;
+  const coordinator = createCalendarActivationSync({ status: async () => ({ ...status(), importAllowed: false }), sync: async () => { syncs++; } });
+  assert.equal(await coordinator.activate(), 'current'); assert.equal(syncs, 0);
+});
 test('foreground after more than an hour uses fresh status; time passing alone never polls', async () => {
   let clock = instant, checks = 0, syncs = 0;
   const coordinator = createCalendarActivationSync({ now: () => clock, status: async () => { checks++; return status(connection(10 * 60_000)); }, sync: async () => { syncs++; } });

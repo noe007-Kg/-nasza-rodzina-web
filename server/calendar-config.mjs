@@ -1,5 +1,19 @@
 import { failCalendar } from './calendar-errors.mjs';
 export { calendarError, failCalendar } from './calendar-errors.mjs';
+// Stage one deliberately permits only the explicitly configured account's
+// private import. UID comes from server configuration, never a client name.
+export function googleCalendarImportOwner(env = process.env) {
+  const value = env.CALENDAR_GOOGLE_OWNER_UID;
+  return typeof value === 'string' && value.length > 0 && value.length <= 128 && !/[\x00-\x1f/\\]/.test(value) ? value : null;
+}
+export function assertGoogleCalendarImportOwner(context, env = process.env) {
+  const owner = googleCalendarImportOwner(env);
+  if (!owner) failCalendar('CALENDAR_HISTORY_OWNER_NOT_CONFIGURED', 503, 'Administrator musi wskazać konto właściciela prywatnego importu Google Calendar. Logowanie do aplikacji działa bez tej konfiguracji.');
+  if (context.uid !== owner) failCalendar('CALENDAR_HISTORY_OWNER_FORBIDDEN', 403, 'Prywatny import Google Calendar jest obecnie dostępny tylko dla wyznaczonego właściciela konta.');
+}
+export function rejectGoogleCalendarWrite() {
+  failCalendar('CALENDAR_READ_ONLY_STAGE', 403, 'Ten etap Google Calendar obsługuje tylko odczyt. Nie wysyłamy zmian do Google.');
+}
 export function calendarConfiguration(env = process.env) {
   const { GOOGLE_CALENDAR_CLIENT_ID: clientId, GOOGLE_CALENDAR_CLIENT_SECRET: clientSecret, CALENDAR_SITE_ORIGIN: rawOrigin } = env;
   if (!clientId || !/^[a-zA-Z0-9_.-]+\.apps\.googleusercontent\.com$/.test(clientId)

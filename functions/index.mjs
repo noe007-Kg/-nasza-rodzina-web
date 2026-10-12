@@ -32,6 +32,7 @@ const googleCalendarClientSecret = defineSecret('GOOGLE_CALENDAR_CLIENT_SECRET')
 const googleCalendarClientId = defineString('GOOGLE_CALENDAR_CLIENT_ID', { default: '' });
 const calendarSiteOrigin = defineString('CALENDAR_SITE_ORIGIN', { default: '' });
 const calendarEncryptionKeyId = defineString('CALENDAR_ENCRYPTION_KEY_ID', { default: 'v1' });
+const googleCalendarOwnerUid = defineString('CALENDAR_GOOGLE_OWNER_UID', { default: '' });
 const familyV2WritesEnabled = defineString('FAMILY_V2_WRITES_ENABLED', { default: 'false' });
 const familyStorageBucket = defineString('FIREBASE_STORAGE_BUCKET', { default: '' });
 
@@ -107,7 +108,8 @@ export const googleCalendarHourly = onSchedule({ schedule: GOOGLE_CALENDAR_SCHED
 }, async event => {
   // Non-secret params are injected as runtime environment variables by Firebase.
   // Access values only at runtime; deployment discovery must never read secrets.
-  if (!googleCalendarClientId.value() || !calendarSiteOrigin.value() || !calendarEncryptionKeyId.value()) {
+  if (familyV2WritesEnabled.value() !== 'true' || !googleCalendarOwnerUid.value()
+    || !googleCalendarClientId.value() || !calendarSiteOrigin.value() || !calendarEncryptionKeyId.value()) {
     info('Google Calendar scheduled synchronization', { skipped: 1, codes: { CALENDAR_NOT_CONFIGURED: 1 } });
     return;
   }

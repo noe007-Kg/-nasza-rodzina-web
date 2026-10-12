@@ -75,18 +75,14 @@ test('old OAuth cannot reconnect a connection changed after start or after callb
     }
   } finally { restore(); }
 });
-test('child cannot assign another profile, while parent can assign an active profile without login', async () => {
+test('initial read-only import belongs only to its configured owner and cannot be assigned to child or family', async () => {
   const restore = calendarTestEnvironment();
   try {
     const context = calendarMemoryContext({ 'members/baby': { name: 'Nowy profil', personKey: `member-${'a'.repeat(24)}`, role: 'child', active: true, canLogin: false } });
     const childContext = { ...context, uid: 'child', profile: calendarChild };
-    await assert.rejects(startCalendarOAuth(childContext, selection, { now: testNow }), { code: 'CALENDAR_PROFILE_FORBIDDEN' });
-    await startCalendarOAuth(context, { ownerProfileId: 'baby', visibility: 'private', mode: 'sync' }, { now: testNow });
-    await startCalendarOAuth(childContext, { ownerProfileId: 'family', visibility: 'family', mode: 'sync' }, { now: testNow });
-    for (const bad of [{ active: false }, { archived: true }, { disabled: true }, { personKey: 'invalid' }]) {
-      context.rows.set('members/baby', { name: 'Nikodem', personKey: `member-${'a'.repeat(24)}`, role: 'child', active: true, canLogin: false, ...bad });
-      await assert.rejects(startCalendarOAuth(context, { ownerProfileId: 'baby', visibility: 'private', mode: 'sync' }, { now: testNow + 10001 }), error => ['CALENDAR_PROFILE_UNAVAILABLE'].includes(error.code));
-    }
+    await assert.rejects(startCalendarOAuth(childContext, selection, { now: testNow }), { code: 'CALENDAR_HISTORY_OWNER_FORBIDDEN' });
+    for (const ownerProfileId of ['child', 'baby', 'family']) await assert.rejects(startCalendarOAuth(context, { ownerProfileId, visibility: ownerProfileId === 'family' ? 'family' : 'private', mode: 'sync' }, { now: testNow }), { code: 'CALENDAR_HISTORY_PRIVATE_REQUIRED' });
+    assert.equal(context.calls.length, 0);
   } finally { restore(); }
 });
 test('status is UID scoped, strips encrypted tokens and works with no OAuth configuration', async () => {
@@ -180,7 +176,7 @@ test('idempotent imports preserve private ownership even when assigned to a diff
     const context = connectedContext({ ownerProfileId: 'child', person: 'Nikodem' });
     const first = await syncGoogleCalendar(context, { connectionId: calendarId }, { clock: fixedClock, clientFactory: clientFactory([googleFixtureEvent()]) });
     assert.equal(first.imported, 1); const id = googleEventDocumentId('actor', calendarId, 'primary-id', 'event-1'), event = context.rows.get(`privateCalendarEvents/${id}`);
-    assert.equal(event.ownerUid, 'actor'); assert.equal(event.person, 'Nikodem'); assert.equal(event.private, true); assert.equal(context.rows.has(`calendarEvents/${id}`), false);
+    assert.equal(event.ownerUid, 'actor'); assert.equal(event.person, 'Sebastian'); assert.equal(event.private, true); assert.equal(context.rows.has(`calendarEvents/${id}`), false);
     const second = await syncGoogleCalendar(context, { connectionId: calendarId }, { clock: () => testNow + 60001, clientFactory: clientFactory([googleFixtureEvent()]) });
     assert.equal(second.imported, 0); assert.equal(second.changed, 0); assert.equal(second.unchanged, 1);
   } finally { restore(); }
@@ -256,7 +252,7 @@ test('partial import locks source identity without advancing cursor or last succ
     assert.equal(context.rows.get(refPath).lastSuccessfulSyncAt, undefined);
     assert.equal(decryptCalendarSecrets(context.rows.get(refPath).envelope, { uid: 'actor', id: calendarId, purpose: 'connection' }).syncToken, 'old-cursor');
     context.controls.beforeGet = null;
-    await assert.rejects(configureGoogleCalendar(context, { connectionId: calendarId, calendarId: 'primary-id', ownerProfileId: 'child', visibility: 'private', mode: 'sync' }, { clock: () => testNow + 60001, clientFactory: clientFactory([]) }), { code: 'CALENDAR_SOURCE_LOCKED' });
+    await assert.rejects(configureGoogleCalendar(context, { connectionId: calendarId, calendarId: 'primary-id', ownerProfileId: 'child', visibility: 'private', mode: 'sync' }, { clock: () => testNow + 60001, clientFactory: clientFactory([]) }), { code: 'CALENDAR_HISTORY_PRIVATE_REQUIRED' });
   } finally { restore(); }
 });
 test('complete full snapshot cancels a missing standalone once without altering kept records or visibility', async () => {

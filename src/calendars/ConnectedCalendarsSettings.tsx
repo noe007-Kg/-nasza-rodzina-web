@@ -66,6 +66,7 @@ export function ConnectedCalendarsSettings({ user, member, notice, children }: {
   }
   async function start(event?: FormEvent, connection?: CalendarConnection) {
     event?.preventDefault();
+    if (status?.importAllowed !== true) { setError('Prywatny import Google Calendar wymaga wskazania uprawnionego właściciela przez administratora.'); return; }
     const selection = connection ? { ownerProfileId: connection.ownerProfileId, visibility: connection.visibility, mode: connection.mode } : choices;
     if (!selection.visibility || !selection.ownerProfileId) { setError('Wybierz profil i widoczność wydarzeń.'); return; }
     await perform(async signal => {
@@ -112,6 +113,8 @@ export function ConnectedCalendarsSettings({ user, member, notice, children }: {
     {loading && <p role="status" className="calendar-connection-help">Sprawdzam połączone kalendarze…</p>}
     {!loading && <SecondaryButton disabled={busy} onClick={() => void perform(async signal => { await refresh(signal); })}>Sprawdź stan połączeń</SecondaryButton>}
     {status?.configured === false && <p className="calendar-connection-help" data-testid="calendar-not-configured">Google Calendar wymaga konfiguracji serwera. Pozostałe funkcje aplikacji oraz import i eksport .ics działają bez tej konfiguracji.</p>}
+    {status && !status.importOwnerConfigured && <p className="calendar-connection-help">Administrator musi wskazać właściciela prywatnego importu Google Calendar. Konto Google używane do logowania pozostaje niezależne od dostępu do kalendarza.</p>}
+    {status?.importOwnerConfigured && !status.importAllowed && <p className="calendar-connection-help">Import Google Calendar jest obecnie dostępny tylko dla wyznaczonego właściciela. Jego prywatna historia nie jest udostępniana innym członkom rodziny.</p>}
     {status && status.connections.length > 0 && <div className="calendar-connection-list">{status.connections.map(connection => <article key={connection.id} className="calendar-connection" data-testid="calendar-connection" data-connection-id={connection.id}>
       <header><div><h3>{connection.calendarName || 'Google Calendar'}</h3><p>{calendarOwnerName(connection, directory)} · {connection.visibility === 'private' ? 'Prywatny — tylko Ty' : 'Rodzinny'}</p></div><StatusPill tone={connection.status === 'connected' || connection.status === 'imported' ? 'success' : 'warning'}>{connection.selectionConfirmed || connection.status !== 'connected' ? statusLabels[connection.status] : 'Wybierz kalendarz'}</StatusPill></header>
       <p className="calendar-connection-help">{connection.mode === 'sync' ? 'Synchronizacja w jedną stronę' : 'Import jednorazowy'} · Ostatnie pobranie: {syncDate(connection.lastSuccessfulSyncAt)}</p>
@@ -122,10 +125,10 @@ export function ConnectedCalendarsSettings({ user, member, notice, children }: {
         {status.configured && (connection.status === 'needs-reconnect' || connection.status === 'disconnected') && <SecondaryButton disabled={busy} onClick={() => void start(undefined, connection)}>Połącz ponownie</SecondaryButton>}
         {connection.status !== 'disconnected' && <SecondaryButton disabled={busy} onClick={() => { setRemoveEvents(null); setDisconnect(connection); }}>Rozłącz</SecondaryButton>}
       </div>
-      {connection.status === 'connected' && connection.selectionConfirmed && <CalendarHistoryControls user={user} connection={connection} />}
+      {status.importAllowed && connection.status === 'connected' && connection.selectionConfirmed && <CalendarHistoryControls user={user} connection={connection} />}
       {connection.mode === 'sync' && connection.status === 'connected' && <CalendarGoogleWriteSettings user={user} connection={connection} />}
     </article>)}</div>}
-    {status?.configured && <form className="calendar-source-form" onSubmit={event => void start(event)}>
+    {status?.configured && status.importAllowed && <form className="calendar-source-form" onSubmit={event => void start(event)}>
       <h3>Dodaj Google Calendar</h3><p className="calendar-connection-help">Zgoda na odczyt kalendarza jest niezależna od logowania Google do Naszej Rodziny. Nie wysyłamy zmian do Google.</p>
       <CalendarChoices value={choices} onChange={setChoices} profiles={profiles} prefix={`${prefix}-new`} disabled={busy} />
       <PrimaryButton type="submit" disabled={busy || !choices.visibility || !choices.ownerProfileId}>Połącz Google Calendar</PrimaryButton>
@@ -137,7 +140,7 @@ export function ConnectedCalendarsSettings({ user, member, notice, children }: {
         <CalendarChoices value={setup.choices} onChange={value => setSetup({ ...setup, choices: value })} profiles={profiles} prefix={`${prefix}-configure`} disabled={busy} locked={!!setup.connection.lastSuccessfulSyncAt} />
         <p className="calendar-connection-help">Domyślna widoczność dotyczy nowych wydarzeń. Kolejna synchronizacja zachowa indywidualną widoczność wcześniej pobranych wydarzeń.</p>
         {error && <p className="account-error" role="alert">{error}</p>}
-        <div className="calendar-connection-actions"><SecondaryButton disabled={busy} onClick={() => setSetup(null)}>Anuluj</SecondaryButton><PrimaryButton type="submit" disabled={busy || !setup.choices.visibility}>{busy ? 'Pobieram…' : 'Potwierdź i pobierz wydarzenia'}</PrimaryButton></div>
+        <div className="calendar-connection-actions"><SecondaryButton disabled={busy} onClick={() => setSetup(null)}>Anuluj</SecondaryButton><PrimaryButton type="submit" disabled={busy || !setup.choices.visibility}>{busy ? 'Zapisuję…' : 'Zapisz wybór źródła'}</PrimaryButton></div>
       </form>
     </Modal>}
     {disconnect && <Modal title="Rozłączyć kalendarz?" onClose={() => { if (!busy) setDisconnect(null); }}>

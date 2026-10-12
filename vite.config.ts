@@ -106,8 +106,27 @@ function localApiNotice(): Plugin {
   };
 }
 
+/** Publish only this credential-free arithmetic module through a virtual ID.
+ * The existing /server middleware stays closed; no server directory, OAuth
+ * helper or filesystem path is exposed to the browser to share recurrence code. */
+function publicGoogleRecurrence(): Plugin {
+  const id = '\0family-public-google-recurrence';
+  const sourceFile = resolve('server/google-recurrence.mjs');
+  const frontendImporter = resolve('src/calendars/google-occurrences.ts');
+  return {
+    name: 'family-public-google-recurrence',
+    enforce: 'pre',
+    resolveId(source, importer) {
+      if (source === id) return id;
+      if (source === '../../server/google-recurrence.mjs' && importer?.split('?')[0] === frontendImporter) return id;
+      return null;
+    },
+    load(moduleId) { return moduleId === id ? readFileSync(sourceFile, 'utf8') : null; },
+  };
+}
+
 export default defineConfig({
   base: '/',
   define: { 'import.meta.env.VITE_V2_PREVIEW_READ_ONLY': JSON.stringify(process.env.VERCEL_ENV === 'preview' ? 'true' : 'false') },
-  plugins: [react(), localApiNotice(), publicShellWorker()],
+  plugins: [publicGoogleRecurrence(), react(), localApiNotice(), publicShellWorker()],
 });

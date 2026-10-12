@@ -29,7 +29,7 @@ service cloud.firestore {
         && (!data.keys().hasAny(['important']) || data.important is bool)
         && !data.keys().hasAny(['provider', 'readOnly', 'cancelled', 'sourceConnectionId', 'sourceOwnerUid',
           'externalCalendarId', 'externalEventId', 'externalSeriesId', 'ownerProfileId', 'visibilityOverride',
-          'sourceStartDate', 'sourceEndDateExclusive']);
+          'sourceStartDate', 'sourceEndDateExclusive', 'sourceImportWindow']);
     }
     function validHealth(data) {
       return title(data.title) && person(data.person) && data.privateToParents is bool

@@ -51,6 +51,15 @@ test('missing calendar configuration is a quiet no-op with no database/provider 
   const result = await runScheduledGoogleCalendarSync(context, event(testNow), { configured: () => false, clock: () => testNow, sync: async () => assert.fail('No provider call') });
   assert.equal(result.skipped, 1); assert.equal(result.codes.CALENDAR_NOT_CONFIGURED, 1); assert.equal(queried, false);
 });
+test('only the configured private import owner is scheduled; another family account never reaches Auth or provider', async () => {
+  const restore = calendarTestEnvironment();
+  try {
+    const context = managedContext({ [sourcePath(calendarId)]: calendarConnection({ ownerUid: 'child', ownerProfileId: 'child', envelope: {} }) });
+    const result = await run(context, testNow, { sync: async () => assert.fail('No foreign source read') });
+    assert.equal(result.skipped, 1); assert.equal(result.codes.CALENDAR_SCHEDULE_OWNER_UNAVAILABLE, 1);
+    assert.equal(context.authReads.length, 0); assert.equal(context.calls.length, 0);
+  } finally { restore(); }
+});
 test('scheduler reuses real sync and stable history IDs; two jittered distinct slots both execute without duplicate events', async () => {
   const restore = calendarTestEnvironment();
   try {

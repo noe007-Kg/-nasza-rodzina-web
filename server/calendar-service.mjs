@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Timestamp } from 'firebase-admin/firestore';
-import { calendarConfiguration, calendarIdentifier, calendarSelection, expectCalendarFields, failCalendar } from './calendar-config.mjs';
+import { assertGoogleCalendarImportOwner, calendarConfiguration, calendarIdentifier, calendarSelection, expectCalendarFields, failCalendar, googleCalendarImportOwner, rejectGoogleCalendarWrite } from './calendar-config.mjs';
+import { googleHistoryEventInRange, googleHistoryRange, sameGoogleHistoryRange } from './calendar-history-range.mjs';
 import { calendarEncryptionConfigured, decryptCalendarSecrets, encryptCalendarSecrets } from './calendar-secrets.mjs';
 import { assertFamilyV2WriteAllowed } from './family-v2-policy.mjs';
 import { exchangeGoogleCode, googleAuthorizationUrl, googleCalendarClient, GOOGLE_CALENDAR_WRITE_SCOPE, normalizeGoogleHistoryEvent } from './calendar-google.mjs';
@@ -37,8 +38,8 @@ const iso = value => Number.isFinite(timestampMillis(value)) ? new Date(timestam
 export const publicCalendarConnection = (id, data) => ({ id, provider: 'google', calendarId: data.calendarId || '', calendarName: data.calendarName || 'Google Calendar',
   ownerProfileId: data.ownerProfileId, person: data.person, visibility: data.visibility, mode: data.mode, status: data.status,
   selectionConfirmed: data.selectionConfirmed === true, lastSuccessfulSyncAt: iso(data.lastSuccessfulSyncAt), lastAttemptAt: iso(data.lastAttemptAt), lastErrorCode: data.lastErrorCode || null,
-  writeAuthorized: data.writeAuthorized === true, twoWayEnabled: data.twoWayEnabled === true, historyComplete: data.historyComplete === true, historyRequired: data.historyImportVersion === 2 && data.historyComplete !== true,
-  historyProgress: data.historyProgress || null });
+  writeAuthorized: false, twoWayEnabled: false, historyComplete: data.historyComplete === true, historyRequired: data.historyComplete !== true || !data.historyImportWindow,
+  historyRange: data.historyRange || null, historyProgress: data.historyProgress || null });
 
 export function assertCalendarV2WritesAllowed(context, env = process.env) {
   if (env.VERCEL_ENV === 'preview') failCalendar('CALENDAR_PREVIEW_READ_ONLY', 403, 'Wersja Preview nie zapisuje zmian integracji w produkcyjnych danych. Użyj oddzielnego projektu testowego.');
@@ -48,8 +49,11 @@ export function assertCalendarV2WritesAllowed(context, env = process.env) {
 export async function startCalendarOAuth(context, body, { now = Date.now() } = {}) {
   expectCalendarFields(body, ['ownerProfileId', 'visibility', 'mode', 'connectionId', 'write']);
   if (body.write !== undefined && typeof body.write !== 'boolean') failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Nieprawidłowa zgoda na zapis.');
-  if (body.write) assertCalendarV2WritesAllowed(context);
+  if (body.write) rejectGoogleCalendarWrite();
+  assertGoogleCalendarImportOwner(context);
+  assertCalendarV2WritesAllowed(context);
   const selection = calendarSelection(body), config = calendarConfiguration();
+  if (!body.connectionId && (selection.ownerProfileId !== context.uid || selection.visibility !== 'private')) failCalendar('CALENDAR_HISTORY_PRIVATE_REQUIRED', 403, 'Nowe połączenie Google Calendar musi być przypisane do Twojego prywatnego kalendarza.');
   if (Object.hasOwn(body, 'connectionId')) connectionRef(context, body.connectionId);
   if (!calendarEncryptionConfigured()) failCalendar('CALENDAR_NOT_CONFIGURED', 503, 'Administrator musi skonfigurować osobny klucz kalendarzy.');
   const id = opaque(), nonce = opaque(), verifier = opaque(), ref = stateRef(context, id), rateRef = context.db.collection('_calendarOAuthRates').doc(digest(context.uid));
@@ -82,6 +86,8 @@ export async function completeCalendarOAuth(services, query, cookie, { clock = D
   const state = await services.db.runTransaction(async transaction => {
     const snapshot = await transaction.get(ref), data = snapshot.data(); validState(data, query.state, cookie, clock(), 'started');
     const context = { ...services, uid: data.ownerUid };
+    assertGoogleCalendarImportOwner(context); assertCalendarV2WritesAllowed(context);
+    if (data.writeRequested) rejectGoogleCalendarWrite();
     const actorSnapshot = await transaction.get(context.db.collection('members').doc(context.uid));
     await assertCalendarSelection(transaction, context, actorSnapshot.data(), data);
     if (data.connectionId) {
@@ -99,6 +105,8 @@ export async function completeCalendarOAuth(services, query, cookie, { clock = D
     const snapshot = await transaction.get(ref), data = snapshot.data(); validState(data, query.state, cookie, clock(), 'exchanging');
     if (data.attempt !== attempt) failCalendar('CALENDAR_OAUTH_INVALID', 409, 'To potwierdzenie zostało już użyte.');
     const context = { ...services, uid: data.ownerUid }, actor = (await transaction.get(context.db.collection('members').doc(data.ownerUid))).data();
+    assertGoogleCalendarImportOwner(context); assertCalendarV2WritesAllowed(context);
+    if (data.writeRequested) rejectGoogleCalendarWrite();
     await assertCalendarSelection(transaction, context, actor, data);
     if (data.connectionId) {
       const existing = (await transaction.get(connectionRef(context, data.connectionId))).data(); assertOwnedConnection(context, existing);
@@ -112,11 +120,13 @@ export async function completeCalendarOAuth(services, query, cookie, { clock = D
 }
 
 export async function finalizeCalendarOAuth(context, body, cookie, { clock = Date.now, now = clock() } = {}) {
+  assertCalendarV2WritesAllowed(context);
   expectCalendarFields(body, ['completionId']); calendarConfiguration();
   const ref = stateRef(context, body.completionId), newId = randomUUID();
   const id = await context.db.runTransaction(async transaction => {
     const snapshot = await transaction.get(ref), state = snapshot.data(); validState(state, body.completionId, cookie, clock(), 'authorized');
     if (state.ownerUid !== context.uid) failCalendar('CALENDAR_OAUTH_FORBIDDEN', 403, 'Dokończ połączenie na tym samym koncie Naszej Rodziny.');
+    assertGoogleCalendarImportOwner(context);
     const actorSnapshot = await transaction.get(context.db.collection('members').doc(context.uid));
     const person = await assertCalendarSelection(transaction, context, actorSnapshot.data(), state);
     const id = state.connectionId || newId, connection = connectionRef(context, id), oldSnapshot = await transaction.get(connection), old = oldSnapshot.data();
@@ -129,8 +139,7 @@ export async function finalizeCalendarOAuth(context, body, cookie, { clock = Dat
     if (old) { assertOwnedConnection(context, old); assertCalendarNotRemoving(old, clock()); if (old.ownerProfileId !== state.ownerProfileId || old.mode !== state.mode) failCalendar('CALENDAR_SOURCE_LOCKED', 409, 'Przypisanie źródła zmieniło się. Zacznij ponownie.'); }
     const { tokens } = decryptCalendarSecrets(state.envelope, { uid: context.uid, id: body.completionId, purpose: 'oauth' });
     if (state.writeRequested) {
-      assertCalendarV2WritesAllowed(context);
-      if (!tokens.scopes?.includes(GOOGLE_CALENDAR_WRITE_SCOPE)) failCalendar('CALENDAR_WRITE_PERMISSION_REQUIRED', 403, 'Google nie udzielił zgody na zapis wydarzeń. Dotychczasowe połączenie pozostaje bez zmian.');
+      rejectGoogleCalendarWrite();
     }
     validState(state, body.completionId, cookie, clock(), 'authorized');
     transaction.set(connection, { ...(old || {}), ownerUid: context.uid, provider: 'google', ownerProfileId: state.ownerProfileId, person, visibility: state.visibility, mode: state.mode,
@@ -138,7 +147,7 @@ export async function finalizeCalendarOAuth(context, body, cookie, { clock = Dat
       status: 'connected', version: randomUUID(), leaseId: null, leaseExpiresAt: null, lastErrorCode: null,
       removingEvents: false, removalExpiresAt: null,
       envelope: encryptCalendarSecrets({ tokens, syncToken: null }, { uid: context.uid, id, purpose: 'connection' }),
-      writeAuthorized: state.writeRequested === true && tokens.scopes?.includes(GOOGLE_CALENDAR_WRITE_SCOPE) === true, twoWayEnabled: false, historyImportVersion: old?.historyImportVersion || 2,
+      writeAuthorized: false, twoWayEnabled: false, historyImportVersion: old?.historyImportVersion || 2,
       recurringIds: old?.recurringIds || [], createdAt: old?.createdAt || Timestamp.fromMillis(now), updatedAt: Timestamp.fromMillis(now) });
     transaction.delete(ref); return id;
   });
@@ -150,10 +159,15 @@ export async function calendarStatus(context, body) {
   const actorSnapshot = await context.db.collection('members').doc(context.uid).get(); assertCalendarActor(context, actorSnapshot.data());
   const snapshot = await context.db.collection('_calendarConnections').where('ownerUid', '==', context.uid).limit(31).get();
   if (snapshot.docs.length > 30) failCalendar('CALENDAR_CONNECTION_LIMIT', 409, 'Lista źródeł wymaga uporządkowania.');
-  return { configured: configured(), connections: snapshot.docs.map(row => publicCalendarConnection(row.id, row.data())) };
+  const importOwner = googleCalendarImportOwner();
+  return { configured: configured(), importOwnerConfigured: !!importOwner, importAllowed: !!importOwner && context.uid === importOwner,
+    readOnly: true, connections: snapshot.docs.map(row => publicCalendarConnection(row.id, row.data())) };
 }
 
 async function withClient(context, body, operation, { clock = Date.now, clientFactory = googleCalendarClient, syncing = false } = {}) {
+  // Even a read of provider data acquires a lease and may rotate encrypted
+  // credentials. Preview must therefore use the same server write boundary.
+  assertCalendarV2WritesAllowed(context);
   const config = calendarConfiguration(), started = clock();
   const acquired = await acquireCalendarLease(context, body.connectionId, { now: started, syncing });
   const { data, lease, ref } = acquired;
@@ -181,7 +195,10 @@ export async function listGoogleCalendars(context, body, options) {
 }
 export async function configureGoogleCalendar(context, body, options) {
   expectCalendarFields(body, ['connectionId', 'calendarId', 'ownerProfileId', 'visibility', 'mode']);
+  assertGoogleCalendarImportOwner(context);
+  assertCalendarV2WritesAllowed(context);
   const selection = calendarSelection(body);
+  if (selection.ownerProfileId !== context.uid || selection.visibility !== 'private') failCalendar('CALENDAR_HISTORY_PRIVATE_REQUIRED', 403, 'Wybrane źródło Google Calendar musi być przypisane do Twojego prywatnego kalendarza.');
   if (!calendarIdentifier(body.calendarId)) failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Wybierz istniejący kalendarz Google.');
   return withClient(context, body, async (client, data, secrets, lease, ref, clock) => {
     const calendars = await client.calendars(), calendar = calendars.find(row => row.id === body.calendarId || body.calendarId === 'primary' && row.primary);
@@ -206,8 +223,11 @@ export async function configureGoogleCalendar(context, body, options) {
 }
 export async function syncGoogleCalendar(context, body, options) {
   expectCalendarFields(body, ['connectionId']);
+  assertGoogleCalendarImportOwner(context);
   const current = (await connectionRef(context, body.connectionId).get()).data();
   if (current?.historyImportVersion === 2) return syncGoogleHistory(context, body, options);
+  assertCalendarV2WritesAllowed(context);
+  if (current && !current.historyImportWindow) failCalendar('CALENDAR_HISTORY_RANGE_REQUIRED', 409, 'Najpierw wybierz i zatwierdź zakres prywatnego importu historii. Dotychczasowe wydarzenia pozostają zachowane.');
   return withClient(context, body, async (client, data, secrets, lease, ref, clock) => {
     const changes = await client.changes(data.calendarId, { syncToken: secrets.syncToken, recurringIds: data.recurringIds || [], timeZone: data.timeZone });
     // Preserve a refreshed token before importing; the old cursor remains until every upsert succeeds.
@@ -230,7 +250,8 @@ export async function syncGoogleCalendar(context, body, options) {
         }
       }
     }
-    const result = await upsertGoogleEvents(context, data, lease, records, { now: clock(), clock });
+    const approved = await filterGoogleHistoryEvents(context, data, records, data.historyImportWindow, 'sync');
+    const result = await upsertGoogleEvents(context, data, lease, approved, { now: clock(), clock });
     const now = clock(), envelope = data.mode === 'import' ? null : encryptCalendarSecrets({ tokens: client.tokens(), syncToken: changes.syncToken }, { uid: context.uid, id: data.id, purpose: 'connection' });
     await updateCalendarLease(context, ref, lease, { envelope, recurringIds: changes.recurringIds, timeZone: changes.timeZone, hasEvents: data.hasEvents || result.imported > 0,
       status: data.mode === 'import' ? 'imported' : 'connected', lastSuccessfulSyncAt: Timestamp.fromMillis(now), lastErrorCode: null, leaseId: null, leaseExpiresAt: null, updatedAt: Timestamp.fromMillis(now) }, now, clock);
@@ -239,6 +260,7 @@ export async function syncGoogleCalendar(context, body, options) {
 }
 
 export async function changeGoogleEventVisibility(context, body, { clock = Date.now, now = clock() } = {}) {
+  assertCalendarV2WritesAllowed(context);
   expectCalendarFields(body, ['connectionId', 'eventId', 'visibility']);
   if (!['private', 'family'].includes(body.visibility) || typeof body.eventId !== 'string' || !/^google-[a-f0-9]{64}$/.test(body.eventId)) failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Wybierz poprawną widoczność wydarzenia.');
   const ref = connectionRef(context, body.connectionId), sharedRef = context.db.collection('calendarEvents').doc(body.eventId), privateRef = context.db.collection('privateCalendarEvents').doc(body.eventId);
@@ -259,6 +281,7 @@ export async function changeGoogleEventVisibility(context, body, { clock = Date.
 }
 
 export async function disconnectGoogleCalendar(context, body, { clock = Date.now } = {}) {
+  assertCalendarV2WritesAllowed(context);
   expectCalendarFields(body, ['connectionId', 'removeEvents']);
   if (typeof body.removeEvents !== 'boolean') failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Wybierz, czy pozostawić wcześniej pobrane wydarzenia.');
   const ref = connectionRef(context, body.connectionId), version = randomUUID();
@@ -313,15 +336,21 @@ export async function disconnectGoogleCalendar(context, body, { clock = Date.now
 /** Bounded, resumable history. Cursors stay inside the existing AES-GCM envelope,
  * never in the browser. Closing the UI cannot duplicate already committed pages. */
 export async function googleHistoryStep(context, body, options) {
-  expectCalendarFields(body, ['connectionId', 'operation', 'restart']);
+  expectCalendarFields(body, ['connectionId', 'operation', 'restart', 'from', 'to']);
+  assertGoogleCalendarImportOwner(context);
   assertCalendarV2WritesAllowed(context);
   if (!['preview', 'import'].includes(body.operation) || body.restart !== undefined && typeof body.restart !== 'boolean') failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Wybierz sprawdzenie historii albo import.');
+  const range = googleHistoryRange(body);
   return withClient(context, body, async (client, data, secrets, lease, ref, clock) => {
     let job = secrets.historyJob;
+    if (data.historyComplete === true && data.historyImportWindow && !sameGoogleHistoryRange(data.historyImportWindow, range)) failCalendar('CALENDAR_SOURCE_LOCKED', 409, 'Zaakceptowany zakres tego źródła jest zachowany. Nie zawężamy wcześniej zaimportowanej historii.');
     const continuing = job?.phase === body.operation && job.complete !== true && !body.restart;
+    if (continuing && !sameGoogleHistoryRange(job.range, range)) failCalendar('CALENDAR_HISTORY_CONFIRM_REQUIRED', 409, 'Zmienił się zakres historii. Najpierw ponownie sprawdź liczbę wydarzeń.');
     if (!continuing) {
-      if (body.operation === 'import' && (data.historyProgress?.phase !== 'preview' || data.historyProgress.complete !== true) && job?.phase !== 'import') failCalendar('CALENDAR_HISTORY_CONFIRM_REQUIRED', 409, 'Najpierw sprawdź liczbę wydarzeń, a następnie zatwierdź import.');
-      job = { phase: body.operation, pageToken: null, syncToken: null, processed: 0, imported: 0, changed: 0, cancelled: 0, unchanged: 0, total: body.operation === 'import' ? data.historyProgress?.processed || null : null, complete: false };
+      if (body.operation === 'import' && (job?.phase !== 'preview' || job.complete !== true || !sameGoogleHistoryRange(job.range, range))) failCalendar('CALENDAR_HISTORY_CONFIRM_REQUIRED', 409, 'Najpierw sprawdź liczbę wydarzeń w tym zakresie, a następnie zatwierdź prywatny import.');
+      const approvedWindow = body.operation === 'import' ? { ...range, ...(data.mode === 'sync' ? { futureFrom: data.historyImportWindow?.futureFrom || new Date(clock()).toISOString() } : {}) } : range;
+      job = { phase: body.operation, range: approvedWindow, dateRange: { from: body.from, to: body.to }, pageToken: null, syncToken: null,
+        processed: 0, imported: 0, changed: 0, cancelled: 0, unchanged: 0, total: body.operation === 'import' ? data.historyProgress?.processed ?? null : null, complete: false };
     }
     return commitHistoryPage(context, client, data, secrets, lease, ref, clock, job);
   }, options);
@@ -329,36 +358,58 @@ export async function googleHistoryStep(context, body, options) {
 
 async function commitHistoryPage(context, client, data, secrets, lease, ref, clock, job) {
   const page = await client.historyPage(data.calendarId, { pageToken: job.pageToken, syncToken: job.syncToken, timeZone: data.timeZone });
-  const events = [];
+  const sourceEvents = [];
   for (const event of page.events) {
     if (event.exportReference && /^[a-f0-9]{64}$/.test(event.exportReference)) {
       const exported = (await context.db.collection('_calendarExports').doc(event.exportReference).get()).data();
       if (exported?.ownerUid === context.uid && exported.sourceConnectionId === data.id && exported.externalEventId === event.externalEventId) continue;
     }
-    events.push(event);
+    sourceEvents.push(event);
   }
+  const events = await filterGoogleHistoryEvents(context, data, sourceEvents, job.range, job.phase);
   const totals = job.phase === 'preview' ? { imported: 0, changed: 0, cancelled: 0, unchanged: 0 } : await upsertGoogleEvents(context, data, lease, events, { clock, now: clock() });
   const complete = !page.nextPageToken;
-  const next = { ...job, pageToken: page.nextPageToken, processed: job.processed + page.events.filter(event => !event.cancelled).length, complete,
+  const next = { ...job, pageToken: page.nextPageToken, processed: job.processed + events.filter(event => !event.cancelled).length, complete,
     ...Object.fromEntries(['imported', 'changed', 'cancelled', 'unchanged'].map(key => [key, (job[key] || 0) + totals[key]])) };
-  const progress = { phase: next.phase, processed: next.processed, total: next.total || null, complete };
+  const progress = { phase: next.phase, processed: next.processed, total: next.total ?? null, complete };
   const syncToken = complete && job.phase !== 'preview' ? page.syncToken : secrets.syncToken;
   const envelope = complete && data.mode === 'import' && job.phase === 'import' ? null : encryptCalendarSecrets({ ...secrets, tokens: client.tokens(), syncToken: syncToken || null, historyJob: next }, { uid: context.uid, id: data.id, purpose: 'connection' });
   await updateCalendarLease(context, ref, lease, { envelope, historyProgress: progress, historyImportVersion: 2, timeZone: page.timeZone || data.timeZone || null,
+    ...(job.phase === 'import' ? { historyRange: job.dateRange, historyImportWindow: job.range } : {}),
     ...(job.phase !== 'preview' ? { hasEvents: data.hasEvents || totals.imported > 0 } : {}),
     ...(complete && job.phase !== 'preview' ? { historyComplete: true, lastSuccessfulSyncAt: Timestamp.fromMillis(clock()), status: data.mode === 'import' ? 'imported' : 'connected' } : {}),
     lastErrorCode: null, updatedAt: Timestamp.fromMillis(clock()) }, clock(), clock);
   return { ...totals, historyProgress: progress, complete, lastSuccessfulSyncAt: complete && job.phase !== 'preview' ? new Date(clock()).toISOString() : null };
 }
 
+async function filterGoogleHistoryEvents(context, data, sourceEvents, window, phase) {
+  const events = [];
+  for (const event of sourceEvents) {
+    const eligible = googleHistoryEventInRange(event, window, { includeFuture: phase === 'sync' });
+    const id = googleEventDocumentId(context.uid, data.id, data.calendarId, event.externalEventId);
+    let known = false;
+    // Incremental updates/cancellations of a known record remain authoritative
+    // even when a provider moves it outside the initial historical period.
+    // Initial scans never look up every unrelated old event in Firestore.
+    if (!eligible && phase === 'sync') {
+      const snapshots = await Promise.all(['privateCalendarEvents', 'calendarEvents'].map(name => context.db.collection(name).doc(id).get()));
+      known = snapshots.some(snapshot => snapshot.exists && snapshot.data().sourceOwnerUid === context.uid && snapshot.data().sourceConnectionId === data.id);
+    }
+    if (eligible || known) events.push({ ...event, ...(event.sourceRecurrence?.length ? { sourceImportWindow: window } : {}) });
+  }
+  return events;
+}
+
 export async function syncGoogleHistory(context, body, options) {
+  assertGoogleCalendarImportOwner(context);
   assertCalendarV2WritesAllowed(context);
   const current = (await connectionRef(context, body.connectionId).get()).data();
   const continuation = current?.historyProgress?.complete === false && ['import', 'sync'].includes(current.historyProgress.phase);
   return withClient({ ...context, calendarHistoryContinuation: continuation }, body, async (client, data, secrets, lease, ref, clock) => {
     if (data.historyComplete !== true && secrets.historyJob?.phase !== 'import') failCalendar('CALENDAR_HISTORY_CONFIRM_REQUIRED', 409, 'Najpierw sprawdź i zatwierdź import historii.');
+    if (!data.historyImportWindow && !secrets.historyJob?.range) failCalendar('CALENDAR_HISTORY_RANGE_REQUIRED', 409, 'Zatwierdź zakres historii przed automatycznym odświeżaniem. Dotychczasowe wydarzenia pozostają zachowane.');
     const job = secrets.historyJob?.complete !== true && ['import', 'sync'].includes(secrets.historyJob?.phase) ? secrets.historyJob : {
-      phase: 'sync', pageToken: null, syncToken: secrets.syncToken || null, processed: 0, imported: 0, changed: 0, cancelled: 0, unchanged: 0, total: null, complete: false,
+      phase: 'sync', range: data.historyImportWindow, pageToken: null, syncToken: secrets.syncToken || null, processed: 0, imported: 0, changed: 0, cancelled: 0, unchanged: 0, total: null, complete: false,
     };
     let result;
     try { result = await commitHistoryPage(context, client, data, secrets, lease, ref, clock, job); }
@@ -369,7 +420,7 @@ export async function syncGoogleHistory(context, body, options) {
       result = await commitHistoryPage(context, client, data, secrets, lease, ref, clock, { ...job, pageToken: null, syncToken: null,
         processed: 0, imported: 0, changed: 0, cancelled: 0, unchanged: 0, complete: false });
     }
-    if (result.complete && data.twoWayEnabled === true) await synchronizeGoogleExports(context, data, client, clock);
+    // READ-ONLY stage: an old twoWayEnabled flag can never initiate a provider write.
     return result;
   }, { ...options, syncing: true });
 }
@@ -385,6 +436,7 @@ export async function changeGoogleVisibilityBatch(context, body, options) {
 }
 
 export async function configureGoogleTwoWay(context, body, options) {
+  rejectGoogleCalendarWrite();
   expectCalendarFields(body, ['connectionId', 'enabled']); assertCalendarV2WritesAllowed(context);
   if (typeof body.enabled !== 'boolean') failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Potwierdź ustawienie synchronizacji.');
   return withClient(context, body, async (client, data, secrets, lease, ref, clock) => {
@@ -437,6 +489,7 @@ const assertGoogleWriting = (data, client) => {
 
 /** Conscious export is separate from changing visibility in our family calendar. */
 export async function exportLocalEventToGoogle(context, body, options) {
+  rejectGoogleCalendarWrite();
   expectCalendarFields(body, ['connectionId', 'eventId']); assertCalendarV2WritesAllowed(context);
   return withClient(context, body, async (client, data, secrets, lease, ref, clock) => {
     assertGoogleWriting(data, client);
@@ -474,6 +527,7 @@ export async function exportLocalEventToGoogle(context, body, options) {
 }
 
 export async function updateImportedGoogleEvent(context, body, options) {
+  rejectGoogleCalendarWrite();
   expectCalendarFields(body, ['connectionId', 'eventId', 'patch']); assertCalendarV2WritesAllowed(context);
   expectCalendarFields(body.patch, ['title', 'description', 'location', 'date', 'endDate', 'allDay']);
   if (![body.patch.title, body.patch.description, body.patch.location].every(value => typeof value === 'string') || typeof body.patch.allDay !== 'boolean' || !Number.isFinite(Date.parse(body.patch.date)) || !Number.isFinite(Date.parse(body.patch.endDate))) failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Sprawdź nazwę i termin wydarzenia.');

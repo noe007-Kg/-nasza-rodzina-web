@@ -5,7 +5,7 @@ import type { CalendarConnection } from '../src/calendars/model';
 const completionId = 'A'.repeat(43);
 const calendarId = 'google-secondary@example.test';
 function source(overrides: Partial<CalendarConnection> = {}): CalendarConnection {
-  return { id: 'calendar-fixture-one', provider: 'google', calendarId, calendarName: 'Zajęcia muzyczne', ownerProfileId: accounts.parent.uid, person: accounts.parent.name, visibility: 'private', mode: 'sync', status: 'connected', selectionConfirmed: true, lastSuccessfulSyncAt: new Date(Date.now() - 10 * 60_000).toISOString(), lastAttemptAt: null, lastErrorCode: null, ...overrides };
+  return { id: 'calendar-fixture-one', provider: 'google', calendarId, calendarName: 'Zajęcia muzyczne', ownerProfileId: accounts.parent.uid, person: accounts.parent.name, visibility: 'private', mode: 'sync', status: 'connected', selectionConfirmed: true, lastSuccessfulSyncAt: new Date(Date.now() - 10 * 60_000).toISOString(), lastAttemptAt: null, lastErrorCode: null, historyComplete: true, historyRequired: false, historyRange: { from: '2020-01-01', to: '2026-10-11' }, ...overrides };
 }
 async function login(page: Page, account: { email: string } = accounts.parent) {
   await page.goto('/'); await page.getByLabel('E-mail', { exact: true }).fill(account.email); await page.getByLabel('Hasło', { exact: true }).fill(password);
@@ -27,9 +27,9 @@ async function mockApi(page: Page, connections: CalendarConnection[] = [], confi
     const uid: string = claims.user_id || claims.sub;
     const body = request.postDataJSON() as Record<string, unknown>; state.requests.push({ action, body, uid });
     let result: Record<string, unknown> = { ok: true };
-    if (action === 'status') result = { ok: true, configured, connections: uid === accounts.parent.uid ? state.connections : [] };
+    if (action === 'status') result = { ok: true, configured, readOnly: true, importOwnerConfigured: true, importAllowed: uid === accounts.parent.uid, connections: uid === accounts.parent.uid ? state.connections : [] };
     else if (action === 'start') result.authorizationUrl = 'https://accounts.google.com/o/oauth2/v2/auth?client_id=public-fixture-client&state=opaque-state';
-    else if (action === 'finalize') { if (state.finalizeGate) await state.finalizeGate; state.connections = [source({ selectionConfirmed: false, calendarId: 'primary@example.test', calendarName: 'Główny', lastSuccessfulSyncAt: null })]; result.connectionId = state.connections[0].id; }
+    else if (action === 'finalize') { if (state.finalizeGate) await state.finalizeGate; state.connections = [source({ selectionConfirmed: false, calendarId: 'primary@example.test', calendarName: 'Główny', lastSuccessfulSyncAt: null, historyComplete: false, historyRequired: true, historyRange: null })]; result.connectionId = state.connections[0].id; }
     else if (action === 'list') result.calendars = [{ id: 'primary@example.test', name: 'Główny', timeZone: 'Europe/Warsaw', primary: true }, { id: calendarId, name: 'Zajęcia muzyczne', timeZone: 'Europe/Warsaw', primary: false }];
     else if (action === 'configure') {
       state.connections = state.connections.map(row => row.id !== body.connectionId ? row : { ...row, calendarId: String(body.calendarId), calendarName: body.calendarId === calendarId ? 'Zajęcia muzyczne' : 'Główny', ownerProfileId: String(body.ownerProfileId), visibility: body.visibility as CalendarConnection['visibility'], mode: body.mode as CalendarConnection['mode'], selectionConfirmed: true }); result.connectionId = body.connectionId;
@@ -38,6 +38,13 @@ async function mockApi(page: Page, connections: CalendarConnection[] = [], confi
       state.connections = state.connections.map(row => row.id !== body.connectionId ? row : { ...row, lastSuccessfulSyncAt: new Date().toISOString(), status: row.mode === 'import' ? 'imported' : 'connected' });
       result = { ok: true, imported: 3, changed: 0, cancelled: 0, unchanged: 0, lastSuccessfulSyncAt: new Date().toISOString() };
     } else if (action === 'disconnect') { state.connections = state.connections.map(row => row.id !== body.connectionId ? row : { ...row, status: 'disconnected' }); result.removed = body.removeEvents ? 3 : 0; }
+    else if (action === 'history') {
+      expect(uid).toBe(accounts.parent.uid); expect(body.from).toMatch(/^\d{4}-\d{2}-\d{2}$/); expect(body.to).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      const progress = { phase: body.operation as 'preview' | 'import', processed: 2, total: body.operation === 'import' ? 2 : null, complete: true };
+      state.connections = state.connections.map(row => row.id !== body.connectionId ? row : { ...row, historyProgress: progress,
+        ...(body.operation === 'import' ? { historyComplete: true, historyRequired: false, historyRange: { from: String(body.from), to: String(body.to) }, lastSuccessfulSyncAt: new Date().toISOString() } : {}) });
+      result = { ok: true, historyProgress: progress, complete: true };
+    }
     else throw new Error(`Unexpected local calendar action: ${action}`);
     // A deliberate logout test aborts an in-flight completion before its reply.
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify(result) }).catch(error => { if (!state.finalizeGate || action !== 'finalize') throw error; });
@@ -61,18 +68,17 @@ test('Brak konfiguracji Google nie blokuje aplikacji ani istniejących przycisk�
   expect(api.requests.filter(request => request.action !== 'status')).toHaveLength(0);
 });
 
-test('Google Calendar wymaga jawnej widoczności i pozwala rodzicowi wybrać przyszły profil bez konta', async ({ page }) => {
-  await fixtureDatabase().doc('members/new-baby-calendar').set({ name: 'Nowy członek', personKey: 'member-aaaaaaaaaaaaaaaaaaaaaaaa', role: 'profile', active: true, canLogin: false });
+test('Google Calendar wymaga osobnej zgody OAuth na odczyt i przypisuje import tylko do własnego prywatnego profilu', async ({ page }) => {
   const api = await mockApi(page); await page.route('https://accounts.google.com/o/oauth2/**', route => route.fulfill({ contentType: 'text/html', body: '<h1>Local synthetic OAuth consent</h1>' }));
   await login(page); await settings(page); const panel = page.getByTestId('connected-calendars');
-  await expect(panel.getByRole('radio', { name: 'Prywatny', exact: true })).not.toBeChecked(); await expect(panel.getByRole('radio', { name: 'Rodzinny', exact: true })).not.toBeChecked();
-  await expect(panel.getByRole('button', { name: 'Połącz Google Calendar', exact: true })).toBeDisabled();
-  await panel.getByLabel('Przypisz wydarzenia do', { exact: true }).selectOption('new-baby-calendar');
-  await panel.getByRole('radio', { name: 'Prywatny', exact: true }).check(); await expect(panel).toContainText('Prywatne wydarzenia zobaczysz tylko Ty');
+  await expect(panel).toContainText('Zgoda na odczyt kalendarza jest niezależna od logowania Google');
+  await expect(panel).toContainText('tylko ja — prywatny');
+  await expect(panel.getByRole('radio', { name: 'Rodzinny', exact: true })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Udziel Google zgody na zapis', exact: true })).toHaveCount(0);
   await panel.getByLabel('Sposób pobierania', { exact: true }).selectOption('import'); await panel.getByRole('button', { name: 'Połącz Google Calendar', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Local synthetic OAuth consent' })).toBeVisible();
-  expect(api.requests.find(request => request.action === 'start')?.body).toEqual({ ownerProfileId: 'new-baby-calendar', visibility: 'private', mode: 'import' });
-  expect(api.requests.filter(request => request.action === 'sync')).toHaveLength(0);
+  expect(api.requests.find(request => request.action === 'start')?.body).toEqual({ ownerProfileId: accounts.parent.uid, visibility: 'private', mode: 'import' });
+  expect(api.requests.filter(request => ['sync', 'history', 'export', 'update', 'twoway'].includes(request.action))).toHaveLength(0);
 });
 
 test('Powrót OAuth finalizuje dla bieżącego UID, usuwa parametr i wymaga listy oraz wyboru przed pierwszym pobraniem', async ({ page }) => {
@@ -83,9 +89,32 @@ test('Powrót OAuth finalizuje dla bieżącego UID, usuwa parametr i wymaga list
   await panel.getByTestId('calendar-connection').getByRole('button', { name: 'Wybierz kalendarz', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Wybierz kalendarz Google', exact: true });
   await expect(dialog.getByLabel('Kalendarz Google', { exact: true })).toHaveValue('primary@example.test'); await dialog.getByLabel('Kalendarz Google', { exact: true }).selectOption(calendarId);
-  await dialog.getByRole('button', { name: 'Potwierdź i pobierz wydarzenia', exact: true }).click(); await expect(dialog).toHaveCount(0); await expect(panel).toContainText('Zajęcia muzyczne');
-  const mutating = api.requests.filter(request => ['finalize', 'list', 'configure', 'sync'].includes(request.action)); expect(mutating.map(request => request.action)).toEqual(['finalize', 'list', 'configure', 'sync']);
+  await dialog.getByRole('button', { name: 'Zapisz wybór źródła', exact: true }).click(); await expect(dialog).toHaveCount(0); await expect(panel).toContainText('Zajęcia muzyczne');
+  const mutating = api.requests.filter(request => ['finalize', 'list', 'configure', 'sync'].includes(request.action)); expect(mutating.map(request => request.action)).toEqual(['finalize', 'list', 'configure']);
+  await expect(panel.getByLabel('Historia od', { exact: true })).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Sprawdź liczbę wydarzeń', exact: true })).toBeDisabled();
   expect(mutating[2].body).toMatchObject({ calendarId, ownerProfileId: accounts.parent.uid, visibility: 'private', mode: 'sync' });
+});
+
+test('Prywatny zakres historii wymaga dat, sprawdzenia liczby i osobnego potwierdzenia bez żądań zapisu do Google', async ({ page }) => {
+  const api = await mockApi(page, [source({ historyComplete: false, historyRequired: true, historyRange: null, lastSuccessfulSyncAt: null })]);
+  await login(page); await settings(page); const panel = page.getByTestId('connected-calendars');
+  const preview = panel.getByRole('button', { name: 'Sprawdź liczbę wydarzeń', exact: true });
+  await expect(preview).toBeDisabled();
+  await panel.getByLabel('Historia od', { exact: true }).fill('2020-01-01'); await panel.getByLabel('Historia do', { exact: true }).fill('2024-12-31');
+  expect(api.requests.filter(row => row.action === 'history')).toHaveLength(0);
+  await preview.click(); await expect(panel).toContainText('Sprawdzono 2 wpisów i serii');
+  const confirmation = panel.getByRole('button', { name: 'Potwierdzam prywatny import wybranego okresu', exact: true });
+  await expect(confirmation).toBeVisible();
+  expect(api.requests.filter(row => row.action === 'history').map(row => row.body.operation)).toEqual(['preview']);
+  await confirmation.click(); await expect(panel).toContainText('Historia została zaimportowana do Twojego prywatnego kalendarza');
+  expect(api.requests.filter(row => row.action === 'history').map(row => row.body)).toEqual([
+    { connectionId: 'calendar-fixture-one', operation: 'preview', from: '2020-01-01', to: '2024-12-31', restart: true },
+    { connectionId: 'calendar-fixture-one', operation: 'import', from: '2020-01-01', to: '2024-12-31' },
+  ]);
+  expect(api.requests.filter(row => ['sync', 'export', 'update', 'twoway'].includes(row.action))).toHaveLength(0);
+  await expect(panel).not.toContainText('Synchronizacja dwukierunkowa');
+  await expect(panel.getByRole('button', { name: 'Pobierz kalendarz .ics', exact: true })).toBeVisible();
 });
 
 test('Anulowana zgoda Google daje bezpieczny komunikat i nigdy nie uruchamia finalize ani sync', async ({ page }) => {
@@ -140,12 +169,13 @@ for (const remove of [false, true]) test(`Rozłączanie wymaga jawnego wyboru: $
   expect(api.requests.find(request => request.action === 'disconnect')?.body).toEqual({ connectionId: 'calendar-fixture-one', removeEvents: remove });
 });
 
-for (const account of [accounts.child, accounts.sibling]) test(`${account.name}: profil własny i Cała rodzina, bez zarządzania przypisaniem rodzeństwa lub rodziców`, async ({ page }) => {
+for (const account of [accounts.child, accounts.sibling]) test(`${account.name}: prywatny import właściciela nie jest udostępniony innym kontom`, async ({ page }) => {
   if (account.uid === accounts.sibling.uid) await fixtureDatabase().doc(`members/${account.uid}`).update({ role: 'adult' });
   await mockApi(page); await login(page, account); await settings(page); const panel = page.getByTestId('connected-calendars');
-  const owners = panel.getByLabel('Przypisz wydarzenia do', { exact: true });
-  await expect(owners.locator('option:not([disabled])')).toHaveCount(2); await expect(owners).toHaveValue(account.uid); await expect(owners.locator(`option[value="${accounts.parent.uid}"]`)).toHaveCount(0);
-  await expect(owners.locator('option[value="family"]')).toHaveText('Cała rodzina'); await expect(panel.getByTestId('calendar-connection')).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Połącz Google Calendar', exact: true })).toHaveCount(0);
+  await expect(panel.getByTestId('calendar-connection')).toHaveCount(0);
+  await expect(panel).toContainText('tylko dla wyznaczonego właściciela');
+  await expect(panel.getByRole('button', { name: 'Pobierz kalendarz .ics', exact: true })).toBeVisible();
 });
 
 test('Foreground po godzinie odświeża raz, a zwykłe przełączanie modułów i aplikacja w tle nie synchronizują', async ({ page }) => {

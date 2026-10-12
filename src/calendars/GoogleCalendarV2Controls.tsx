@@ -4,8 +4,8 @@ import { auth } from '../firebase';
 import type { CalendarEventData } from '../app-shared';
 import { familyV2WritesAllowed, assertFamilyV2WriteAllowed } from '../family-v2-client';
 import { SecondaryButton } from '../ui';
-import { calendarRequest, calendarsChanged, readCalendarStatus } from './calendar-client';
-import { authorizedCalendarUrl, calendarErrorMessage, type CalendarConnection } from './model';
+import { calendarRequest, calendarsChanged } from './calendar-client';
+import { calendarErrorMessage, type CalendarConnection } from './model';
 
 function useGoogleAction(user: User) {
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState('');
@@ -24,95 +24,49 @@ function useGoogleAction(user: User) {
 
 export function CalendarHistoryControls({ user, connection }: { user: User; connection: CalendarConnection }) {
   const action = useGoogleAction(user), [progress, setProgress] = useState(connection.historyProgress);
+  const [range, setRange] = useState(connection.historyRange || { from: '', to: '' });
+  const prefix = useId();
+  const validRange = !!range.from && !!range.to && range.from <= range.to;
+  useEffect(() => { setRange(connection.historyRange || { from: '', to: '' }); }, [connection.id, connection.historyRange?.from, connection.historyRange?.to]);
   useEffect(() => { setProgress(connection.historyProgress); }, [connection.id, connection.historyProgress]);
   async function history(operation: 'preview' | 'import', restart = false) {
     await action.run(async signal => {
       let first = true;
       while (!signal.aborted && auth.currentUser?.uid === user.uid) {
-        const reply = await calendarRequest<{ historyProgress: NonNullable<CalendarConnection['historyProgress']>; complete: boolean }>('history', user, { connectionId: connection.id, operation, ...(first && restart ? { restart: true } : {}) }, signal);
+        const reply = await calendarRequest<{ historyProgress: NonNullable<CalendarConnection['historyProgress']>; complete: boolean }>('history', user, { connectionId: connection.id, operation, ...range, ...(first && restart ? { restart: true } : {}) }, signal);
         if (signal.aborted || auth.currentUser?.uid !== user.uid) return;
         setProgress(reply.historyProgress); first = false;
-        if (reply.complete) return operation === 'preview' ? `Sprawdzono ${reply.historyProgress.processed} wydarzeń i serii. Import pozostaje prywatny.` : 'Historia została zaimportowana do Twojego prywatnego kalendarza.';
+        if (reply.complete) return operation === 'preview' ? `Sprawdzono ${reply.historyProgress.processed} wpisów i serii w wybranym okresie. Import pozostaje prywatny.` : 'Historia została zaimportowana do Twojego prywatnego kalendarza.';
       }
     });
   }
   const eligible = connection.selectionConfirmed && connection.status === 'connected';
   return <div className="calendar-history-tools">
-    <h4>Pełna historia Google</h4>
-    <p className="calendar-connection-help">Wszystkie lata, bez ograniczenia do ostatnich miesięcy. Serie są liczone jako jeden wpis; ich terminy i wyjątki pozostają zachowane. Nowe wydarzenia: tylko Ty.</p>
+    <h4>Prywatny import z Google Calendar</h4>
+    <p className="calendar-connection-help">Wybierz okres historii. Najpierw sprawdzimy liczbę wpisów, a skopiujemy je dopiero po Twoim potwierdzeniu. Serie są liczone jako jeden wpis; ich wyjątki pozostają zachowane. Nowe wydarzenia trafiają tylko do Twojego prywatnego kalendarza.</p>
+    <div className="calendar-history-range">
+      <label htmlFor={`${prefix}-from`}>Historia od<input id={`${prefix}-from`} type="date" value={range.from} disabled={action.busy || !!connection.historyComplete && !!connection.historyRange} onChange={event => { setRange(value => ({ ...value, from: event.target.value })); setProgress(null); }} /></label>
+      <label htmlFor={`${prefix}-to`}>Historia do<input id={`${prefix}-to`} type="date" min={range.from || undefined} value={range.to} disabled={action.busy || !!connection.historyComplete && !!connection.historyRange} onChange={event => { setRange(value => ({ ...value, to: event.target.value })); setProgress(null); }} /></label>
+    </div>
+    {connection.mode === 'sync' && <p className="calendar-connection-help">Po imporcie będziemy odświeżać zmiany w tym okresie oraz nowe przyszłe wydarzenia. Wcześniejsza historia poza wybranym zakresem nie zostanie automatycznie skopiowana.</p>}
     {progress && <p role="status" className="calendar-connection-help">{progress.phase === 'preview' ? 'Sprawdzono' : 'Przetworzono'}: {progress.processed}{progress.total !== null ? ` z około ${progress.total}` : ''}{progress.complete ? ' — zakończono' : ' — trwa pobieranie stron'}</p>}
     {progress?.phase === 'import' && progress.total !== null && <progress aria-label="Postęp importu historii" max={Math.max(progress.total, 1)} value={progress.complete ? Math.max(progress.total, 1) : Math.min(progress.processed, Math.max(progress.total - 1, 0))} />}
     <div className="calendar-connection-actions">
-      <SecondaryButton disabled={action.busy || !eligible || !action.enabled} onClick={() => void history('preview', true)}>Sprawdź liczbę wydarzeń</SecondaryButton>
-      {progress?.phase === 'preview' && progress.complete && <SecondaryButton disabled={action.busy || !eligible || !action.enabled} onClick={() => void history('import')}>Importuj historię — tylko ja</SecondaryButton>}
-      {progress?.phase === 'import' && !progress.complete && <SecondaryButton disabled={action.busy || !eligible || !action.enabled} onClick={() => void history('import')}>Kontynuuj import</SecondaryButton>}
+      <SecondaryButton disabled={action.busy || !eligible || !action.enabled || !validRange} onClick={() => void history('preview', true)}>Sprawdź liczbę wydarzeń</SecondaryButton>
+      {progress?.phase === 'preview' && progress.complete && <SecondaryButton disabled={action.busy || !eligible || !action.enabled || !validRange} onClick={() => void history('import')}>Potwierdzam prywatny import wybranego okresu</SecondaryButton>}
+      {progress?.phase === 'import' && !progress.complete && <SecondaryButton disabled={action.busy || !eligible || !action.enabled || !validRange} onClick={() => void history('import')}>Kontynuuj import</SecondaryButton>}
     </div>
     {!action.enabled && <p className="calendar-connection-help">Preview: import do danych produkcyjnych jest zablokowany. Testowanie zapisu wymaga oddzielnego projektu Firebase.</p>}
     {action.notice && <p role="status" className="calendar-connection-help">{action.notice}</p>}
   </div>;
 }
 
-export function CalendarGoogleWriteSettings({ user, connection }: { user: User; connection: CalendarConnection }) {
-  const action = useGoogleAction(user);
-  return <details className="calendar-write-settings"><summary>Eksport i synchronizacja dwukierunkowa</summary>
-    <p className="calendar-connection-help">Domyślnie tylko odczyt. Zapis wymaga zakończonego importu historii i osobnej zgody OAuth. Udostępnienie rodzinie nie zmienia uprawnień oryginalnego kalendarza Google.</p>
-    <p className="calendar-connection-help">Zgoda na zapis: {connection.writeAuthorized ? 'udzielona' : 'nieudzielona'} · Synchronizacja dwukierunkowa: {connection.twoWayEnabled ? 'włączona' : 'wyłączona'}</p>
-    <div className="calendar-connection-actions">
-      {!connection.writeAuthorized && <SecondaryButton disabled={action.busy || !action.enabled || !connection.historyComplete} onClick={() => void action.run(async signal => {
-        const reply = await calendarRequest<{ authorizationUrl: string }>('start', user, { connectionId: connection.id, ownerProfileId: connection.ownerProfileId, visibility: connection.visibility, mode: connection.mode, write: true }, signal);
-        if (!signal.aborted && auth.currentUser?.uid === user.uid) window.location.assign(authorizedCalendarUrl(reply.authorizationUrl));
-      })}>Udziel Google zgody na zapis</SecondaryButton>}
-      {connection.writeAuthorized && <SecondaryButton disabled={action.busy || !action.enabled || !connection.historyComplete || !connection.selectionConfirmed || connection.status !== 'connected' || connection.mode !== 'sync'} onClick={() => {
-        if (!connection.twoWayEnabled && !window.confirm('Włączyć zapis zmian w oryginalnym kalendarzu Google? Konflikty nie będą automatycznie nadpisywane, a usunięcia wymagają sprawdzenia.')) return;
-        void action.run(async signal => { await calendarRequest('twoway', user, { connectionId: connection.id, enabled: !connection.twoWayEnabled }, signal); return connection.twoWayEnabled ? 'Wyłączono zapis dwukierunkowy.' : 'Włączono synchronizację dwukierunkową.'; });
-      }}>{connection.twoWayEnabled ? 'Wyłącz synchronizację dwukierunkową' : 'Włącz synchronizację dwukierunkową'}</SecondaryButton>}
-    </div>{action.notice && <p role="status" className="calendar-connection-help">{action.notice}</p>}
-  </details>;
-}
-
-function useOwnedConnections(user: User) {
-  const [connections, setConnections] = useState<CalendarConnection[]>([]);
-  useEffect(() => {
-    const controller = new AbortController();
-    const refresh = () => { void readCalendarStatus(user, controller.signal).then(reply => { if (!controller.signal.aborted && auth.currentUser?.uid === user.uid) setConnections(reply.connections); }).catch(() => {}); };
-    refresh(); window.addEventListener('calendar-connections-changed', refresh);
-    return () => { controller.abort(); window.removeEventListener('calendar-connections-changed', refresh); };
-  }, [user.uid]);
-  return connections;
-}
-
-export function CalendarGoogleExportControls({ user, eventId }: { user: User; eventId: string }) {
-  const action = useGoogleAction(user), connections = useOwnedConnections(user).filter(connection => connection.writeAuthorized && connection.historyComplete && connection.selectionConfirmed && connection.status === 'connected');
-  const [selected, setSelected] = useState(''), prefix = useId();
-  if (!connections.length) return <p className="calendar-connection-help">Eksport do Google: najpierw sprawdź import i udziel zgody na zapis w Ustawieniach → Połączone kalendarze.</p>;
-  return <div className="calendar-export-tools"><label htmlFor={prefix}>Wyślij kopię do kalendarza Google</label>
-    <select id={prefix} value={selected} onChange={event => setSelected(event.target.value)} disabled={action.busy}><option value="">Wybierz kalendarz</option>{connections.map(connection => <option key={connection.id} value={connection.id}>{connection.calendarName}</option>)}</select>
-    <SecondaryButton disabled={!selected || action.busy || !action.enabled} onClick={() => void action.run(async signal => {
-      const reply = await calendarRequest<{ alreadyExported?: boolean }>('export', user, { connectionId: selected, eventId }, signal);
-      return reply.alreadyExported ? 'To wydarzenie jest już powiązane z Google — nie utworzono duplikatu.' : 'Wyeksportowano do wybranego kalendarza Google.';
-    })}>Eksportuj świadomie</SecondaryButton>{action.notice && <p role="status">{action.notice}</p>}
-  </div>;
-}
-
-const inputDate = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-export function CalendarGoogleEditControls({ user, event }: { user: User; event: CalendarEventData }) {
-  const action = useGoogleAction(user), connections = useOwnedConnections(user), connection = connections.find(value => value.id === event.sourceConnectionId);
-  const [title, setTitle] = useState(event.title), [description, setDescription] = useState(event.description), [location, setLocation] = useState(event.location || ''), [start, setStart] = useState(inputDate(event.date)), [end, setEnd] = useState(inputDate(event.endDate));
-  if (!connection?.twoWayEnabled || !connection.historyComplete || event.sourceOwnerUid !== user.uid || event.sourceExceptionTombstone) return null;
-  return <details className="calendar-write-settings"><summary>Edytuj i zapisz w Google</summary>
-    {event.sourceRecurrence?.length ? <p className="calendar-connection-help">To definicja serii. Zmiana dotyczy całej serii w Google. Pojedyncze przeniesione wystąpienia zachowują swoje wyjątki.</p> : null}
-    <form className="calendar-source-form" onSubmit={submit => { submit.preventDefault(); void action.run(async signal => {
-      await calendarRequest('update', user, { connectionId: connection.id, eventId: event.id, patch: { title, description, location, date: new Date(start).toISOString(), endDate: new Date(end).toISOString(), allDay: event.allDay } }, signal); return 'Zapisano w Google i odświeżono lokalną wersję.';
-    }); }}>
-      <label>Nazwa<input value={title} onChange={value => setTitle(value.target.value)} required maxLength={500} /></label>
-      <label>Początek<input type="datetime-local" value={start} onChange={value => setStart(value.target.value)} required /></label>
-      <label>Koniec<input type="datetime-local" value={end} onChange={value => setEnd(value.target.value)} required /></label>
-      <label>Opis<textarea value={description} onChange={value => setDescription(value.target.value)} maxLength={10000} /></label>
-      <label>Lokalizacja<input value={location} onChange={value => setLocation(value.target.value)} maxLength={2000} /></label>
-      <SecondaryButton type="submit" disabled={action.busy || !action.enabled}>Zapisz zmianę w Google</SecondaryButton>
-    </form>{action.notice && <p role="status">{action.notice}</p>}
-  </details>;
-}
+// Stage one is read-only even if an old connection still carries write flags.
+// Keep the public component names so the existing calendar integration remains
+// compatible; no authorization or provider-write controls are rendered.
+export function CalendarGoogleWriteSettings(_props: { user: User; connection: CalendarConnection }) { return null; }
+export function CalendarGoogleExportControls(_props: { user: User; eventId: string }) { return null; }
+export function CalendarGoogleEditControls(_props: { user: User; event: CalendarEventData }) { return null; }
 
 export function CalendarGoogleBulkSharing({ user, events }: { user: User; events: readonly CalendarEventData[] }) {
   const action = useGoogleAction(user), [selected, setSelected] = useState<string[]>([]), [visibility, setVisibility] = useState<'private' | 'family'>('family');

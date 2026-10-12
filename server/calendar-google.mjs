@@ -1,4 +1,4 @@
-import { failCalendar, calendarIdentifier } from './calendar-config.mjs';
+import { failCalendar, calendarIdentifier, rejectGoogleCalendarWrite } from './calendar-config.mjs';
 
 export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
 export const GOOGLE_CALENDAR_WRITE_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
@@ -21,6 +21,7 @@ async function boundedJson(response) {
 }
 
 export function googleAuthorizationUrl(config, state, challenge, { write = false } = {}) {
+  if (write) rejectGoogleCalendarWrite();
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   url.search = new URLSearchParams({ client_id: config.clientId, redirect_uri: config.redirectUri, response_type: 'code', scope: write ? `${GOOGLE_CALENDAR_SCOPE} ${GOOGLE_CALENDAR_WRITE_SCOPE}` : GOOGLE_CALENDAR_SCOPE,
     state, code_challenge: challenge, code_challenge_method: 'S256', access_type: 'offline', prompt: 'consent' }).toString();
@@ -141,6 +142,7 @@ export function googleCalendarClient(config, initialTokens, { fetchImpl = fetch,
       return request(`calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`);
     },
     async writeEvent(calendarId, eventId, body, { etag, insert = false } = {}) {
+      rejectGoogleCalendarWrite();
       if (!tokens.scopes?.includes(GOOGLE_CALENDAR_WRITE_SCOPE)) failCalendar('CALENDAR_WRITE_PERMISSION_REQUIRED', 403, 'Połącz ponownie Google Calendar i świadomie udziel zgody na zapis.');
       if (!calendarIdentifier(calendarId) || !calendarIdentifier(eventId) || !insert && !etag) failCalendar('CALENDAR_INVALID_REQUEST', 400, 'Zapis wymaga potwierdzonej wersji wydarzenia.');
       return request(`calendars/${encodeURIComponent(calendarId)}/events${insert ? '' : `/${encodeURIComponent(eventId)}`}`, {}, { method: insert ? 'POST' : 'PATCH', body: insert ? { ...body, id: eventId } : body, etag });

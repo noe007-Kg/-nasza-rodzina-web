@@ -99,6 +99,7 @@ const sameSource = (event, connection, externalEventId) => event.source === 'goo
 export const calendarEventFingerprint = event => createHash('sha256').update(JSON.stringify({ title: event.title, description: event.description || '', location: event.location || '',
   start: timestampMillis(event.date), end: timestampMillis(event.endDate), allDay: event.allDay === true, timeZone: event.timeZone || '',
   sourceStartDate: event.sourceStartDate || null, sourceEndDateExclusive: event.sourceEndDateExclusive || null, sourceRecurrence: event.sourceRecurrence || [],
+  sourceImportWindow: event.sourceImportWindow || null,
   repeat: event.repeat || 'none', recurrence: event.recurrence || null, repeatCount: event.repeatCount || null, repeatUntil: timestampMillis(event.repeatUntil),
   recurrenceExceptions: event.recurrenceExceptions || [], recurrenceOverrides: event.recurrenceOverrides || {}, cancelled: event.cancelled === true })).digest('hex');
 
@@ -146,6 +147,8 @@ export async function upsertGoogleEvents(context, connection, lease, events, { n
           externalCalendarId: connection.calendarId, externalEventId: incoming.externalEventId, externalSeriesId: incoming.externalSeriesId || null,
           ownerProfileId: existing?.ownerProfileId || context.uid, ...(existing ? {} : { createdAt: Timestamp.fromMillis(now) }),
           ...(incoming.sourceRecurrence ? { sourceRecurrence: incoming.sourceRecurrence } : {}),
+          // A previously accepted source is never narrowed by another reread.
+          ...(incoming.sourceImportWindow && !existing ? { sourceImportWindow: incoming.sourceImportWindow } : {}),
           ...(Object.hasOwn(incoming, 'externalOriginalStart') ? { externalOriginalStart: incoming.externalOriginalStart } : {}),
           ...(incoming.providerEtag ? { providerEtag: incoming.providerEtag } : {}),
         };

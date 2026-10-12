@@ -73,3 +73,10 @@ test('Warsaw spring DST preserves the source hour while changing its real UTC of
   const values = generateGoogleOccurrences(master, new Date('2026-03-21T00:00:00Z'), new Date('2026-04-06T00:00:00Z'));
   assert.deepEqual(values.map(value => value.date.toISOString()), ['2026-03-22T08:00:00.000Z', '2026-03-29T07:00:00.000Z', '2026-04-05T07:00:00.000Z']);
 });
+
+test('a chosen history window never expands the copied master into unapproved earlier or intervening years', () => {
+  const master = event({ sourceImportWindow: { from: '2026-10-24T22:00:00Z', to: '2026-10-25T23:00:00Z', futureFrom: '2026-11-02T00:00:00Z' } });
+  assert.deepEqual(generateGoogleOccurrences(master, from, to).map(value => value.date.toISOString()), ['2026-10-25T08:00:00.000Z']);
+  const future = event({ sourceRecurrence: ['RRULE:FREQ=WEEKLY;COUNT=4'], sourceImportWindow: master.sourceImportWindow });
+  assert.deepEqual(generateGoogleOccurrences(future, from, new Date('2026-11-09T00:00:00Z')).map(value => value.date.toISOString()), ['2026-10-25T08:00:00.000Z', '2026-11-08T08:00:00.000Z']);
+});

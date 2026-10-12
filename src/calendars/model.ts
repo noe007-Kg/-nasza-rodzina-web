@@ -8,10 +8,11 @@ export type CalendarConnection = {
   status: 'connected' | 'disconnected' | 'needs-reconnect' | 'imported'; selectionConfirmed: boolean;
   lastSuccessfulSyncAt: string | null; lastAttemptAt: string | null; lastErrorCode: string | null;
   writeAuthorized?: boolean; twoWayEnabled?: boolean; historyComplete?: boolean; historyRequired?: boolean;
+  historyRange?: { from: string; to: string } | null;
   historyProgress?: { phase: 'preview' | 'import' | 'sync'; processed: number; total: number | null; complete: boolean } | null;
 };
 export type ExternalCalendar = { id: string; name: string; timeZone: string; primary: boolean };
-export type CalendarStatusResponse = { ok: true; configured: boolean; connections: CalendarConnection[] };
+export type CalendarStatusResponse = { ok: true; configured: boolean; connections: CalendarConnection[]; importOwnerConfigured?: boolean; importAllowed?: boolean; readOnly?: boolean };
 export type CalendarNotice = { tone: 'success' | 'error'; message: string };
 
 export function calendarMessage(code: string): string {
@@ -52,6 +53,11 @@ export function calendarMessage(code: string): string {
     CALENDAR_INVALID_RESPONSE: 'Nie udało się odczytać stanu połączenia. Spróbuj ponownie.',
     CALENDAR_PREVIEW_READ_ONLY: 'Preview chroni produkcyjne dane: nowe zapisy kalendarza wymagają oddzielnego projektu testowego.',
     CALENDAR_HISTORY_CONFIRM_REQUIRED: 'Najpierw sprawdź liczbę wydarzeń, a następnie zatwierdź import prywatnej historii.',
+    CALENDAR_HISTORY_RANGE_REQUIRED: 'Wybierz i zatwierdź poprawny okres prywatnego importu historii.',
+    CALENDAR_HISTORY_OWNER_NOT_CONFIGURED: 'Administrator musi wskazać właściciela prywatnego importu Google Calendar. Logowanie Google i pliki .ics działają niezależnie.',
+    CALENDAR_HISTORY_OWNER_FORBIDDEN: 'Prywatny import Google Calendar jest obecnie dostępny tylko dla wyznaczonego właściciela konta.',
+    CALENDAR_HISTORY_PRIVATE_REQUIRED: 'Nowe połączenie Google Calendar musi być przypisane do Twojego prywatnego kalendarza.',
+    CALENDAR_READ_ONLY_STAGE: 'Google Calendar obsługuje teraz tylko odczyt. Nie wysyłamy zmian do Google.',
     CALENDAR_WRITE_PERMISSION_REQUIRED: 'Sprawdź import historii, połącz ponownie Google ze zgodą na zapis i wybierz kalendarz, w którym możesz edytować wydarzenia.',
     CALENDAR_WRITE_DISABLED: 'Synchronizacja dwukierunkowa jest wyłączona. Włącz ją świadomie w ustawieniach źródła.',
     CALENDAR_WRITE_CONFLICT: 'Wydarzenie zmieniło się po obu stronach. Nie nadpisano konfliktu; sprawdź aktualne wersje.',
@@ -87,13 +93,16 @@ export function parseCalendarStatus(value: unknown): CalendarStatusResponse {
     const row = object(value);
     if (row.provider !== 'google' || !['private', 'family'].includes(String(row.visibility)) || !['sync', 'import'].includes(String(row.mode)) || !['connected', 'disconnected', 'needs-reconnect', 'imported'].includes(String(row.status)) || typeof row.selectionConfirmed !== 'boolean') throw new CalendarRequestError('CALENDAR_INVALID_RESPONSE');
     const progress = row.historyProgress === undefined || row.historyProgress === null ? null : object(row.historyProgress);
+    const historyRange = row.historyRange === undefined || row.historyRange === null ? null : object(row.historyRange);
+    if (historyRange && (!/^\d{4}-\d{2}-\d{2}$/.test(String(historyRange.from)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(historyRange.to)) || String(historyRange.from) > String(historyRange.to))) throw new CalendarRequestError('CALENDAR_INVALID_RESPONSE');
     if (progress && (!['preview', 'import', 'sync'].includes(String(progress.phase)) || !Number.isSafeInteger(progress.processed) || Number(progress.processed) < 0 || progress.total !== null && (!Number.isSafeInteger(progress.total) || Number(progress.total) < 0) || typeof progress.complete !== 'boolean')) throw new CalendarRequestError('CALENDAR_INVALID_RESPONSE');
     return { id: text(row.id)!, provider: 'google' as const, calendarId: text(row.calendarId, true), calendarName: text(row.calendarName, true), ownerProfileId: text(row.ownerProfileId)!, person: text(row.person)!, visibility: row.visibility as CalendarVisibility, mode: row.mode as CalendarMode, status: row.status as CalendarConnection['status'], selectionConfirmed: row.selectionConfirmed, lastSuccessfulSyncAt: time(row.lastSuccessfulSyncAt), lastAttemptAt: time(row.lastAttemptAt), lastErrorCode: text(row.lastErrorCode, true),
       writeAuthorized: row.writeAuthorized === true, twoWayEnabled: row.twoWayEnabled === true, historyComplete: row.historyComplete === true, historyRequired: row.historyRequired === true,
+      historyRange: historyRange ? { from: String(historyRange.from), to: String(historyRange.to) } : null,
       historyProgress: progress ? { phase: progress.phase as 'preview' | 'import' | 'sync', processed: Number(progress.processed), total: progress.total === null ? null : Number(progress.total), complete: progress.complete as boolean } : null };
   });
   if (new Set(connections.map(row => row.id)).size !== connections.length) throw new CalendarRequestError('CALENDAR_INVALID_RESPONSE');
-  return { ok: true, configured: reply.configured, connections };
+  return { ok: true, configured: reply.configured, connections, importOwnerConfigured: reply.importOwnerConfigured === true, importAllowed: reply.importAllowed === true, readOnly: true };
 }
 export function parseExternalCalendars(value: unknown): ExternalCalendar[] {
   const reply = object(value);

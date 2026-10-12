@@ -23,7 +23,7 @@ export function createCalendarActivationSync(dependencies: Dependencies) {
         try {
           const status = await dependencies.status();
           if (!live()) return 'inactive';
-          if (!status.configured) return 'current';
+          if (!status.configured || status.importAllowed === false) return 'current';
           let synchronized = false, failed = false;
           for (const connection of status.connections) {
             if (!live()) return 'inactive';

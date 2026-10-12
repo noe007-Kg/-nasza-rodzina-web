@@ -9,9 +9,9 @@ const user = { uid: 'member-one', getIdToken: async () => 'synthetic-firebase-to
 
 test('public status preserves exact profile assignment and private visibility while dropping provider secrets', () => {
   const status = parseCalendarStatus(reply({ ...connection, accessToken: 'never-client', refreshToken: 'never-client', syncToken: 'never-client', session: 'never-client' } as typeof connection));
-  assert.deepEqual(status.connections[0], connection); assert.ok(!JSON.stringify(status).includes('never-client'));
+  assert.deepEqual(status.connections[0], { ...connection, writeAuthorized: false, twoWayEnabled: false, historyComplete: false, historyRequired: false, historyProgress: null, historyRange: null }); assert.ok(!JSON.stringify(status).includes('never-client'));
 });
-test('missing Google configuration is an ordinary valid status', () => { assert.deepEqual(parseCalendarStatus({ ok: true, configured: false, connections: [] }), { ok: true, configured: false, connections: [] }); });
+test('missing Google configuration is an ordinary valid status', () => { assert.deepEqual(parseCalendarStatus({ ok: true, configured: false, connections: [] }), { ok: true, configured: false, connections: [], importOwnerConfigured: false, importAllowed: false, readOnly: true }); });
 test('ambiguous, missing selection confirmation and malformed status never become usable connections', () => {
   for (const bad of [{ ...reply(), connections: [connection, connection] }, reply({ ...connection, visibility: 'public' }), reply({ ...connection, selectionConfirmed: undefined }), reply({ ...connection, lastSuccessfulSyncAt: 'bad-date' }), reply({ ...connection, status: 'random' })]) assert.throws(() => parseCalendarStatus(bad), CalendarRequestError);
 });
