@@ -115,6 +115,48 @@ test('incomplete scans, missing collections, absent Auth checks and Storage pref
     f => f.inventory.coverage.collections.pop(), f => f.inventory.coverage.authVerified = false,
     f => f.inventory.coverage.storagePrefixes.pop()]) { const f = fixture(); mutate(f); assert.equal(f.run().status, 'blocked'); }
 });
+
+for (const [httpStatus, status, code] of [[404, 'not-found', 'STORAGE_BUCKET_NOT_FOUND'], [403, 'forbidden', 'STORAGE_ACCESS_DENIED']]) {
+  test(`Storage HTTP ${httpStatus} blocks migration even with no file references and otherwise complete Firestore/Auth`, () => {
+    const f = fixture();
+    f.inventory.coverage.complete = false;
+    f.inventory.coverage.missingCollections = ['storage'];
+    f.inventory.coverage.storagePrefixes = [];
+    f.inventory.coverage.storageCheck = { verified: false, status, code, httpStatus };
+    const plan = f.run();
+    assert.equal(plan.status, 'blocked');
+    assert.equal(plan.canApply, false); assert.equal(plan.writesPerformed, 0);
+    assert.equal(plan.summary.membersVerified, 5); assert.equal(plan.summary.storageVerified, false);
+    assert.ok(codes(plan).includes(code));
+    assert.ok(!codes(plan).includes('STORAGE_OBJECT_MISSING'));
+    assert.equal(plan.changes.length, 5, 'Keep reviewable candidate Firestore changes without allowing them to be applied');
+  });
+}
+
+test('planner independently rejects a Storage failure disguised as complete coverage', () => {
+  const f = fixture();
+  f.inventory.coverage.storageCheck = { verified: false, status: 'not-found', code: 'STORAGE_BUCKET_NOT_FOUND', httpStatus: 404 };
+  const plan = f.run();
+  assert.equal(plan.status, 'blocked');
+  assert.equal(plan.summary.storageVerified, false);
+  assert.ok(codes(plan).includes('STORAGE_BUCKET_NOT_FOUND'));
+  f.inventory.coverage.storageCheck.verified = true;
+  assert.ok(codes(f.run()).includes('STORAGE_COVERAGE_INVALID'));
+});
+
+test('a referenced file in an unread prefix is unverified, never reported as confirmed missing', () => {
+  const f = fixture();
+  addHealth(f);
+  f.inventory.storage = [];
+  f.inventory.coverage.complete = false;
+  f.inventory.coverage.missingCollections = ['storage'];
+  f.inventory.coverage.storagePrefixes = [];
+  f.inventory.coverage.storageCheck = { verified: false, status: 'forbidden', code: 'STORAGE_ACCESS_DENIED', httpStatus: 403 };
+  const plan = f.run();
+  assert.equal(plan.status, 'blocked');
+  assert.ok(codes(plan).includes('STORAGE_OBJECT_NOT_VERIFIED'));
+  assert.ok(!codes(plan).includes('STORAGE_OBJECT_MISSING'));
+});
 test('proven Tasks roots/ledger/balance get only familyId without minting or recomputing points', () => {
   const f = fixture(); f.add('tasks', 'task-one', { createdBy: 'parent-one', person: 'child-a', points: 9, done: true });
   f.add('taskCompletions', 'task-one', { taskId: 'task-one', person: 'child-a', submittedBy: 'child-one', approvedBy: 'parent-one', points: 9 });

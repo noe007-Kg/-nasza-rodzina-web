@@ -146,6 +146,27 @@ W katalogu `--output` znajduje się stabilna propozycja `proposal.private.json`,
 
 Status `blocked` wymaga rozstrzygnięcia każdej blokady; CLI kończy się kodem `2`. Wynik `prepared-requires-approval` oznacza przygotowany plan bez wykrytych blokad, **nie zgodę ani możliwość zastosowania**. Zawsze obowiązują `writesPerformed: 0`, `canApply: false`, `migrationExecutable: false`.
 
+### Niedostępny Storage: raport pozostaje, migracja jest zablokowana
+
+Jeśli odczyty Firestore i pięciu kont Auth powiodły się, błąd listowania Storage nie przerywa przygotowania ich prywatnego raportu. CLI zapisuje wszystkie powyższe pliki, pokazuje bezpieczny kod błędu Storage i kończy się kodem `2` (`blocked`). W szczególności:
+
+| Odpowiedź Storage | Kod blokady | Znaczenie |
+|---|---|---|
+| HTTP 404 | `STORAGE_BUCKET_NOT_FOUND` | Nie udało się zweryfikować wskazanego magazynu. Nie jest to dowód braku plików. |
+| HTTP 403 | `STORAGE_ACCESS_DENIED` | Brak uprawnień do kontroli Storage. Nie jest to dowód braku plików. |
+| Inny błąd HTTP/transportu | `STORAGE_READ_FAILED` | Kontrola nie została ukończona. |
+| Limit lub zapętlona paginacja | `STORAGE_SCAN_LIMIT_REACHED` / `STORAGE_PAGINATION_STALLED` | Skan jest częściowy; nie można uznać go za kompletny. |
+
+Dla nieutworzonego magazynu `nasza-rodzina.firebasestorage.app` zwracającego 404 raport wyraźnie wskazuje **„Storage: NIE ZWERYFIKOWANO — BLOKADA MIGRACJI”**. Liczba `0` przy „Zaobserwowane obiekty Storage” oznacza wyłącznie zero obserwacji z nieudanego skanu, a nie pusty magazyn.
+
+`inventory.private.json` zachowuje odczytane kolekcje i Auth, ale ma `coverage.complete: false`, `missingCollections` zawierające `storage` oraz `coverage.storageCheck.verified: false`. `plan.private.json` ma `summary.storageVerified: false`, odpowiednią blokadę i `canApply: false`. Kandydackie zmiany Firestore pozostają dostępne do przeglądu; nie stanowią gotowej migracji, nawet jeśli żaden dokument nie odwołuje się do pliku.
+
+Po błędzie na dalszej stronie skrypt zachowuje wcześniej zaobserwowane metadane. `storagePrefixes` obejmuje tylko prefiksy, których wszystkie strony udało się odczytać. Odwołanie do niezaobserwowanego pliku w niesprawdzonym prefiksie otrzymuje `STORAGE_OBJECT_NOT_VERIFIED`, a nie potwierdzenie `STORAGE_OBJECT_MISSING`. Tylko pomyślny skan wszystkich wymaganych prefiksów może zweryfikować pusty wynik.
+
+Analiza offline zachowuje ten stan blokady i odrzuca sprzeczną deklarację kompletności. Nowy stan Storage jest sanitizowany do czterech pól: `verified`, `status`, `code` i `httpStatus`; treść błędu, stos, odpowiedź HTTP, adresy i nagłówki uwierzytelniania nie trafiają do raportów ani logów. Kompletne snapshoty starego formatu pozostają obsługiwane, ale nie potwierdzają aktualnego stanu produkcji.
+
+Narzędzie nie tworzy magazynu, nie nadaje uprawnień, nie przełącza się automatycznie na inny bucket i nie ponawia błędnego skanu w pętli. Rozstrzygnięcie właściwego magazynu oraz uzyskanie pełnej kontroli tylko do odczytu wymagają osobnego działania administratora; następnie należy ponownie wykonać dry-run. **Nie stosować migracji przy niekompletnej kontroli Storage.**
+
 Wersje dokumentów są preconditionami przyszłego wykonawcy. Metadane z kilku odczytów nie tworzą atomowej migawki; tuż przed ewentualną migracją trzeba ponownie sprawdzić wszystkie wersje i zależności.
 
 Typowe blokady:
@@ -227,18 +248,29 @@ Przyszły wykonawca powinien:
 
 ## 11. Testy lokalne
 
-Wyniki rzeczywiście wykonanych testów zostaną uzupełnione przez prowadzącego etap. Testy planowania, odczytu i CLI nie wykonują migracji produkcyjnej. Testy Rules używają wyłącznie syntetycznego projektu demo i pokazują zarówno odcięcie po błędnym patchu samych profili, jak i zachowanie dostępu po kompletnym patchu fixture’ów.
+Poniżej rzeczywiste wyniki lokalnej weryfikacji. Testy planowania, odczytu i CLI nie wykonują migracji produkcyjnej. Testy Rules używają wyłącznie syntetycznego projektu demo i pokazują zarówno odcięcie po błędnym patchu samych profili, jak i zachowanie dostępu po kompletnym patchu fixture’ów.
 
 | Sprawdzenie | Wynik |
 |---|---|
-| Walidacja UID, gospodarstwa i planu | 39/39 PASS, Node.js 22.23.3. |
-| Odczyt ograniczony do projekcji i bez operacji zapisu | 10/10 PASS — typy pól, paginacja, limity, Auth UID, brak tokenów/treści w wyjściu. |
-| CLI, tryb offline i prywatne wyniki | 6/6 PASS — brak apply, prawa plików, stabilny ID, odmowa błędnych/zmienionych manifestów. |
-| Firestore/Storage: zachowanie uprawnionego dostępu i odmowy | 21/21 PASS — 5 nowych scenariuszy migracji i 16 dotychczasowych zabezpieczeń; wyłącznie lokalne emulatory. |
-| Rzeczywisty Firebase Admin SDK na emulatorach Auth/Firestore/Storage | 1/1 PASS — pełny odczyt, metadane pliku, plan bez zastosowania; niezmienione dokumenty i ich wersje oraz generacja/metageneracja/bajty pliku. |
-| TypeScript i Vite (`npm run build`) | PASS; wcześniejsze ostrzeżenie o wielkości bundle pozostaje. |
+| Walidacja UID, gospodarstwa i planu | 43/43 PASS, Node.js 22.23.3; 404/403 blokują także plan bez referencji do plików. |
+| Odczyt ograniczony do projekcji i bez operacji zapisu | 15/15 PASS — typy pól, paginacja, limity, Auth UID, brak tokenów/treści, zachowanie Firestore/Auth przy 404/403 i błędzie dalszej strony. |
+| CLI, tryb offline i prywatne wyniki | 8/8 PASS — brak apply, prawa plików, stabilny ID, odmowa błędnych manifestów, zapis raportu i kod wyjścia 2 przy 404/403. |
+| Bezpieczna klasyfikacja i kompletność kontroli Storage | 14/14 PASS — kody 404/403, pozostałe błędy, sprzeczne statusy, częściowe prefiksy, stare snapshoty i brak wycieku danych błędów. |
+| Firestore/Storage: zachowanie uprawnionego dostępu i odmowy | 21/21 PASS w bazowym etapie `e374b0e`; nie uruchamiano ponownie w poprawce Storage — reguły pozostają bez zmian. |
+| Rzeczywisty Firebase Admin SDK na emulatorach Auth/Firestore/Storage | 1/1 PASS, uruchomiony ponownie po poprawce — pełny odczyt, metadane pliku, plan bez zastosowania; niezmienione dokumenty i ich wersje oraz generacja/metageneracja/bajty pliku. |
+| TypeScript i Vite (`npm run build`) | PASS, uruchomiony ponownie po poprawce; wcześniejsze ostrzeżenie o wielkości bundle pozostaje. |
 
-Łącznie 55 przypadków planera/reader/CLI, 21 scenariuszy reguł i jeden test integracyjny. Nie uruchamiano pełnego E2E aplikacji ani nie deklarowano produkcyjnej weryfikacji pięciu rzeczywistych UID. Kod aplikacji, reguły i backend nie zostały zmienione przez ten etap. Ostatnia poprawka izolacji Finansów nadal ma opisane osobno ograniczenia starszego zestawu E2E Kalendarza.
+Po poprawce Storage: **80/80 testów narzędzia i 1/1 test integracyjny PASS**. W bazowym etapie wykonano również 21 scenariuszy reguł. Błędy 404/403 testowano na syntetycznych odpowiedziach i prywatnych fixture’ach offline; nie odpytywano produkcyjnego magazynu. Nie uruchamiano pełnego E2E aplikacji ani nie deklarowano produkcyjnej weryfikacji pięciu rzeczywistych UID. Kod aplikacji, reguły i backend nie zostały zmienione przez ten etap. Ostatnia poprawka izolacji Finansów nadal ma opisane osobno ograniczenia starszego zestawu E2E Kalendarza.
+
+Minimalny zestaw testów narzędzia (Node.js 22):
+
+```bash
+node --test --experimental-test-isolation=none \
+  tests/household-migration-plan.test.mjs \
+  tests/household-migration-inventory.test.mjs \
+  tests/household-migration-cli.test.mjs \
+  tests/household-storage-status.test.mjs
+```
 
 Testy wykryły różnicę SDK: `getFiles` z parametrem `fields` zwraca surowe JSON-y obiektów zamiast instancji `File`. Reader obsługuje poprawnie oba formaty; rzeczywisty transport emulatora to potwierdził. Typy dozwolonych pól są sprawdzane przed zapisaniem inwentaryzacji — zagnieżdżony obiekt z tokenem pod błędnym `familyId` lub polem grantu przerywa dry-run, zamiast trafiać do raportu albo zostać zamieniony na `null`.
 

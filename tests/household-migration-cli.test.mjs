@@ -93,6 +93,41 @@ test('a blocked offline plan exits nonzero yet leaves a reviewable private repor
   assert.equal(plan.writesPerformed, 0);
 });
 
+for (const [httpStatus, status, code] of [[404, 'not-found', 'STORAGE_BUCKET_NOT_FOUND'], [403, 'forbidden', 'STORAGE_ACCESS_DENIED']]) {
+  test(`CLI saves a private Firestore/Auth report with a Storage HTTP ${httpStatus} migration blocker and exits 2`, async t => {
+    const f = await fixture(t);
+    f.inventory.coverage.complete = false;
+    f.inventory.coverage.storagePrefixes = [];
+    f.inventory.coverage.missingCollections = ['storage'];
+    f.inventory.coverage.storageCheck = { verified: false, status, code, httpStatus, message: 'POISON_PRIVATE_ERROR' };
+    await writeFile(f.snapshot, JSON.stringify(f.inventory), { mode: 0o600 });
+    await assert.rejects(f.run(), error => error.code === 2 && error.stdout.includes('blocked')
+      && error.stdout.includes('Zapisów Firebase: 0') && error.stdout.includes(`HTTP ${httpStatus}`)
+      && error.stdout.includes('raport Firestore/Auth zachowano') && !error.stderr.includes('Dry-run przerwany'));
+    const run = (await readdir(f.output)).find(name => name.startsWith('run-'));
+    const directory = path.join(f.output, run);
+    const plan = JSON.parse(await readFile(path.join(directory, 'plan.private.json'), 'utf8'));
+    const inventory = JSON.parse(await readFile(path.join(directory, 'inventory.private.json'), 'utf8'));
+    const report = await readFile(path.join(directory, 'report.md'), 'utf8');
+    assert.equal(plan.status, 'blocked'); assert.equal(plan.canApply, false); assert.equal(plan.writesPerformed, 0);
+    assert.equal(plan.summary.storageVerified, false);
+    assert.ok(plan.blockers.some(item => item.code === code));
+    assert.equal(inventory.collections.members.length, 5);
+    assert.equal(inventory.auth.length, 5);
+    assert.equal(inventory.coverage.authVerified, true);
+    assert.equal(inventory.coverage.complete, false);
+    assert.match(report, /NIE ZWERYFIKOWANO — BLOKADA MIGRACJI/);
+    assert.ok(report.includes(`HTTP ${httpStatus}`));
+    assert.match(report, /Zaobserwowane obiekty Storage \(wyłącznie metadane\): 0/);
+    assert.match(report, /nie potwierdza braku plików/);
+    assert.match(report, /Nie utworzono magazynu ani nie zmieniono jego uprawnień/);
+    for (const file of await readdir(directory)) {
+      assert.equal((await stat(path.join(directory, file))).mode & 0o077, 0);
+      assert.equal((await readFile(path.join(directory, file), 'utf8')).includes('POISON'), false);
+    }
+  });
+}
+
 test('publicly readable or symlinked identity files cannot initialize a live or offline inventory', async t => {
   const f = await fixture(t);
   await chmod(f.input, 0o644);

@@ -114,6 +114,77 @@ test('an Auth lookup returning another UID never verifies the requested profile'
   await assert.rejects(collectHouseholdInventory(context, config), /AUTH_INVENTORY_FAILED/);
 });
 
+for (const [httpStatus, status, code] of [[404, 'not-found', 'STORAGE_BUCKET_NOT_FOUND'], [403, 'forbidden', 'STORAGE_ACCESS_DENIED']]) {
+  test(`Storage HTTP ${httpStatus} preserves Firestore/Auth reads but blocks complete coverage without leaking error details`, async () => {
+    const context = readerFixture({ members: [{ id: config.members[0].uid, data: { name: 'Test 0', role: 'parent' } }],
+      tasks: [{ id: 'test-task', data: { createdBy: config.members[0].uid } }] });
+    let attempts = 0;
+    context.bucket.getFiles = async () => {
+      attempts++;
+      throw Object.assign(new Error('POISON_AUTHORIZATION_COOKIE'), { code: String(httpStatus),
+        response: { status: httpStatus, data: 'POISON_BODY', headers: { authorization: 'POISON_TOKEN' } } });
+    };
+    const inventory = await collectHouseholdInventory(context, config);
+    assert.equal(inventory.collections.members.length, 1);
+    assert.equal(inventory.collections.tasks.length, 1);
+    assert.equal(context.calls.filter(call => call.type === 'query').length, names().length);
+    assert.equal(context.calls.filter(call => call.type === 'auth-read').length, 5);
+    assert.equal(inventory.auth.length, 5);
+    assert.equal(inventory.coverage.authVerified, true);
+    assert.equal(inventory.coverage.complete, false);
+    assert.deepEqual(inventory.coverage.storageCheck, { verified: false, status, code, httpStatus });
+    assert.deepEqual(inventory.coverage.missingCollections, ['storage']);
+    assert.deepEqual(inventory.coverage.storagePrefixes, []);
+    assert.deepEqual(inventory.storage, []); // No observations, NOT proof that the bucket is empty.
+    assert.equal(attempts, 1, 'Do not retry/fallback to another bucket after 404/403');
+    assert.equal(JSON.stringify(inventory).includes('POISON'), false);
+  });
+}
+
+test('a later-page Storage failure retains observations and verifies only prefixes fully read before the failure', async () => {
+  const context = readerFixture();
+  const object = name => ({ name, generation: '1', metageneration: '1', size: '68', contentType: 'image/png' });
+  context.bucket.getFiles = async options => {
+    assert.equal(options.fields, STORAGE_FIELDS);
+    context.calls.push({ type: 'storage-list', options });
+    if (options.prefix === 'taskProof/') return [[object('taskProof/observed.png')], null];
+    assert.equal(options.prefix, 'taskRewardImages/');
+    if (!options.pageToken) return [[object('taskRewardImages/observed.png')], { pageToken: 'next-page' }];
+    throw Object.assign(new Error('POISON_LATE_ERROR'), { code: 403 });
+  };
+  const inventory = await collectHouseholdInventory(context, config);
+  assert.equal(inventory.storage.length, 2);
+  assert.deepEqual(inventory.coverage.storagePrefixes, ['taskProof/']);
+  assert.equal(inventory.coverage.complete, false);
+  assert.equal(inventory.coverage.storageCheck.code, 'STORAGE_ACCESS_DENIED');
+  assert.equal(context.calls.filter(call => call.type === 'storage-list').length, 3);
+});
+
+test('a successful empty Storage scan is verified, unlike an unavailable bucket', async () => {
+  const context = readerFixture();
+  const inventory = await collectHouseholdInventory(context, config);
+  assert.deepEqual(inventory.storage, []);
+  assert.deepEqual(inventory.coverage.storageCheck, { verified: true, status: 'verified', code: null, httpStatus: null });
+  assert.deepEqual(inventory.coverage.storagePrefixes, [...STORAGE_PREFIXES]);
+  assert.equal(inventory.coverage.complete, true);
+  assert.equal(context.calls.filter(call => call.type === 'storage-list').length, STORAGE_PREFIXES.length);
+});
+
+test('offline sanitization preserves an unavailable Storage blocker despite forged overall coverage and drops raw error data', () => {
+  const raw = { schemaVersion: 1, projectId: config.projectId, bucket: config.bucket,
+    collections: Object.fromEntries(names().map(name => [name, []])), auth: [], storage: [],
+    coverage: { complete: true, missingCollections: [], storagePrefixes: [...STORAGE_PREFIXES], authVerified: true,
+      storageCheck: { verified: false, status: 'not-found', code: 'STORAGE_BUCKET_NOT_FOUND', httpStatus: 404,
+        message: 'POISON_COOKIE', response: { headers: { authorization: 'POISON_TOKEN' } } } } };
+  const filtered = sanitizeHouseholdSnapshot(raw, config);
+  assert.equal(filtered.coverage.complete, false);
+  assert.deepEqual(filtered.coverage.missingCollections, ['storage']);
+  assert.deepEqual(filtered.coverage.storageCheck, { verified: false, status: 'not-found', code: 'STORAGE_BUCKET_NOT_FOUND', httpStatus: 404 });
+  assert.equal(JSON.stringify(filtered).includes('POISON'), false);
+  const roundTrip = sanitizeHouseholdSnapshot(filtered, config);
+  assert.deepEqual(roundTrip.coverage, filtered.coverage);
+});
+
 test('private offline snapshots lose unknown fields and cannot fabricate a missing collection as complete', () => {
   const raw = { schemaVersion: 1, projectId: config.projectId, bucket: config.bucket, collections: {}, auth: [], storage: [],
     coverage: { complete: true, storagePrefixes: [...STORAGE_PREFIXES], authVerified: true } };

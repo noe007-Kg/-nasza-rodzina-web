@@ -10,6 +10,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getStorage } from 'firebase-admin/storage';
 import { buildHouseholdMigrationPlan, validateHouseholdConfig } from './lib/household-migration-plan.mjs';
 import { collectHouseholdInventory, sanitizeHouseholdSnapshot } from './lib/household-migration-inventory.mjs';
+import { householdStorageCheck } from './lib/household-storage-status.mjs';
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 const fail = code => { throw Object.assign(new Error(code), { code }); };
@@ -89,10 +90,14 @@ export async function prepareLocalProposal(directory, config) {
 
 function report(plan, inventory, checks) {
   const counts = Object.entries(inventory.collections).map(([name, rows]) => `- \`${name}\`: ${rows.length}`).join('\n');
+  const storage = householdStorageCheck(inventory.coverage);
+  const storageMessage = storage.verified ? 'Zweryfikowano skan wymaganych prefiksów.'
+    : `NIE ZWERYFIKOWANO — BLOKADA MIGRACJI (${storage.code}${storage.httpStatus ? ', HTTP ' + storage.httpStatus : ''}). ` +
+      'Zaobserwowana liczba obiektów nie potwierdza braku plików. Nie utworzono magazynu ani nie zmieniono jego uprawnień.';
   // Paths/UIDs and candidate patches remain only in protected JSON, never in terminal output.
   return `# Przygotowanie gospodarstwa — dry-run\n\nStatus: ${plan.status}. Zapisów Firebase: 0. Tryb wykonania migracji: niedostępny.\n\nŹródło: ${inventory.source}. Propozycja familyId: ${plan.familyId}.\n\n` +
     `Planowanych zmian wyłącznie pola familyId: ${plan.changes.length}. Blokad: ${plan.blockers.length}. Ostrzeżeń: ${plan.warnings.length}.\n\n` +
-    `## Zakres odczytu\n\n${counts}\n- Obiekty Storage (wyłącznie metadane): ${inventory.storage.length}\n\n` +
+    `## Zakres odczytu\n\n${counts}\n- Zaobserwowane obiekty Storage (wyłącznie metadane): ${inventory.storage.length}\n\nStorage: ${storageMessage}\n\n` +
     `## Ograniczenia\n\nUID ↔ gospodarstwo wymaga jawnego potwierdzenia operatora; brak starego familyId nie dowodzi wspólnego gospodarstwa. ` +
     `Nie czytano treści medycznych, danych przelewów, sesji eduVULCAN, tokenów OAuth ani tokenów pobierania Storage. Nie zmieniono ACL, punktów, plików lub kalendarzy. ` +
     `Nie zweryfikowano aktywnych reguł chmurowych ani pobranych bajtów plików. Migrowanie jest osobnym etapem wymagającym zgody, kopii bezpieczeństwa, okna spójności i ponownego odczytu wersji.\n\n` +
@@ -125,6 +130,8 @@ export async function runHouseholdDryRun(options) {
     for (const [name, content] of Object.entries(outputs)) await writePrivate(path.join(runDirectory, name), content);
     await writePrivate(path.join(runDirectory, 'checksums.private.json'), encode(Object.fromEntries(Object.entries(outputs).map(([name, content]) => [name, digest(content)]))));
     console.log(`Dry-run zakończony: ${plan.status}; zmian planowanych ${plan.changes.length}; blokad ${plan.blockers.length}; ostrzeżeń ${plan.warnings.length}. Zapisów Firebase: 0.`);
+    const storage = householdStorageCheck(inventory.coverage);
+    if (!storage.verified) console.log(`Storage NIE ZWERYFIKOWANO (${storage.code}${storage.httpStatus ? ', HTTP ' + storage.httpStatus : ''}). Blokada migracji; raport Firestore/Auth zachowano.`);
     console.log('Wyniki zapisano wyłącznie w prywatnym katalogu --output. Migracji nie wykonano.');
     return { plan, runDirectory };
   } finally { if (app) await deleteApp(app); }

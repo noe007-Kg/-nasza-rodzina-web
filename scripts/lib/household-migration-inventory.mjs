@@ -1,5 +1,7 @@
 /** Read-only, metadata-only inventory. Never import mutating application services. */
 import { FieldPath } from 'firebase-admin/firestore';
+import { STORAGE_PREFIXES, householdStorageCheck, sanitizeStorageCheck, storageReadFailure } from './household-storage-status.mjs';
+export { STORAGE_PREFIXES } from './household-storage-status.mjs';
 
 export const HOUSEHOLD_FIELDS = Object.freeze({
   members: ['name', 'personKey', 'familyId', 'role', 'active', 'archived', 'disabled', 'canLogin', 'avatarPath', 'avatarSource'],
@@ -30,7 +32,6 @@ export const HOUSEHOLD_FIELDS = Object.freeze({
   financeBillAudit: ['billId', 'familyId', 'actorUid', 'kind'],
 });
 export const INBOX_FIELDS = ['eventId', 'recordId', 'recordKey', 'category', 'module', 'importantKey'];
-export const STORAGE_PREFIXES = Object.freeze(['taskProof/', 'taskRewardImages/', 'healthDocuments/', 'health/', 'avatars/']);
 // Google JSON partial responses exclude bearer tokens, filenames in document contents and binary data.
 export const STORAGE_FIELDS = 'items(name,generation,metageneration,size,contentType,metadata(taskId,rewardId,uploadId,uploaderUid)),nextPageToken';
 
@@ -87,12 +88,16 @@ async function readCollection(db, name, maximum) {
 }
 
 async function readStorage(bucket, maximum) {
-  const rows = [], seen = new Set();
-  let complete = true;
+  const rows = [], seen = new Set(), prefixes = [];
+  const finish = check => ({ rows: rows.slice(0, maximum), complete: check.verified, prefixes, check });
   for (const prefix of STORAGE_PREFIXES) {
     let pageToken;
     do {
-      const [files, next] = await bucket.getFiles({ prefix, autoPaginate: false, maxResults: Math.min(500, maximum + 1 - rows.length), fields: STORAGE_FIELDS, ...(pageToken ? { pageToken } : {}) });
+      let result;
+      try {
+        result = await bucket.getFiles({ prefix, autoPaginate: false, maxResults: Math.min(500, maximum + 1 - rows.length), fields: STORAGE_FIELDS, ...(pageToken ? { pageToken } : {}) });
+      } catch (error) { return finish(storageReadFailure(error)); }
+      const [files, next] = result;
       for (const file of files) {
         if (seen.has(file.name)) continue;
         seen.add(file.name);
@@ -104,13 +109,13 @@ async function readStorage(bucket, maximum) {
         const links = Object.fromEntries(['taskId', 'rewardId', 'uploadId', 'uploaderUid'].filter(key => typeof value.metadata?.[key] === 'string').map(key => [key, value.metadata[key]]));
         rows.push({ path: file.name, exists: true, generation: String(value.generation || ''), metageneration: String(value.metageneration || ''), size: Number(value.size), contentType: value.contentType || '', links });
       }
-      if (rows.length > maximum) { complete = false; break; }
-      if (next?.pageToken && next.pageToken === pageToken) inventoryFailure('STORAGE_PAGINATION_STALLED');
+      if (rows.length > maximum) return finish({ verified: false, status: 'incomplete', code: 'STORAGE_SCAN_LIMIT_REACHED', httpStatus: null });
+      if (next?.pageToken && next.pageToken === pageToken) return finish({ verified: false, status: 'incomplete', code: 'STORAGE_PAGINATION_STALLED', httpStatus: null });
       pageToken = next?.pageToken;
     } while (pageToken);
-    if (!complete) break;
+    prefixes.push(prefix); // A prefix is verified only after its final page succeeds.
   }
-  return { rows: rows.slice(0, maximum), complete };
+  return finish({ verified: true, status: 'verified', code: null, httpStatus: null });
 }
 
 /** Dependencies deliberately exclude transactions/batches, Auth mutators and Storage files/downloads. */
@@ -137,7 +142,7 @@ export async function collectHouseholdInventory({ db, auth, bucket }, config, { 
   const files = await readStorage(bucket, maximum);
   if (!files.complete) missingCollections.push('storage');
   return { schemaVersion: 1, projectId: config.projectId, bucket: config.bucket, source: 'firebase-admin-read-only', collections, auth: accounts, storage: files.rows,
-    coverage: { complete: missingCollections.length === 0, missingCollections, collections: names, storagePrefixes: [...STORAGE_PREFIXES], authVerified: true } };
+    coverage: { complete: missingCollections.length === 0, missingCollections, collections: names, storagePrefixes: files.prefixes, storageCheck: files.check, authVerified: true } };
 }
 
 /** Offline snapshots are filtered through the same allowlist before any report is built. */
@@ -147,13 +152,16 @@ export function sanitizeHouseholdSnapshot(snapshot, config) {
   for (const name of names) collections[name] = (snapshot.collections?.[name] || []).map(item => ({
     id: item.id, path: item.path, data: projectedHouseholdData(name, item.data), updateTime: documentVersion(item.updateTime),
   }));
+  const storageCheck = Object.hasOwn(snapshot.coverage || {}, 'storageCheck') ? sanitizeStorageCheck(snapshot.coverage.storageCheck) : undefined;
+  const storageVerified = householdStorageCheck({ ...snapshot.coverage, ...(storageCheck ? { storageCheck } : {}) }).verified;
   return { schemaVersion: snapshot.schemaVersion, projectId: snapshot.projectId, bucket: snapshot.bucket, source: 'offline', collections,
     auth: (snapshot.auth || []).map(item => ({ uid: item.uid, exists: item.exists, disabled: item.disabled })),
     storage: (snapshot.storage || []).map(item => ({ path: item.path, exists: item.exists, generation: item.generation,
       metageneration: item.metageneration, size: item.size, contentType: item.contentType,
       links: Object.fromEntries(['taskId', 'rewardId', 'uploadId', 'uploaderUid'].filter(key => typeof item.links?.[key] === 'string').map(key => [key, item.links[key]])),
       ...(typeof item.hasDownloadToken === 'boolean' ? { hasDownloadToken: item.hasDownloadToken } : {}) })),
-    coverage: { complete: snapshot.coverage?.complete === true && names.every(name => Object.hasOwn(snapshot.collections || {}, name)),
-      missingCollections: names.filter(name => !Object.hasOwn(snapshot.collections || {}, name)).concat(snapshot.coverage?.missingCollections || []),
-      collections: names, storagePrefixes: snapshot.coverage?.storagePrefixes || [], authVerified: snapshot.coverage?.authVerified === true } };
+    coverage: { complete: snapshot.coverage?.complete === true && storageVerified && names.every(name => Object.hasOwn(snapshot.collections || {}, name)),
+      missingCollections: [...new Set(names.filter(name => !Object.hasOwn(snapshot.collections || {}, name)).concat(snapshot.coverage?.missingCollections || [], storageVerified ? [] : ['storage']))],
+      collections: names, storagePrefixes: (Array.isArray(snapshot.coverage?.storagePrefixes) ? snapshot.coverage.storagePrefixes : []).filter(prefix => STORAGE_PREFIXES.includes(prefix)),
+      ...(storageCheck ? { storageCheck } : {}), authVerified: snapshot.coverage?.authVerified === true } };
 }

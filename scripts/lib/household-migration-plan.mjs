@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { explicitFamilyId } from '../../server/family-identity.mjs';
+import { STORAGE_PREFIXES, householdStorageCheck, storagePrefixVerified } from './household-storage-status.mjs';
 
 // Pure planning only: no Firebase SDK, filesystem, provider or write capability.
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -13,7 +14,6 @@ const REQUIRED_COLLECTIONS = Object.freeze(['members', 'tasks', 'taskCompletions
   '_taskPhotoCleanup', '_taskRewardImageCleanup', 'healthRecords', 'healthDocuments', 'healthDocumentGrants',
   'calendarEvents', 'privateCalendarEvents', '_calendarConnections', '_calendarExports', '_eduStudentBindings',
   'schoolItems', 'schoolParentMessages', 'schoolStudentMessages', 'schoolPlans', 'financeBills', 'financeBillAudit']);
-const STORAGE_PREFIXES = Object.freeze(['taskProof/', 'taskRewardImages/', 'healthDocuments/', 'health/', 'avatars/']);
 const UID_FIELDS = Object.freeze(['createdBy', 'ownerUid', 'ownerProfileId', 'uid', 'actorUid', 'submittedBy', 'approvedBy',
   'completedBy', 'decidedBy', 'sourceOwnerUid', 'establishedByUid']);
 const KNOWN_COLLECTION = value => REQUIRED_COLLECTIONS.includes(value) || /^notificationInbox\/[A-Za-z0-9_-]{1,128}\/items$/.test(value);
@@ -70,13 +70,15 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
   const uids = new Set(config.members.map(member => member.uid));
   const reviewed = new Set(config.reviewedRecordPaths);
   const coverage = inventory.coverage;
+  const storageCheck = householdStorageCheck(coverage);
+  if (!storageCheck.verified) block(storageCheck.code, 'storage');
   if (coverage.complete !== true || coverage.authVerified !== true || !Array.isArray(coverage.missingCollections)
     || coverage.missingCollections.length || !Array.isArray(coverage.collections) || !Array.isArray(coverage.storagePrefixes)) block('INVENTORY_INCOMPLETE');
   for (const name of REQUIRED_COLLECTIONS) if (!Object.hasOwn(inventory.collections, name)
-    || !coverage.collections?.includes(name)) block('COLLECTION_NOT_VERIFIED', name);
+    || !Array.isArray(coverage.collections) || !coverage.collections.includes(name)) block('COLLECTION_NOT_VERIFIED', name);
   for (const uid of uids) if (!Object.hasOwn(inventory.collections, `notificationInbox/${uid}/items`)
-    || !coverage.collections?.includes(`notificationInbox/${uid}/items`)) block('INBOX_NOT_VERIFIED', `notificationInbox/${uid}/items`);
-  for (const prefix of STORAGE_PREFIXES) if (!coverage.storagePrefixes?.includes(prefix)) block('STORAGE_PREFIX_NOT_VERIFIED', prefix);
+    || !Array.isArray(coverage.collections) || !coverage.collections.includes(`notificationInbox/${uid}/items`)) block('INBOX_NOT_VERIFIED', `notificationInbox/${uid}/items`);
+  for (const prefix of STORAGE_PREFIXES) if (!Array.isArray(coverage.storagePrefixes) || !coverage.storagePrefixes.includes(prefix)) block('STORAGE_PREFIX_NOT_VERIFIED', prefix);
   if (inventory.source === 'offline') warn('OFFLINE_METADATA_NOT_PRODUCTION_VERIFICATION');
   warn('OPERATOR_ATTESTATION_IS_NOT_INDEPENDENT_HOUSEHOLD_PROOF');
   warn('LEGACY_NON_FINANCIAL_RULES_ARE_NOT_FULL_MULTI_HOUSEHOLD_ISOLATION');
@@ -209,7 +211,10 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
   const verifiedFiles = new Set();
   const verifyFile = (row, path, expectedLinks = {}, contentTypeField = 'contentType') => {
     const file = files.get(path);
-    if (!file || !file.exists) { block('STORAGE_OBJECT_MISSING', row.path); return false; }
+    if (!file || !file.exists) {
+      block(storagePrefixVerified(coverage, path) ? 'STORAGE_OBJECT_MISSING' : 'STORAGE_OBJECT_NOT_VERIFIED', row.path);
+      return false;
+    }
     if (!/^\d+$/.test(String(file.generation || '')) || !/^\d+$/.test(String(file.metageneration || ''))
       || !Number.isSafeInteger(Number(file.size)) || Number(file.size) <= 0) { block('STORAGE_VERSION_NOT_VERIFIED', row.path); return false; }
     const imageTypes = ['image/jpeg', 'image/png', 'image/webp'];
@@ -385,7 +390,7 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
       conditions: { familyIdEquals: familyId, postApplyUpdateTimeRequired: true, noConcurrentChanges: true } })),
     preservation: { collections: preservedCollections, storageObjects: files.size, storageWrites: 0, authWrites: 0,
       uidChanges: 0, aclChanges: 0, pointRecalculations: 0, calendarWrites: 0, sessionChanges: 0, notificationWrites: 0 },
-    summary: { membersVerified: config.members.filter(member => !blockers.some(item => item.path === `members/${member.uid}`)).length,
+    summary: { storageVerified: storageCheck.verified, membersVerified: config.members.filter(member => !blockers.some(item => item.path === `members/${member.uid}`)).length,
       proposedFamilyIdChanges: sorted.length, inspectedRecords: rows.size, inspectedStorageObjects: files.size,
       requiresSeparateApprovalAndBackup: true, migrationExecutable: false } };
 }
