@@ -185,6 +185,39 @@ test('offline sanitization preserves an unavailable Storage blocker despite forg
   assert.deepEqual(roundTrip.coverage, filtered.coverage);
 });
 
+test('inventory covers quick-product photos and the family avatar, classifies URLs without storing tokens or fetching sources', async () => {
+  const path = `quick-products/${config.members[0].uid}/product.png`;
+  const context = readerFixture({
+    members: [{ id: config.members[0].uid, data: { photoURL: 'https://lh3.googleusercontent.com/POISON_PRIVATE_PATH?token=POISON_TOKEN' } }],
+    familySettings: [{ id: 'profile', data: { updatedBy: config.members[0].uid, avatarPath: `avatars/family/${config.members[0].uid}/test.png` } }],
+    quickProducts: [{ id: 'synthetic-product', data: { title: 'POISON_PRIVATE_TITLE', imageURL:
+      `https://firebasestorage.googleapis.com/v0/b/${config.bucket}/o/${encodeURIComponent(path)}?alt=media&token=POISON_TOKEN` } }],
+    healthRecords: [{ id: 'synthetic-record', data: { documentURL: 'https://storage.googleapis.com/another-private-bucket/health/test.pdf?X-Goog-Signature=POISON_TOKEN' } }],
+  }, [{ name: path, generation: '1', metageneration: '1', size: '68', contentType: 'image/png' }]);
+  const inventory = await collectHouseholdInventory(context, config);
+  assert.equal(inventory.coverage.complete, true);
+  assert.ok(inventory.coverage.storagePrefixes.includes('quick-products/'));
+  assert.ok(context.calls.some(call => call.type === 'storage-list' && call.options.prefix === 'quick-products/'));
+  assert.equal(inventory.collections.familySettings[0].data.avatarPath, `avatars/family/${config.members[0].uid}/test.png`);
+  assert.deepEqual(inventory.collections.members[0].data.fileSources, { photoURL: { kind: 'google-avatar' } });
+  assert.deepEqual(inventory.collections.quickProducts[0].data.fileSources,
+    { imageURL: { kind: 'firebase-storage', bucket: config.bucket, path, hasBearerToken: true } });
+  assert.equal(inventory.collections.healthRecords[0].data.fileSources.documentURL.bucket, 'another-private-bucket');
+  assert.equal(JSON.stringify(inventory).includes('POISON'), false);
+  assert.equal(JSON.stringify(inventory).includes('https://'), false);
+  assert.deepEqual(sanitizeHouseholdSnapshot(inventory, config).collections, inventory.collections);
+});
+
+test('older snapshots omitting product photos or family settings cannot certify the expanded audit as complete', () => {
+  const raw = { schemaVersion: 1, projectId: config.projectId, bucket: config.bucket,
+    collections: Object.fromEntries(names().filter(name => !['quickProducts', 'familySettings'].includes(name)).map(name => [name, []])),
+    auth: [], storage: [], coverage: { complete: true, authVerified: true,
+      storagePrefixes: STORAGE_PREFIXES.filter(prefix => prefix !== 'quick-products/') } };
+  const sanitized = sanitizeHouseholdSnapshot(raw, config);
+  assert.equal(sanitized.coverage.complete, false);
+  assert.deepEqual(sanitized.coverage.missingCollections.sort(), ['familySettings', 'quickProducts', 'storage']);
+});
+
 test('private offline snapshots lose unknown fields and cannot fabricate a missing collection as complete', () => {
   const raw = { schemaVersion: 1, projectId: config.projectId, bucket: config.bucket, collections: {}, auth: [], storage: [],
     coverage: { complete: true, storagePrefixes: [...STORAGE_PREFIXES], authVerified: true } };

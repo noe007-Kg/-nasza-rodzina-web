@@ -1,5 +1,5 @@
 /** Pure, sanitized Storage coverage shared by collector, offline planner and report. */
-export const STORAGE_PREFIXES = Object.freeze(['taskProof/', 'taskRewardImages/', 'healthDocuments/', 'health/', 'avatars/']);
+export const STORAGE_PREFIXES = Object.freeze(['taskProof/', 'taskRewardImages/', 'healthDocuments/', 'health/', 'avatars/', 'quick-products/']);
 const statuses = new Set(['verified', 'not-found', 'forbidden', 'incomplete', 'failed']);
 const codes = new Set(['STORAGE_BUCKET_NOT_FOUND', 'STORAGE_ACCESS_DENIED', 'STORAGE_READ_FAILED',
   'STORAGE_SCAN_LIMIT_REACHED', 'STORAGE_PAGINATION_STALLED', 'STORAGE_NOT_VERIFIED', 'STORAGE_COVERAGE_INVALID']);

@@ -1,10 +1,13 @@
 /** Read-only, metadata-only inventory. Never import mutating application services. */
 import { FieldPath } from 'firebase-admin/firestore';
 import { STORAGE_PREFIXES, householdStorageCheck, sanitizeStorageCheck, storageReadFailure } from './household-storage-status.mjs';
+import { FILE_URL_FIELDS, projectFileSources } from './household-file-sources.mjs';
 export { STORAGE_PREFIXES } from './household-storage-status.mjs';
 
 export const HOUSEHOLD_FIELDS = Object.freeze({
-  members: ['name', 'personKey', 'familyId', 'role', 'active', 'archived', 'disabled', 'canLogin', 'avatarPath', 'avatarSource'],
+  members: ['name', 'personKey', 'familyId', 'role', 'active', 'archived', 'disabled', 'canLogin', 'avatarPath', 'avatarSource', 'photoURL'],
+  familySettings: ['familyId', 'updatedBy', 'avatarPath', 'avatarSource', 'photoURL'],
+  quickProducts: ['familyId', 'createdBy', 'imageURL'],
   tasks: ['person', 'familyId', 'createdBy', 'submittedBy', 'completedBy', 'completedPerson', 'proofUploadId', 'proofPath', 'previousTaskId', 'nextTaskId', 'done', 'approvalStatus', 'verificationMode', 'requireApproval', 'pointsBooked'],
   taskCompletions: ['taskId', 'person', 'familyId', 'submittedBy', 'approvedBy'],
   taskPointBalances: ['person', 'familyId'],
@@ -16,7 +19,7 @@ export const HOUSEHOLD_FIELDS = Object.freeze({
   _taskRewardImageUploads: ['rewardId', 'uid', 'people', 'familyId', 'path', 'state', 'active', 'expiresAt', 'orphanAfter', 'contentType', 'size'],
   _taskPhotoCleanup: ['taskId', 'uploadId', 'path', 'state'],
   _taskRewardImageCleanup: ['rewardId', 'uploadId', 'path', 'state'],
-  healthRecords: ['person', 'familyId', 'createdBy', 'type', 'privateToParents', 'attachmentDocumentId', 'documentPath', 'calendarEventId'],
+  healthRecords: ['person', 'familyId', 'createdBy', 'type', 'privateToParents', 'attachmentDocumentId', 'documentPath', 'documentURL', 'calendarEventId'],
   healthDocuments: ['ownerProfileId', 'ownerUid', 'ownerPersonKey', 'createdBy', 'readers', 'editors', 'familyId', 'attachmentKind', 'attachmentRecordId', 'attachmentPrivate', 'state', 'storagePath', 'size', 'mimeType', 'protected', 'uploadExpiresAt'],
   healthDocumentGrants: ['ownerProfileId', 'ownerUid', 'authorizedUids', 'grants'],
   calendarEvents: ['familyId', 'person', 'createdBy', 'updatedBy', 'ownerUid', 'ownerProfileId', 'private', 'visibility', 'source', 'sourceRecordId', 'sourceConnectionId', 'sourceOwnerUid', 'externalCalendarId', 'externalEventId', 'externalSeriesId', 'seriesId'],
@@ -59,12 +62,15 @@ function metadataValue(key, value) {
 }
 export function projectedHouseholdData(collection, value) {
   const fields = HOUSEHOLD_FIELDS[collection] || (collection.startsWith('notificationInbox/') ? INBOX_FIELDS : []);
-  return Object.fromEntries(fields.filter(key => Object.hasOwn(value || {}, key)).map(key => {
+  const data = Object.fromEntries(fields.filter(key => !(FILE_URL_FIELDS[collection] || []).includes(key) && Object.hasOwn(value || {}, key)).map(key => {
     if (key !== 'grants') return [key, metadataValue(key, value[key])];
     if (!Array.isArray(value.grants) || value.grants.some(grant => !grant || typeof grant !== 'object' || Array.isArray(grant))) inventoryFailure('INVENTORY_FIELD_TYPE_INVALID');
     const keys = ['uid', 'basis', 'canEdit', 'authorizedBy', 'verified', 'verifiedBy'];
     return [key, value.grants.map(grant => Object.fromEntries(keys.filter(name => Object.hasOwn(grant, name)).map(name => [name, metadataValue(name, grant[name])])))];
   }));
+  const fileSources = projectFileSources(collection, value || {});
+  if (Object.keys(fileSources).length) data.fileSources = fileSources;
+  return data;
 }
 export function documentVersion(value) {
   return value && Number.isInteger(value.nanoseconds) && value.seconds !== undefined

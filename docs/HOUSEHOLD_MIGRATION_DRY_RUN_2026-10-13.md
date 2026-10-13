@@ -124,11 +124,13 @@ Odczyt jest stronicowany i ograniczony do jawnego zestawu pól. Sprawdza:
 - Kalendarze rodzinne/prywatne, właścicieli zewnętrznych połączeń i map eksportu; metadane szkolnych przypisań bez treści wiadomości lub ocen.
 - Stare rachunki i audyty, właścicieli, dzieci z `sharedWith`, serie/okresy oraz ich indywidualną kwalifikację do gospodarstwa.
 - Metadane wpisów istniejących skrzynek powiadomień pięciu UID, bez zmiany wpisów lub resetowania deduplikacji.
-- Obiekty w `taskProof/`, `taskRewardImages/`, `healthDocuments/`, `health/`, `avatars/`: ścieżkę, generację, metagenerację, rozmiar, MIME i techniczne identyfikatory powiązania.
+- Obiekty w `taskProof/`, `taskRewardImages/`, `healthDocuments/`, `health/`, `avatars/`, `quick-products/`: ścieżkę, generację, metagenerację, rozmiar, MIME i techniczne identyfikatory powiązania.
+- Odwołania `familySettings/profile` do awatara rodziny oraz zdjęcia `quickProducts`, bez automatycznej zmiany tych globalnych rekordów.
+- Pochodzenie istniejących `photoURL`, `documentURL`, `imageURL`: tylko typ źródła oraz bucket/ścieżkę dla Firebase/GCS. Pełnych URL, parametrów, fragmentów, tokenów i danych inline nie zapisuje; zewnętrznych adresów nie pobiera.
 
-Nie odczytuje opisów medycznych, numerów dokumentów, kwot i danych przelewów, treści kalendarzy/wiadomości, sesji eduVULCAN, haseł, tokenów OAuth, tokenów FCM ani tokenów pobierania Storage. Do planu nie pobiera binarnej zawartości dokumentów. Auth jest używane wyłącznie do sprawdzenia UID, istnienia konta i `disabled`.
+Nie odczytuje opisów medycznych, numerów dokumentów, kwot i danych przelewów, treści kalendarzy/wiadomości, sesji eduVULCAN, haseł, tokenów OAuth, tokenów FCM ani wartości tokenów z metadanych Storage. Odwołania URL są klasyfikowane w pamięci; ewentualna wartość tokena w query nigdy nie trafia do raportu ani logu. Do planu nie pobiera binarnej zawartości dokumentów. Auth jest używane wyłącznie do sprawdzenia UID, istnienia konta i `disabled`.
 
-Domyślny `--max-documents 10000` oznacza limit **na każdą kolekcję**, a nie łącznie na cały projekt. Maksymalna dopuszczalna wartość to `50000`. Narzędzie odczytuje 26 kolekcji głównych, pięć skrzynek `notificationInbox/<UID>/items`, pięć kont Auth oraz pięć prefiksów Storage z wspólnym limitem liczby obiektów. Dodatkowy rekord służy wykryciu przekroczenia limitu; niepełna inwentaryzacja blokuje plan.
+Domyślny `--max-documents 10000` oznacza limit **na każdą kolekcję**, a nie łącznie na cały projekt. Maksymalna dopuszczalna wartość to `50000`. Narzędzie odczytuje 28 kolekcji głównych, pięć skrzynek `notificationInbox/<UID>/items`, pięć kont Auth oraz sześć prefiksów Storage z wspólnym limitem liczby obiektów. Dodatkowy rekord służy wykryciu przekroczenia limitu; niepełna inwentaryzacja blokuje plan. To znane prefiksy aplikacji, nie lista wszystkich bucketów, obcych prefiksów ani potwierdzenie lokalizacji usług w UE.
 
 Przy jednej małej rodzinie koszt jednorazowego odczytu powinien być niewielki, ale zależy od faktycznej liczby dokumentów i obiektów w całym projekcie. Projekcja mniejszej liczby pól nie obniża liczby rozliczanych odczytów Firestore. Należy uwzględnić stronicowane zapytania, listowanie Storage i odczyty Auth; nie uruchamiać dry-run w pętli. Skrypt nie pobiera plików ani nie wykonuje operacji zapisu.
 
@@ -163,7 +165,7 @@ Dla nieutworzonego magazynu `nasza-rodzina.firebasestorage.app` zwracającego 40
 
 Po błędzie na dalszej stronie skrypt zachowuje wcześniej zaobserwowane metadane. `storagePrefixes` obejmuje tylko prefiksy, których wszystkie strony udało się odczytać. Odwołanie do niezaobserwowanego pliku w niesprawdzonym prefiksie otrzymuje `STORAGE_OBJECT_NOT_VERIFIED`, a nie potwierdzenie `STORAGE_OBJECT_MISSING`. Tylko pomyślny skan wszystkich wymaganych prefiksów może zweryfikować pusty wynik.
 
-Analiza offline zachowuje ten stan blokady i odrzuca sprzeczną deklarację kompletności. Nowy stan Storage jest sanitizowany do czterech pól: `verified`, `status`, `code` i `httpStatus`; treść błędu, stos, odpowiedź HTTP, adresy i nagłówki uwierzytelniania nie trafiają do raportów ani logów. Kompletne snapshoty starego formatu pozostają obsługiwane, ale nie potwierdzają aktualnego stanu produkcji.
+Analiza offline zachowuje ten stan blokady i odrzuca sprzeczną deklarację kompletności. Nowy stan Storage jest sanitizowany do czterech pól: `verified`, `status`, `code` i `httpStatus`; treść błędu, stos, odpowiedź HTTP, adresy i nagłówki uwierzytelniania nie trafiają do raportów ani logów. Snapshoty starego formatu można analizować, ale brak `quick-products/`, `quickProducts` lub `familySettings` blokuje uznanie ich za kompletny rozszerzony audyt. Nie potwierdzają aktualnego stanu produkcji.
 
 Narzędzie nie tworzy magazynu, nie nadaje uprawnień, nie przełącza się automatycznie na inny bucket i nie ponawia błędnego skanu w pętli. Rozstrzygnięcie właściwego magazynu oraz uzyskanie pełnej kontroli tylko do odczytu wymagają osobnego działania administratora; następnie należy ponownie wykonać dry-run. **Nie stosować migracji przy niekompletnej kontroli Storage.**
 
@@ -178,8 +180,10 @@ Typowe blokady:
 - Brak gotowego pliku, różne metadane lub generacje, konflikt ACL lub zgody; skrypt nie dopisuje ani nie usuwa osób uprawnionych.
 - Stary rachunek lub jego audyt bez indywidualnego potwierdzenia w `reviewedRecordPaths`.
 - Przekroczony limit inwentaryzacji lub plan większy niż 450 zmian.
+- Plik z URL w innym bucketcie, sprzeczny URL/ścieżka, źródło inline/blob lub niezweryfikowany starszy URL dokumentu medycznego.
+- Aktywny profil poza pięcioma potwierdzonymi UID: `ADDITIONAL_ACTIVE_MEMBER_REQUIRES_ISOLATION_REVIEW`. Flaga prezentacyjna `disabled` nie potwierdza odebrania dostępu przez stare Rules. Nie archiwizować ani nie usuwać tego profilu automatycznie; potrzebna weryfikacja gospodarstwa i izolacji.
 
-Ostrzeżenia pozostają także przy planie bez blokad: poświadczenie operatora nie jest niezależnym dowodem gospodarstwa, aktywne reguły chmurowe nie zostały porównane, pełny backup nie został wykonany, odczyt metadanych nie jest atomowy i starsze niefinansowe moduły nie zapewniają pełnej izolacji gospodarstw. Narzędzie nie sprawdza ani nie unieważnia tokenów pobierania plików.
+Ostrzeżenia pozostają także przy planie bez blokad: poświadczenie operatora nie jest niezależnym dowodem gospodarstwa, aktywne reguły chmurowe nie zostały porównane, pełny backup nie został wykonany, odczyt metadanych nie jest atomowy i starsze niefinansowe moduły nie zapewniają pełnej izolacji gospodarstw. Narzędzie rozpoznaje obecność parametru bearer w istniejącym URL, lecz nie audytuje wartości tokenów z metadanych ani ich nie unieważnia. Wskazuje również niepowiązane zdjęcia produktów/awatary i niepobrane źródła zewnętrzne, bez automatycznego sprzątania.
 
 ## 7. Emulatory i analiza offline
 
@@ -252,15 +256,17 @@ Poniżej rzeczywiste wyniki lokalnej weryfikacji. Testy planowania, odczytu i CL
 
 | Sprawdzenie | Wynik |
 |---|---|
-| Walidacja UID, gospodarstwa i planu | 43/43 PASS, Node.js 22.23.3; 404/403 blokują także plan bez referencji do plików. |
-| Odczyt ograniczony do projekcji i bez operacji zapisu | 15/15 PASS — typy pól, paginacja, limity, Auth UID, brak tokenów/treści, zachowanie Firestore/Auth przy 404/403 i błędzie dalszej strony. |
-| CLI, tryb offline i prywatne wyniki | 8/8 PASS — brak apply, prawa plików, stabilny ID, odmowa błędnych manifestów, zapis raportu i kod wyjścia 2 przy 404/403. |
+| Walidacja UID, gospodarstwa i planu | 53/53 PASS, Node.js 22.23.3; 404/403, dodatkowy aktywny profil, źródła/plik spoza bucketa, awatary i zdjęcia produktów. |
+| Odczyt ograniczony do projekcji i bez operacji zapisu | 17/17 PASS — typy pól, paginacja, limity, Auth UID, zachowanie Firestore/Auth przy 404/403, klasyfikacja URL i niekompletne stare snapshoty. |
+| CLI, tryb offline i prywatne wyniki | 9/9 PASS — brak apply, prawa plików, stabilny ID, blokady 404/403/innego bucketa, brak pełnych URL i tokenów w wynikach. |
 | Bezpieczna klasyfikacja i kompletność kontroli Storage | 14/14 PASS — kody 404/403, pozostałe błędy, sprzeczne statusy, częściowe prefiksy, stare snapshoty i brak wycieku danych błędów. |
-| Firestore/Storage: zachowanie uprawnionego dostępu i odmowy | 21/21 PASS w bazowym etapie `e374b0e`; nie uruchamiano ponownie w poprawce Storage — reguły pozostają bez zmian. |
+| Bezpieczna klasyfikacja źródeł plików | 15/15 PASS — Firebase/GCS, Google, assets, data/blob, sanitizacja offline, niebezpieczne ścieżki, brak zapytań zewnętrznych. |
+| Finanse: model, API i przypomnienia | 30/30 PASS — wspólni rodzice, wskazane dziecko, brak/`__legacy__`, obce gospodarstwo, deduplikacja i ponowna kontrola uprawnień. |
+| Firestore/Storage: zachowanie uprawnionego dostępu i odmowy | 21/21 PASS, uruchomione ponownie; 5 scenariuszy migracji i 16 zabezpieczeń, lokalne emulatory. Nie dowodzą pełnej izolacji legacy modułów. |
 | Rzeczywisty Firebase Admin SDK na emulatorach Auth/Firestore/Storage | 1/1 PASS, uruchomiony ponownie po poprawce — pełny odczyt, metadane pliku, plan bez zastosowania; niezmienione dokumenty i ich wersje oraz generacja/metageneracja/bajty pliku. |
 | TypeScript i Vite (`npm run build`) | PASS, uruchomiony ponownie po poprawce; wcześniejsze ostrzeżenie o wielkości bundle pozostaje. |
 
-Po poprawce Storage: **80/80 testów narzędzia i 1/1 test integracyjny PASS**. W bazowym etapie wykonano również 21 scenariuszy reguł. Błędy 404/403 testowano na syntetycznych odpowiedziach i prywatnych fixture’ach offline; nie odpytywano produkcyjnego magazynu. Nie uruchamiano pełnego E2E aplikacji ani nie deklarowano produkcyjnej weryfikacji pięciu rzeczywistych UID. Kod aplikacji, reguły i backend nie zostały zmienione przez ten etap. Ostatnia poprawka izolacji Finansów nadal ma opisane osobno ograniczenia starszego zestawu E2E Kalendarza.
+Po rozszerzeniu audytu: **108/108 testów narzędzia, 30/30 testów Finansów, 21/21 scenariuszy Rules i 1/1 test integracyjny PASS**. Błędy 404/403 testowano na syntetycznych odpowiedziach i prywatnych fixture’ach offline; nie odpytywano produkcyjnego magazynu. Nie uruchamiano pełnego E2E aplikacji ani nie deklarowano produkcyjnej weryfikacji pięciu rzeczywistych UID. Kod aplikacji, reguły i backend nie zostały zmienione przez ten etap. Ostatnia poprawka izolacji Finansów nadal ma opisane osobno ograniczenia starszego zestawu E2E Kalendarza.
 
 Minimalny zestaw testów narzędzia (Node.js 22):
 
@@ -269,6 +275,7 @@ node --test --experimental-test-isolation=none \
   tests/household-migration-plan.test.mjs \
   tests/household-migration-inventory.test.mjs \
   tests/household-migration-cli.test.mjs \
+  tests/household-file-sources.test.mjs \
   tests/household-storage-status.test.mjs
 ```
 

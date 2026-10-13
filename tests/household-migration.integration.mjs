@@ -20,6 +20,11 @@ test('real Admin SDK dry-run reads the demo inventory and preserves Firestore, A
   const db = getFirestore(app), auth = getAuth(app), bucket = getStorage(app).bucket();
   const cleared = await fetch(`http://127.0.0.1:8080/emulator/v1/projects/${projectId}/databases/(default)/documents`, { method: 'DELETE' });
   assert.equal(cleared.ok, true);
+  // Other sequential emulator suites leave synthetic files behind. A fresh
+  // Firestore fixture with those files would correctly look like orphaned
+  // production data to the planner. Reset ONLY the explicitly local emulator.
+  const storageCleared = await fetch('http://127.0.0.1:9199/internal/reset', { method: 'POST' });
+  assert.equal(storageCleared.ok, true);
   const c = { schemaVersion: 1, projectId, bucket: bucket.name, householdConfirmed: true,
     members: Array.from({ length: 5 }, (_, index) => ({ uid: `migration-integration-${index}`, expectedName: `Synthetic ${index}`,
       expectedRole: index < 2 ? 'parent' : 'child', expectedCanLogin: index !== 4 })) };
@@ -54,7 +59,7 @@ test('real Admin SDK dry-run reads the demo inventory and preserves Firestore, A
   assert.equal(stored.size, png.length); assert.equal(stored.contentType, 'image/png');
   const plan = buildHouseholdMigrationPlan(c, inventory, { familyId: `family-${randomUUID()}` });
   assert.equal(plan.writesPerformed, 0); assert.equal(plan.canApply, false);
-  assert.equal(plan.status, 'prepared-requires-approval');
+  assert.equal(plan.status, 'prepared-requires-approval', plan.blockers.map(item => item.code).join(', '));
   assert.equal(plan.changes.length, 7);
   const after = await db.getAll(...paths.map(path => db.doc(path)));
   for (let index = 0; index < before.length; index++) {

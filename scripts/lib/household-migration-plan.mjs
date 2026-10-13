@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { explicitFamilyId } from '../../server/family-identity.mjs';
 import { STORAGE_PREFIXES, householdStorageCheck, storagePrefixVerified } from './household-storage-status.mjs';
+import { projectFileSources } from './household-file-sources.mjs';
 
 // Pure planning only: no Firebase SDK, filesystem, provider or write capability.
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -9,7 +10,7 @@ const uidValid = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.
 const safeId = value => typeof value === 'string' && value.length > 0 && value.length <= 1500
   && !/[\u0000-\u001f/]/.test(value) && !['.', '..'].includes(value);
 const sha = value => createHash('sha256').update(value).digest('hex');
-const REQUIRED_COLLECTIONS = Object.freeze(['members', 'tasks', 'taskCompletions', 'taskPointBalances', 'taskPointLedger',
+const REQUIRED_COLLECTIONS = Object.freeze(['members', 'familySettings', 'quickProducts', 'tasks', 'taskCompletions', 'taskPointBalances', 'taskPointLedger',
   'taskRewards', 'taskRewardRequests', '_taskRewardPending', '_taskPhotoUploads', '_taskRewardImageUploads',
   '_taskPhotoCleanup', '_taskRewardImageCleanup', 'healthRecords', 'healthDocuments', 'healthDocumentGrants',
   'calendarEvents', 'privateCalendarEvents', '_calendarConnections', '_calendarExports', '_eduStudentBindings',
@@ -20,6 +21,7 @@ const KNOWN_COLLECTION = value => REQUIRED_COLLECTIONS.includes(value) || /^noti
 const versionValid = value => object(value) && typeof value.seconds === 'string' && /^\d+$/.test(value.seconds)
   && Number.isInteger(value.nanoseconds) && value.nanoseconds >= 0 && value.nanoseconds < 1e9;
 const reservedLegacy = value => value === undefined || value === null || value === '' || value === '__legacy__';
+const avatarFilename = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.(?:jpg|jpeg|png|webp|gif)$/i;
 function error(code) { const failure = new Error(code); failure.code = code; throw failure; }
 function exactKeys(value, allowed, code) { if (!object(value) || Object.keys(value).some(key => !allowed.includes(key))) error(code); }
 function nonemptyText(value, maximum = 128) { return typeof value === 'string' && value.trim() === value && value.length > 0
@@ -147,6 +149,11 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
   for (const row of list('members')) if (!uids.has(row.id)) {
     if (row.data.familyId === familyId) block('FAMILY_ID_COLLISION', row.path);
     if (persons.has(row.data.personKey || row.data.name)) block('PERSON_KEY_COLLISION_WITH_FOREIGN_MEMBER', row.path);
+    if (row.data.active === true && row.data.archived !== true) {
+      // Legacy modules still use project-wide member/parent checks. A sixth
+      // active profile cannot be treated as safely isolated by this manifest.
+      block('ADDITIONAL_ACTIVE_MEMBER_REQUIRES_ISOLATION_REVIEW', row.path);
+    }
   }
   const proven = new Set(config.members.map(member => `members/${member.uid}`));
   const prove = row => { proven.add(row.path); assign(row); };
@@ -217,10 +224,13 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
     }
     if (!/^\d+$/.test(String(file.generation || '')) || !/^\d+$/.test(String(file.metageneration || ''))
       || !Number.isSafeInteger(Number(file.size)) || Number(file.size) <= 0) { block('STORAGE_VERSION_NOT_VERIFIED', row.path); return false; }
+    if (/^(avatars|quick-products)\//.test(path) && Number(file.size) > 5 * 1024 * 1024) {
+      block('STORAGE_FILE_SIZE_EXCEEDS_APP_LIMIT', row.path); return false;
+    }
     const imageTypes = ['image/jpeg', 'image/png', 'image/webp'];
     const types = path.startsWith('healthDocuments/') ? [...imageTypes, 'application/pdf']
       : path.startsWith('health/') ? [...imageTypes, 'image/gif', 'application/pdf']
-        : path.startsWith('avatars/') ? [...imageTypes, 'image/gif'] : imageTypes;
+        : path.startsWith('avatars/') || path.startsWith('quick-products/') ? [...imageTypes, 'image/gif'] : imageTypes;
     if (!types.includes(file.contentType)) { block('STORAGE_CONTENT_TYPE_NOT_VERIFIED', row.path); return false; }
     if (row.data.size !== undefined && Number(file.size) !== row.data.size
       || row.data[contentTypeField] !== undefined && file.contentType !== row.data[contentTypeField]
@@ -354,10 +364,60 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
     const member = members.get(uid), path = member?.data.avatarPath;
     if (!path) continue;
     const parts = typeof path === 'string' ? path.split('/') : [];
-    if (parts.length !== 5 || parts[0] !== 'avatars' || parts[1] !== 'members' || parts[2] !== uid || !uids.has(parts[3])) {
+    if (parts.length !== 5 || parts[0] !== 'avatars' || parts[1] !== 'members' || parts[2] !== uid || !uids.has(parts[3]) || !avatarFilename.test(parts[4])) {
       block('MEMBER_AVATAR_PATH_NOT_VERIFIED', member.path); continue;
     }
     verifyFile(member, path);
+  }
+  // Presentation records use legacy global collections. Audit their files,
+  // but never automatically adopt or rewrite their ownership or familyId.
+  for (const row of list('familySettings')) if (row.data.avatarPath) {
+    const parts = typeof row.data.avatarPath === 'string' ? row.data.avatarPath.split('/') : [];
+    if (row.id !== 'profile' || parts.length !== 4 || parts[0] !== 'avatars' || parts[1] !== 'family'
+      || !parentUids.has(parts[2]) || !parentUids.has(row.data.updatedBy) || !avatarFilename.test(parts[3])) {
+      block('FAMILY_AVATAR_OWNER_NOT_VERIFIED', row.path); continue;
+    }
+    verifyFile(row, row.data.avatarPath);
+  }
+  const fileSourceCounts = Object.fromEntries(['firebase-storage', 'google-avatar', 'app-asset', 'external-url', 'inline-data', 'ephemeral-blob', 'invalid'].map(kind => [kind, 0]));
+  for (const row of rows.values()) {
+    const collection = row.path.split('/')[0];
+    for (const [field, source] of Object.entries(projectFileSources(collection, row.data))) {
+      fileSourceCounts[source.kind]++;
+      if (collection === 'members' && !uids.has(row.id) || foreignFamily(row) && !targetLink(row)) continue;
+      if (source.kind !== 'firebase-storage') {
+        if (source.kind === 'invalid' || source.kind === 'inline-data' || source.kind === 'ephemeral-blob'
+          || collection === 'healthRecords') block('FILE_SOURCE_REQUIRES_REVIEW', row.path);
+        else warn('NON_STORAGE_FILE_SOURCE_NOT_FETCHED', row.path);
+        continue;
+      }
+      if (source.hasBearerToken) warn('STORAGE_BEARER_URL_PRESENT', row.path);
+      if (source.bucket !== config.bucket) { block('FILE_SOURCE_BUCKET_NOT_VERIFIED', row.path); continue; }
+      const explicitPath = collection === 'healthRecords' ? row.data.documentPath : row.data.avatarPath;
+      if (explicitPath && explicitPath !== source.path) { block('FILE_SOURCE_PATH_MISMATCH', row.path); continue; }
+      if (collection === 'quickProducts') {
+        const parts = source.path.split('/');
+        if (field !== 'imageURL' || parts.length !== 3 || parts[0] !== 'quick-products' || !uids.has(parts[1])) {
+          block('QUICK_PRODUCT_OWNER_NOT_VERIFIED', row.path); continue;
+        }
+      } else if (collection === 'members') {
+        const parts = source.path.split('/');
+        if (parts.length !== 5 || parts[0] !== 'avatars' || parts[1] !== 'members' || parts[2] !== row.id || !uids.has(parts[3]) || !avatarFilename.test(parts[4])) {
+          block('MEMBER_AVATAR_PATH_NOT_VERIFIED', row.path); continue;
+        }
+      } else if (collection === 'familySettings') {
+        const parts = source.path.split('/');
+        if (row.id !== 'profile' || parts.length !== 4 || parts[0] !== 'avatars' || parts[1] !== 'family'
+          || !parentUids.has(parts[2]) || !parentUids.has(row.data.updatedBy) || !avatarFilename.test(parts[3])) {
+          block('FAMILY_AVATAR_OWNER_NOT_VERIFIED', row.path); continue;
+        }
+      } else if (collection === 'healthRecords' && !explicitPath) {
+        // A familyId-only migration cannot make a legacy medical bearer URL
+        // private. It requires a separately reviewed conversion and backup.
+        block('LEGACY_HEALTH_URL_REQUIRES_REVIEW', row.path); continue;
+      }
+      verifyFile(row, source.path);
+    }
   }
   for (const [path, file] of files) if (file.exists && !verifiedFiles.has(path) && /^(taskProof|taskRewardImages|healthDocuments)\//.test(path)) {
     const parts = path.split('/');
@@ -367,6 +427,9 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
       warn('FOREIGN_HOUSEHOLD_STORAGE_PRESERVED', path); continue;
     }
     block('STORAGE_ORPHAN_REQUIRES_REVIEW', path);
+  }
+  for (const [path, file] of files) if (file.exists && !verifiedFiles.has(path) && /^(avatars|quick-products)\//.test(path)) {
+    warn('STORAGE_UNREFERENCED_PRESENTATION_FILE', path);
   }
   // A candidate ID must not already denote foreign or unproven data anywhere.
   for (const row of rows.values()) if (row.data.familyId === familyId && !proven.has(row.path)
@@ -390,7 +453,8 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
       conditions: { familyIdEquals: familyId, postApplyUpdateTimeRequired: true, noConcurrentChanges: true } })),
     preservation: { collections: preservedCollections, storageObjects: files.size, storageWrites: 0, authWrites: 0,
       uidChanges: 0, aclChanges: 0, pointRecalculations: 0, calendarWrites: 0, sessionChanges: 0, notificationWrites: 0 },
-    summary: { storageVerified: storageCheck.verified, membersVerified: config.members.filter(member => !blockers.some(item => item.path === `members/${member.uid}`)).length,
+    summary: { storageVerified: storageCheck.verified, storageScope: 'known-app-prefixes', fileSources: fileSourceCounts,
+      membersVerified: config.members.filter(member => !blockers.some(item => item.path === `members/${member.uid}`)).length,
       proposedFamilyIdChanges: sorted.length, inspectedRecords: rows.size, inspectedStorageObjects: files.size,
       requiresSeparateApprovalAndBackup: true, migrationExecutable: false } };
 }

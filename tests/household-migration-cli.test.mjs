@@ -128,6 +128,23 @@ for (const [httpStatus, status, code] of [[404, 'not-found', 'STORAGE_BUCKET_NOT
   });
 }
 
+test('CLI reports file source counts and rejects another bucket without leaking the original URL', async t => {
+  const f = await fixture(t);
+  f.inventory.collections.quickProducts.push({ id: 'synthetic-product', path: 'quickProducts/synthetic-product',
+    data: { imageURL: 'https://firebasestorage.googleapis.com/v0/b/other-bucket.appspot.com/o/quick-products%2Ftest-person-0%2Fproduct.png?token=POISON_SECRET' },
+    updateTime: { seconds: '1791878400', nanoseconds: 11 } });
+  await writeFile(f.snapshot, JSON.stringify(f.inventory), { mode: 0o600 });
+  await assert.rejects(f.run(), error => error.code === 2 && error.stdout.includes('blocked'));
+  const run = (await readdir(f.output)).find(name => name.startsWith('run-'));
+  const dir = path.join(f.output, run);
+  const plan = JSON.parse(await readFile(path.join(dir, 'plan.private.json'), 'utf8'));
+  assert.ok(plan.blockers.some(item => item.code === 'FILE_SOURCE_BUCKET_NOT_VERIFIED'));
+  const report = await readFile(path.join(dir, 'report.md'), 'utf8');
+  assert.match(report, /firebase-storage: 1/);
+  assert.match(report, /Nie sprawdzono wszystkich bucketów projektu, lokalizacji UE/);
+  for (const file of await readdir(dir)) assert.equal((await readFile(path.join(dir, file), 'utf8')).includes('POISON'), false);
+});
+
 test('publicly readable or symlinked identity files cannot initialize a live or offline inventory', async t => {
   const f = await fixture(t);
   await chmod(f.input, 0o644);

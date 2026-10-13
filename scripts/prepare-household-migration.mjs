@@ -94,12 +94,15 @@ function report(plan, inventory, checks) {
   const storageMessage = storage.verified ? 'Zweryfikowano skan wymaganych prefiksów.'
     : `NIE ZWERYFIKOWANO — BLOKADA MIGRACJI (${storage.code}${storage.httpStatus ? ', HTTP ' + storage.httpStatus : ''}). ` +
       'Zaobserwowana liczba obiektów nie potwierdza braku plików. Nie utworzono magazynu ani nie zmieniono jego uprawnień.';
+  const fileSources = Object.entries(plan.summary.fileSources).map(([kind, count]) => `- ${kind}: ${count}`).join('\n');
   // Paths/UIDs and candidate patches remain only in protected JSON, never in terminal output.
   return `# Przygotowanie gospodarstwa — dry-run\n\nStatus: ${plan.status}. Zapisów Firebase: 0. Tryb wykonania migracji: niedostępny.\n\nŹródło: ${inventory.source}. Propozycja familyId: ${plan.familyId}.\n\n` +
     `Planowanych zmian wyłącznie pola familyId: ${plan.changes.length}. Blokad: ${plan.blockers.length}. Ostrzeżeń: ${plan.warnings.length}.\n\n` +
     `## Zakres odczytu\n\n${counts}\n- Zaobserwowane obiekty Storage (wyłącznie metadane): ${inventory.storage.length}\n\nStorage: ${storageMessage}\n\n` +
+    `Zakres Storage: sześć znanych prefiksów aplikacji. Nie sprawdzono wszystkich bucketów projektu, lokalizacji UE ani plików poza tymi prefiksami.\n\n` +
+    `## Źródła plików\n\n${fileSources}\n\nURL zewnętrznych nie pobierano. Linki sprowadzono do typu źródła oraz, dla Storage, nazwy bucketa i ścieżki; pełnych URL, parametrów i tokenów nie zapisano.\n\n` +
     `## Ograniczenia\n\nUID ↔ gospodarstwo wymaga jawnego potwierdzenia operatora; brak starego familyId nie dowodzi wspólnego gospodarstwa. ` +
-    `Nie czytano treści medycznych, danych przelewów, sesji eduVULCAN, tokenów OAuth ani tokenów pobierania Storage. Nie zmieniono ACL, punktów, plików lub kalendarzy. ` +
+    `Nie czytano treści medycznych, danych przelewów, sesji eduVULCAN ani tokenów OAuth. Tokenów z odwołań URL nie zapisano; nie odczytywano wartości tokenów z metadanych Storage. Nie zmieniono ACL, punktów, plików lub kalendarzy. ` +
     `Nie zweryfikowano aktywnych reguł chmurowych ani pobranych bajtów plików. Migrowanie jest osobnym etapem wymagającym zgody, kopii bezpieczeństwa, okna spójności i ponownego odczytu wersji.\n\n` +
     `## Lokalne kontrakty reguł\n\nSHA-256 firestore.rules: ${checks.firestore}\n\nSHA-256 storage.rules: ${checks.storage}\n\n` +
     `## Pliki prywatne\n\nplan.private.json: dokładny manifest i blokady; rollback.private.json: warunki odtworzenia pola familyId; ` +

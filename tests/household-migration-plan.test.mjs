@@ -157,6 +157,136 @@ test('a referenced file in an unread prefix is unverified, never reported as con
   assert.ok(codes(plan).includes('STORAGE_OBJECT_NOT_VERIFIED'));
   assert.ok(!codes(plan).includes('STORAGE_OBJECT_MISSING'));
 });
+
+function presentationFile(f, path, contentType = 'image/png') {
+  f.inventory.storage.push({ path, exists: true, generation: '1', metageneration: '1', size: 68, contentType, links: {} });
+  return `https://firebasestorage.googleapis.com/v0/b/${f.c.bucket}/o/${encodeURIComponent(path)}?token=POISON_TOKEN`;
+}
+
+test('quick-product photos are verified without rewriting the product or exposing its bearer token', () => {
+  const f = fixture();
+  const path = 'quick-products/parent-one/test-product.gif';
+  f.add('quickProducts', 'test-product', { imageURL: presentationFile(f, path, 'image/gif') });
+  const plan = f.run();
+  assert.equal(plan.status, 'prepared-requires-approval');
+  assert.equal(plan.summary.fileSources['firebase-storage'], 1);
+  assert.ok(plan.warnings.some(item => item.code === 'STORAGE_BEARER_URL_PRESENT'));
+  assert.equal(plan.changes.some(change => change.path === 'quickProducts/test-product'), false);
+  assert.equal(JSON.stringify(plan).includes('POISON'), false);
+  f.inventory.storage = [];
+  assert.ok(codes(f.run()).includes('STORAGE_OBJECT_MISSING'));
+});
+
+test('an unscanned product-photo prefix blocks a seemingly complete Storage scan', () => {
+  const f = fixture();
+  f.inventory.coverage.storagePrefixes = STORAGE_PREFIXES.filter(prefix => prefix !== 'quick-products/');
+  const plan = f.run();
+  assert.equal(plan.status, 'blocked');
+  assert.equal(plan.summary.storageVerified, false);
+  assert.ok(plan.blockers.some(item => item.code === 'STORAGE_PREFIX_NOT_VERIFIED' && item.path === 'quick-products/'));
+});
+
+test('a family avatar must refer to a real verified file and is never automatically adopted', () => {
+  const f = fixture();
+  const path = `avatars/family/parent-one/${UPLOAD}.png`;
+  presentationFile(f, path);
+  const row = f.add('familySettings', 'profile', { updatedBy: 'parent-two', avatarSource: 'custom', avatarPath: path });
+  assert.equal(f.run().status, 'prepared-requires-approval');
+  assert.equal(f.run().changes.some(change => change.path === row.path), false);
+  f.inventory.storage = [];
+  assert.ok(codes(f.run()).includes('STORAGE_OBJECT_MISSING'));
+  row.data.updatedBy = 'foreign-parent';
+  assert.ok(codes(f.run()).includes('FAMILY_AVATAR_OWNER_NOT_VERIFIED'));
+});
+
+test('a URL referencing another bucket cannot be verified by an empty or complete scan of the selected bucket', () => {
+  const f = fixture();
+  f.add('quickProducts', 'legacy', { imageURL: 'https://firebasestorage.googleapis.com/v0/b/other-bucket.appspot.com/o/quick-products%2Fparent-one%2Ftest.png?token=POISON' });
+  const plan = f.run();
+  assert.equal(plan.status, 'blocked');
+  assert.ok(codes(plan).includes('FILE_SOURCE_BUCKET_NOT_VERIFIED'));
+  assert.equal(plan.changes.some(change => change.path === 'quickProducts/legacy'), false);
+  assert.equal(JSON.stringify(plan).includes('POISON'), false);
+});
+
+test('Google avatars and local assets are counted as separate, unrequested sources', () => {
+  const f = fixture();
+  f.inventory.collections.members[0].data.photoURL = 'https://lh3.googleusercontent.com/POISON_PHOTO';
+  f.add('quickProducts', 'asset', { imageURL: '/wojanek-product.png' });
+  const plan = f.run();
+  assert.equal(plan.status, 'prepared-requires-approval');
+  assert.equal(plan.summary.storageScope, 'known-app-prefixes');
+  assert.equal(plan.summary.fileSources['google-avatar'], 1);
+  assert.equal(plan.summary.fileSources['app-asset'], 1);
+  assert.ok(plan.warnings.some(item => item.code === 'NON_STORAGE_FILE_SOURCE_NOT_FETCHED'));
+  assert.equal(JSON.stringify(plan).includes('POISON'), false);
+});
+
+test('ephemeral files and URL-only medical documents require review rather than pretending a protected file was verified', () => {
+  for (const source of ['blob:https://example.invalid/POISON', 'data:image/png;base64,POISON',
+    'https://external.invalid/POISON_MEDICAL', 'https://storage.googleapis.com/demo-household-audit.firebasestorage.app/health/shared/child-a/parent-one/test.pdf?token=POISON']) {
+    const f = fixture();
+    f.add('healthRecords', 'legacy-file', { person: 'child-a', createdBy: 'parent-one', documentURL: source });
+    const plan = f.run();
+    assert.equal(plan.status, 'blocked');
+    assert.ok(codes(plan).some(code => ['FILE_SOURCE_REQUIRES_REVIEW', 'LEGACY_HEALTH_URL_REQUIRES_REVIEW'].includes(code)));
+    assert.equal(JSON.stringify(plan).includes('POISON'), false);
+  }
+});
+
+test('conflicting avatar path/URL and product ownership remain blocked without changing data', () => {
+  const f = fixture();
+  const path = `avatars/members/parent-one/parent-one/${UPLOAD}.png`;
+  const member = f.inventory.collections.members[0];
+  member.data.photoURL = presentationFile(f, path);
+  member.data.avatarPath = `avatars/members/parent-one/parent-one/different.png`;
+  assert.ok(codes(f.run()).includes('FILE_SOURCE_PATH_MISMATCH'));
+  f.add('quickProducts', 'foreign-owner', { imageURL: presentationFile(f, 'quick-products/foreign-parent/test.png') });
+  assert.ok(codes(f.run()).includes('QUICK_PRODUCT_OWNER_NOT_VERIFIED'));
+});
+
+test('unreferenced presentation objects are reported for review, never scheduled for deletion', () => {
+  const f = fixture();
+  presentationFile(f, 'quick-products/parent-one/old-product.png');
+  const plan = f.run();
+  assert.equal(plan.status, 'prepared-requires-approval');
+  assert.ok(plan.warnings.some(item => item.code === 'STORAGE_UNREFERENCED_PRESENTATION_FILE'));
+  assert.equal(plan.preservation.storageWrites, 0);
+});
+
+test('additional active membership cannot appear migration-ready while legacy modules remain project-wide', () => {
+  const f = fixture();
+  const row = f.add('members', 'foreign-active', { name: 'Unreviewed adult', personKey: 'other-adult',
+    active: true, canLogin: true, role: 'parent', familyId: 'other-household' });
+  const plan = f.run();
+  assert.equal(plan.status, 'blocked');
+  assert.ok(codes(plan).includes('ADDITIONAL_ACTIVE_MEMBER_REQUIRES_ISOLATION_REVIEW'));
+  assert.equal(plan.changes.some(change => change.path === row.path), false);
+  row.data.disabled = true;
+  assert.ok(codes(f.run()).includes('ADDITIONAL_ACTIVE_MEMBER_REQUIRES_ISOLATION_REVIEW'), 'A presentation disabled flag does not revoke a valid token in legacy Rules');
+  row.data.archived = true;
+  assert.ok(!codes(f.run()).includes('ADDITIONAL_ACTIVE_MEMBER_REQUIRES_ISOLATION_REVIEW'));
+});
+
+test('avatar verification matches the application UUID filename and 5 MiB download limit', () => {
+  for (const kind of ['member-path', 'family-path', 'member-url', 'family-url']) {
+    const f = fixture();
+    const family = kind.startsWith('family'), urlOnly = kind.endsWith('url');
+    const badPath = family ? 'avatars/family/parent-one/test.png' : 'avatars/members/parent-one/parent-one/test.png';
+    const url = presentationFile(f, badPath);
+    const row = family ? f.add('familySettings', 'profile', { updatedBy: 'parent-one' }) : f.inventory.collections.members[0];
+    row.data[urlOnly ? 'photoURL' : 'avatarPath'] = urlOnly ? url : badPath;
+    assert.ok(codes(f.run()).includes(family ? 'FAMILY_AVATAR_OWNER_NOT_VERIFIED' : 'MEMBER_AVATAR_PATH_NOT_VERIFIED'));
+    const goodPath = badPath.replace('test.png', `${UPLOAD}.png`);
+    f.inventory.storage[0].path = goodPath;
+    f.inventory.storage[0].size = 5 * 1024 * 1024 + 1;
+    row.data[urlOnly ? 'photoURL' : 'avatarPath'] = urlOnly
+      ? `https://storage.googleapis.com/${f.c.bucket}/${goodPath}` : goodPath;
+    assert.ok(codes(f.run()).includes('STORAGE_FILE_SIZE_EXCEEDS_APP_LIMIT'));
+    f.inventory.storage[0].size = 5 * 1024 * 1024;
+    assert.equal(f.run().status, 'prepared-requires-approval');
+  }
+});
 test('proven Tasks roots/ledger/balance get only familyId without minting or recomputing points', () => {
   const f = fixture(); f.add('tasks', 'task-one', { createdBy: 'parent-one', person: 'child-a', points: 9, done: true });
   f.add('taskCompletions', 'task-one', { taskId: 'task-one', person: 'child-a', submittedBy: 'child-one', approvedBy: 'parent-one', points: 9 });
