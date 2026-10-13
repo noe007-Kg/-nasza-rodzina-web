@@ -14,6 +14,7 @@
     "test:e2e": "firebase emulators:exec --only auth,firestore,storage --project demo-nasza-rodzina \"playwright test\"",
     "family:setup": "node scripts/bootstrap-family.mjs",
     "family:migrate": "node scripts/bootstrap-family.mjs --migrate",
+    "household:migration:dry-run": "node scripts/prepare-household-migration.mjs",
     "test:server": "node --test tests/edu-*.test.mjs tests/account-*.test.mjs tests/notification-*.test.mjs tests/calendar-*.test.mjs",
     "functions:prepare": "node scripts/prepare-functions.mjs",
     "pretest:server": "npm run functions:prepare",

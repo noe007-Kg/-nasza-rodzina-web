@@ -8,6 +8,7 @@ dist/
 playwright-report/
 test-results/
 credentials/
+migration-private/
 config/members.private.json
 **/*private*.json
 *service-account*.json

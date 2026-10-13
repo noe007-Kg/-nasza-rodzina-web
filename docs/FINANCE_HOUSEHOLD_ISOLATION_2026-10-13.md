@@ -143,3 +143,5 @@ Lokalne `functions/server/` odtworzono istniejącym generatorem z kanonicznego `
 - Nie wykonywać automatycznej naprawy przez otwarcie Rules, przeniesienie wszystkich nieprzypisanych profili do jednego ID albo masowe usunięcie starszych rekordów.
 
 **Stan bieżącego etapu: przygotowano zabezpieczenia i instrukcję; produkcja, sekrety oraz dane pozostają bez zmian.**
+
+Kolejny etap udostępnia [narzędzie przygotowania migracji w trybie wyłącznie dry-run](HOUSEHOLD_MIGRATION_DRY_RUN_2026-10-13.md). Nie zawiera wykonawcy migracji ani opcji zapisu do Firebase. Wyniki inwentaryzacji pozostają prywatne poza repozytorium.
