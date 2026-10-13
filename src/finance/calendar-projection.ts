@@ -1,12 +1,12 @@
 import type { CalendarEventData } from '../app-shared';
-import { financeDateValid, type FinanceBill } from './model';
+import { financeDateValid, financeHouseholdConfigured, type FinanceBill } from './model';
 
 /** Authorized bills remain private to this viewer, even when a family profile is selected. */
 export function projectFinanceCalendar(bills: readonly FinanceBill[], uid: string, ownPerson: string): CalendarEventData[] {
   if (!uid || !ownPerson || ownPerson === 'family') return [];
   const seen = new Set<string>();
   return bills.flatMap(bill => {
-    if (!bill.calendarEnabled || !financeDateValid(bill.dueDate) || seen.has(bill.id)) return [];
+    if (!financeHouseholdConfigured(bill.familyId) || !bill.calendarEnabled || !financeDateValid(bill.dueDate) || seen.has(bill.id)) return [];
     seen.add(bill.id);
     const [year, month, day] = bill.dueDate.split('-').map(Number);
     // Calendar all-day rows carry civil dates in local fields (the same model as

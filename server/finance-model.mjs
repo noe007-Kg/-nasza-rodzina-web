@@ -1,18 +1,18 @@
+import { explicitFamilyId } from './family-identity.mjs';
+
 /** Dependency-free finance semantics. Amounts are whole PLN grosze, not floats. */
-export const FINANCE_LEGACY_FAMILY = '__legacy__';
 export const FINANCE_RECURRENCES = Object.freeze(['none', 'weekly', 'monthly', 'yearly']);
 export const FINANCE_MAX_AMOUNT_GROSZE = 100_000_000;
 export const financeActiveMember = value => value?.active === true && value.canLogin === true
-  && value.archived !== true && ['parent', 'adult', 'child'].includes(value.role);
+  && value.archived !== true && value.disabled !== true && ['parent', 'adult', 'child'].includes(value.role);
 export const financeParent = value => financeActiveMember(value) && value.role === 'parent';
-export const financeFamilyId = profile => typeof profile?.familyId === 'string' && profile.familyId.trim()
-  ? profile.familyId : FINANCE_LEGACY_FAMILY;
-export const financeFamilyKey = profile => financeFamilyId(profile) === FINANCE_LEGACY_FAMILY
-  ? 'legacy:members' : `family:${financeFamilyId(profile)}`;
+export const financeFamilyId = explicitFamilyId;
+export const financeFamilyKey = profile => financeFamilyId(profile) ? `family:${financeFamilyId(profile)}` : null;
 
-/** Legacy records only match legacy members, never every parent in the project. */
+/** Two missing IDs are never evidence of shared household membership. */
 export function financeSameFamily(member, record) {
-  return financeFamilyId(member) === financeFamilyId(record);
+  const familyId = financeFamilyId(member);
+  return familyId !== null && familyId === financeFamilyId(record);
 }
 export function canReadFinanceBill(member, bill) {
   return financeActiveMember(member) && bill?.archived !== true && financeSameFamily(member, bill)

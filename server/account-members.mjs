@@ -1,12 +1,27 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import { EduServerError } from './edu-auth.mjs';
+import { explicitFamilyId } from './family-identity.mjs';
 
 const legacyPeople = new Set(['Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla']);
 const parentActive = (profile) => profile?.role === 'parent' && profile.active === true
   && profile.canLogin === true && profile.archived !== true;
 const failure = (code, status, message) => { throw new EduServerError(code, status, message); };
 const idValid = (value) => typeof value === 'string' && value.length > 0 && value.length <= 128 && !/[\x00-\x1f/]/.test(value);
+
+// Compatibility for existing non-financial member administration only. A
+// reserved or malformed identifier is never treated as an unassigned family.
+const unassignedFamily = profile => profile?.familyId === undefined || profile?.familyId === null || profile?.familyId === '';
+function sameMemberFamily(left, right) {
+  const leftId = explicitFamilyId(left), rightId = explicitFamilyId(right);
+  return leftId !== null && rightId !== null ? leftId === rightId : unassignedFamily(left) && unassignedFamily(right);
+}
+function requireMemberParent(profile) {
+  if (!parentActive(profile)) failure('ACCOUNT_PARENT_REQUIRED', 403, 'Członkami rodziny zarządza aktywny rodzic.');
+  if (explicitFamilyId(profile) === null && !unassignedFamily(profile)) {
+    failure('ACCOUNT_FAMILY_FORBIDDEN', 403, 'Przypisanie gospodarstwa wymaga weryfikacji przez administratora.');
+  }
+}
 
 function expect(body, fields) {
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => !fields.includes(key))) {
@@ -43,14 +58,18 @@ export function validateMemberCreation(body) {
 }
 
 export function assertMemberChangeAllowed(actorUid, profiles, targetUid, next) {
-  if (!parentActive(profiles.get(actorUid))) failure('ACCOUNT_PARENT_REQUIRED', 403, 'Członkami rodziny zarządza aktywny rodzic.');
+  const actor = profiles.get(actorUid);
+  requireMemberParent(actor);
   const previous = profiles.get(targetUid);
   if (!previous) failure('ACCOUNT_MEMBER_NOT_FOUND', 404, 'Nie znaleziono członka rodziny.');
+  if (!sameMemberFamily(actor, previous) || !sameMemberFamily(previous, next)) {
+    failure('ACCOUNT_FAMILY_FORBIDDEN', 403, 'Możesz zarządzać wyłącznie profilami swojego gospodarstwa.');
+  }
   if (actorUid === targetUid && !parentActive(next)) {
     failure('ACCOUNT_SELF_LOCKOUT', 409, 'Nie możesz odebrać dostępu własnemu kontu rodzica.');
   }
   if (parentActive(previous) && !parentActive(next)
-    && [...profiles.entries()].filter(([uid, profile]) => uid !== targetUid && parentActive(profile)).length === 0) {
+    && [...profiles.entries()].filter(([uid, profile]) => uid !== targetUid && parentActive(profile) && sameMemberFamily(previous, profile)).length === 0) {
     failure('ACCOUNT_LAST_PARENT', 409, 'W rodzinie musi pozostać przynajmniej jeden aktywny rodzic.');
   }
 }
@@ -71,6 +90,7 @@ async function createMember(context, body) {
   // Check the roster before touching Authentication. Existing people are never duplicated.
   const roster = await db.collection('members').get();
   const profiles = new Map(roster.docs.map((item) => [item.id, item.data()]));
+  requireMemberParent(profiles.get(actorUid));
   if (duplicatePerson(profiles, definition.name)) failure('ACCOUNT_DUPLICATE_MEMBER', 409, 'Ta osoba ma już profil. Edytuj istniejący profil zamiast tworzyć drugi.');
   let account;
   let createdAccount = false;
@@ -93,7 +113,8 @@ async function createMember(context, body) {
   try {
     await db.runTransaction(async (transaction) => {
       const latest = await activeProfiles(transaction, db);
-      if (!parentActive(latest.get(actorUid))) failure('ACCOUNT_PARENT_REQUIRED', 403, 'Członkami rodziny zarządza aktywny rodzic.');
+      const actor = latest.get(actorUid);
+      requireMemberParent(actor);
       if (latest.has(uid) || duplicatePerson(latest, definition.name, uid)) {
         failure('ACCOUNT_DUPLICATE_MEMBER', 409, 'Ta osoba ma już profil. Nie utworzono duplikatu.');
       }
@@ -101,6 +122,7 @@ async function createMember(context, body) {
         name: definition.name, personKey, role: definition.role,
         active: true, canLogin: createdAccount ? false : definition.canLogin,
         schoolEnabled: definition.schoolEnabled, adult: ['parent', 'adult'].includes(definition.role),
+        ...(explicitFamilyId(actor) !== null ? { familyId: explicitFamilyId(actor) } : {}),
         createdBy: actorUid, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
       });
     });
@@ -129,6 +151,12 @@ async function changeMember(context, body, archive) {
     schoolEnabled: boolean(body.schoolEnabled, 'szkoła'), active: boolean(body.active, 'aktywność'),
     archived: false, adult: ['parent', 'adult'].includes(body.role),
   };
+  // Verify the current household before any Auth lookup/provisioning or session
+  // revocation, then check it again in the transaction before changing members.
+  const roster = await context.db.collection('members').get();
+  const initialProfiles = new Map(roster.docs.map(item => [item.id, item.data()]));
+  const initialPrevious = initialProfiles.get(targetUid);
+  assertMemberChangeAllowed(context.uid, initialProfiles, targetUid, { ...initialPrevious, ...changes });
   let createdAccount = false;
   let resetEmail;
   if (!archive && changes.canLogin) {

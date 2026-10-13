@@ -48,6 +48,7 @@ export async function enqueueInAppEvents(context, events, { recipientUid, revali
           // date, archiving, or a revoked per-bill reader grant.
           if (revalidateSource && event.collection === 'financeBills'
             && (sources[index].data().status !== 'unpaid' || sources[index].data().archived === true
+              || sources[index].data().familyId !== event.record?.familyId
               || sources[index].data().dueDate !== event.record?.dueDate)) return;
           const currentEvent = revalidateSource ? { ...event, record: sources[index].data() } : event;
           if (prior[index].exists || !canReceiveNotification({ ...member.data(), id: uid }, currentEvent)

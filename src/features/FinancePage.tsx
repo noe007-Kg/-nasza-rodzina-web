@@ -6,7 +6,7 @@ import { familyV2WritesAllowed } from '../family-v2-client';
 import { Card, Icon, PrimaryButton, SecondaryButton, SectionHeader, StatusPill } from '../ui';
 import { financeAction } from '../finance/finance-api';
 import { FINANCE_CATEGORIES, FINANCE_RECURRENCES, financeAmountGrosze, financeAmountInput, financeBillStatus,
-  financeCategoryTotals, financeDateValid, financeMonthLabel, financeToday, financeTotals, formatFinanceDate, formatFinanceMoney,
+  financeCategoryTotals, financeDateValid, financeHouseholdConfigured, financeMonthLabel, financeToday, financeTotals, formatFinanceDate, formatFinanceMoney,
   safeFinancePaymentUrl, type FinanceBill, type FinanceBillFields, type FinanceRecurrence } from '../finance/model';
 import { useFinanceBills } from '../finance/useFinanceBills';
 import './finance.css';
@@ -29,9 +29,10 @@ function useWideFinancePanel() {
 export function FinancePage({ user, member }: { user: User; member: Member | null }) {
   const parent = isParent(member);
   const accessScope = JSON.stringify([user.uid, member?.role, member?.active, member?.archived, member?.canLogin,
-    (member as Member & { familyId?: string } | null)?.familyId]);
+    member?.disabled, member?.familyId]);
   const directory = useFamilyDirectory();
-  const children = directory.filter(profile => profile.role === 'child' && memberCanLogin(profile) && !profile.id.startsWith('legacy:'));
+  const children = directory.filter(profile => financeHouseholdConfigured(member?.familyId) && profile.familyId === member.familyId
+    && profile.role === 'child' && memberCanLogin(profile) && !profile.id.startsWith('legacy:'));
   const source = useFinanceBills(user.uid, accessScope);
   const bills = source.data?.bills || [];
   const writesEnabled = parent && source.data?.writesEnabled === true && familyV2WritesAllowed();

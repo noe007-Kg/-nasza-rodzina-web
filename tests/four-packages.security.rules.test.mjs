@@ -26,8 +26,11 @@ const profiles = {
   'child-b': { role: 'child', familyId: 'family-b', personKey: 'member-dddddddddddddddddddddddd' },
   'legacy-parent': { role: 'parent', personKey: 'member-eeeeeeeeeeeeeeeeeeeeeeee' },
   'legacy-child': { role: 'child', personKey: 'member-ffffffffffffffffffffffff' },
+  'reserved-parent': { role: 'parent', familyId: '__legacy__', personKey: 'member-777777777777777777777777' },
+  'reserved-child': { role: 'child', familyId: '__legacy__', personKey: 'member-888888888888888888888888' },
   'archived-a': { role: 'parent', familyId: 'family-a', personKey: 'member-000000000000000000000000', archived: true },
   'inactive-a': { role: 'parent', familyId: 'family-a', personKey: 'member-999999999999999999999999', canLogin: false },
+  'disabled-a': { role: 'parent', familyId: 'family-a', personKey: 'member-666666666666666666666666', disabled: true },
 };
 const dbFor = uid => environment.authenticatedContext(uid).firestore();
 const storageFor = uid => environment.authenticatedContext(uid).storage(`gs://${projectId}.appspot.com`);
@@ -124,6 +127,26 @@ test('finance list queries must prove household and each child sharing constrain
   await assertFails(getDocs(query(collection(dbFor('parent-b'), 'financeBills'), where('familyId', '==', 'family-a'), where('archived', '==', false))));
 });
 
+test('a disabled parent cannot read finance bills despite active legacy membership and the matching household', async () => {
+  await seedRecords('financeBills', { private: bill(), shared: bill({ sharedWith: ['disabled-a'] }) });
+  for (const id of ['private', 'shared']) await assertFails(getDoc(doc(dbFor('disabled-a'), 'financeBills', id)));
+  await assertFails(getDocs(query(collection(dbFor('disabled-a'), 'financeBills'),
+    where('familyId', '==', 'family-a'), where('archived', '==', false))));
+});
+
+test('finance has no Storage file path: parents cannot read or create files under finance namespaces', async () => {
+  for (const namespace of ['financeBills', 'finance']) {
+    const id = randomUUID();
+    const existingPath = `${namespace}/${id}/existing.png`;
+    await seedObject(existingPath);
+    for (const uid of ['parent-a', 'mother-a', 'parent-b']) {
+      await assertFails(getMetadata(ref(storageFor(uid), existingPath)));
+      await assertFails(uploadBytes(ref(storageFor(uid), `${namespace}/${id}/new-${uid}.png`), png,
+        { contentType: 'image/png' }));
+    }
+  }
+});
+
 test('finance bill creation, status, ACL and audit writes remain server-only even for a parent', async () => {
   await seedRecords('financeBills', { shared: bill({ sharedWith: ['child-a'] }) });
   await seedRecords('financeBillAudit', { private: { billId: 'shared', familyId: 'family-a', actorUid: 'parent-a', kind: 'paid' } });
@@ -138,10 +161,45 @@ test('finance bill creation, status, ACL and audit writes remain server-only eve
   }
 });
 
-test('legacy finance records are limited to legacy members rather than every project parent', async () => {
-  await seedRecords('financeBills', { legacy: bill({ familyId: '__legacy__', ownerUid: 'legacy-parent', sharedWith: ['legacy-child'] }) });
-  for (const uid of ['legacy-parent', 'legacy-child']) await assertSucceeds(getDoc(doc(dbFor(uid), 'financeBills', 'legacy')));
-  for (const uid of ['parent-a', 'parent-b', 'child-a']) await assertFails(getDoc(doc(dbFor(uid), 'financeBills', 'legacy')));
+test('finance never groups members without a familyId or with the reserved legacy ID into one household', async () => {
+  const noFamilyBill = bill({ ownerUid: 'legacy-parent', sharedWith: ['legacy-child'] });
+  delete noFamilyBill.familyId;
+  await seedRecords('financeBills', {
+    legacy: bill({ familyId: '__legacy__', ownerUid: 'legacy-parent', sharedWith: ['legacy-child', 'reserved-child'] }),
+    missing: noFamilyBill,
+    null: bill({ familyId: null, ownerUid: 'legacy-parent', sharedWith: ['legacy-child'] }),
+  });
+  for (const uid of ['legacy-parent', 'legacy-child', 'reserved-parent', 'reserved-child', 'parent-a', 'parent-b', 'child-a']) {
+    for (const id of ['legacy', 'missing', 'null']) await assertFails(getDoc(doc(dbFor(uid), 'financeBills', id)));
+    await assertFails(getDocs(query(collection(dbFor(uid), 'financeBills'),
+      where('familyId', '==', '__legacy__'), where('archived', '==', false))));
+  }
+});
+
+test('finance denies malformed family IDs even when the profile and the bill contain the same value', async () => {
+  const invalidIds = [null, '', ' ', '__legacy__', ' family-a', 'family-a ', 'family/a', 'a'.repeat(129), 17];
+  for (const [index, familyId] of invalidIds.entries()) {
+    const uid = `invalid-family-${index}`;
+    await seedRecords('members', { [uid]: { name: 'Invalid household test', role: 'parent', active: true,
+      canLogin: true, archived: false, familyId } });
+    await seedRecords('financeBills', { [`invalid-${index}`]: bill({ familyId, ownerUid: uid, sharedWith: [uid] }) });
+    await assertFails(getDoc(doc(dbFor(uid), 'financeBills', `invalid-${index}`)));
+    await assertFails(getDocs(query(collection(dbFor(uid), 'financeBills'),
+      where('familyId', '==', familyId), where('archived', '==', false))));
+    await assertFails(getDoc(doc(dbFor('parent-a'), 'financeBills', `invalid-${index}`)));
+  }
+});
+
+test('clients cannot assign or change their own or another profile household membership to access finance', async () => {
+  await seedRecords('financeBills', { foreign: bill({ familyId: 'family-b', ownerUid: 'parent-b' }) });
+  for (const uid of ['parent-a', 'mother-a', 'child-a', 'legacy-parent', 'legacy-child']) {
+    const db = dbFor(uid);
+    await assertFails(updateDoc(doc(db, 'members', uid), { familyId: 'family-b' }));
+    await assertFails(setDoc(doc(db, 'members', uid), { familyId: 'family-b' }, { merge: true }));
+    await assertFails(updateDoc(doc(db, 'members', 'parent-b'), { familyId: 'family-a' }));
+    await assertFails(deleteDoc(doc(db, 'members', uid)));
+    await assertFails(getDoc(doc(db, 'financeBills', 'foreign')));
+  }
 });
 
 test('private calendar metadata is UID-isolated and clients cannot disguise a finance bill as a family event', async () => {

@@ -38,6 +38,9 @@ export const APP_UPDATED = '11.10.2026';
 
 export type Member = {
   id?: string;
+  /** Trusted household assignment; never writable from the profile UI. */
+  familyId?: string;
+  disabled?: boolean;
   personKey?: string;
   birthDate?: string;
   calendarColor?: string;

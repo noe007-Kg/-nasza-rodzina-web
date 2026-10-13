@@ -40,7 +40,7 @@ function services(initial = { actor: parent, sibling: child }, existingAccount =
 test('family creation accepts explicit school/canLogin flags and never accepts credentials or arbitrary UID', () => {
   assert.deepEqual(validateMemberCreation(definition), { name: 'Nowa osoba', role: 'child', canLogin: false, schoolEnabled: false });
   assert.equal(validateMemberCreation({ ...definition, canLogin: true, email: 'Person@Example.Test' }).email, 'person@example.test');
-  for (const change of [{ password: 'forbidden' }, { token: 'forbidden' }, { uid: 'chosen' }, { role: 'admin' }, { canLogin: 'true' }, { name: '../path' }, { schoolEnabled: 1 }, { canLogin: true, email: 'invalid' }]) {
+  for (const change of [{ password: 'forbidden' }, { token: 'forbidden' }, { uid: 'chosen' }, { familyId: 'another-household' }, { role: 'admin' }, { canLogin: 'true' }, { name: '../path' }, { schoolEnabled: 1 }, { canLogin: true, email: 'invalid' }]) {
     assert.throws(() => validateMemberCreation({ ...definition, ...change }), { code: 'ACCOUNT_INVALID_REQUEST' });
   }
 });
@@ -305,4 +305,114 @@ test('archiving an adult preserves its profile and revokes login without deletin
   assert.equal(profile.adult, true);
   assert.equal(profile.photoURL, '/kept.jpg');
   assert.deepEqual(context.calls.filter(([kind]) => kind === 'revoke'), [['revoke', 'sibling']]);
+});
+
+const updateMember = (uid, overrides = {}) => ({
+  action: 'update', uid, role: 'child', canLogin: true, schoolEnabled: false, active: true, ...overrides,
+});
+
+test('a parent cannot promote, edit or archive a member of another household before any Auth interaction', async () => {
+  for (const body of [updateMember('sibling', { role: 'parent' }), updateMember('sibling'), { action: 'archive', uid: 'sibling', confirmed: true }]) {
+    const context = services({ actor: { ...parent, familyId: 'household-a' }, sibling: { ...child, familyId: 'household-b' } });
+    const before = { ...context.rows.get('sibling') };
+    await assert.rejects(manageMemberAction(context, body), { code: 'ACCOUNT_FAMILY_FORBIDDEN' });
+    assert.deepEqual(context.rows.get('sibling'), before);
+    assert.equal(context.calls.length, 0);
+  }
+});
+
+test('member administration rejects assigned/unassigned household boundaries in either direction', async () => {
+  for (const [actorFamily, targetFamily] of [['household-a', undefined], [undefined, 'household-b']]) {
+    const context = services({ actor: { ...parent, familyId: actorFamily }, sibling: { ...child, familyId: targetFamily } });
+    await assert.rejects(manageMemberAction(context, updateMember('sibling')), { code: 'ACCOUNT_FAMILY_FORBIDDEN' });
+    assert.equal(context.calls.length, 0);
+  }
+});
+
+test('reserved and malformed family identifiers are never accepted as unassigned household administration', async () => {
+  for (const familyId of ['__legacy__', ' ', 'household/a', 'household:a', 42, 'x'.repeat(129)]) {
+    for (const invalidActor of [false, true]) {
+      const context = services({ actor: { ...parent, ...(invalidActor ? { familyId } : {}) }, sibling: { ...child, ...(!invalidActor ? { familyId } : {}) } });
+      await assert.rejects(manageMemberAction(context, updateMember('sibling')), { code: 'ACCOUNT_FAMILY_FORBIDDEN' });
+      assert.equal(context.calls.length, 0);
+      if (invalidActor) {
+        await assert.rejects(manageMemberAction(context, { ...definition, canLogin: true, email: 'new@example.test' }), { code: 'ACCOUNT_FAMILY_FORBIDDEN' });
+        assert.equal(context.calls.length, 0);
+      }
+    }
+  }
+});
+
+test('household checks are repeated transactionally after an initially authorized Auth lookup', async () => {
+  const context = services({ actor: { ...parent, familyId: 'household-a' }, sibling: { ...child, familyId: 'household-a' } });
+  context.auth.getUser = async uid => {
+    context.calls.push(['auth-get', uid]);
+    context.rows.set('sibling', { ...context.rows.get('sibling'), familyId: 'household-b' });
+    return { uid, disabled: false };
+  };
+  await assert.rejects(manageMemberAction(context, updateMember('sibling', { role: 'parent' })), { code: 'ACCOUNT_FAMILY_FORBIDDEN' });
+  assert.equal(context.rows.get('sibling').role, 'child');
+  assert.deepEqual(context.calls, [['auth-get', 'sibling']]);
+});
+
+test('offline login provisioning rejects a newly foreign target before creating or activating Authentication', async () => {
+  const context = services({ actor: { ...parent, familyId: 'household-a' }, offline: { ...child, canLogin: false, familyId: 'household-a' } });
+  context.auth.getUser = async uid => {
+    context.calls.push(['auth-get', uid]);
+    context.rows.set('offline', { ...context.rows.get('offline'), familyId: 'household-b' });
+    throw Object.assign(new Error('missing'), { code: 'auth/user-not-found' });
+  };
+  await assert.rejects(manageMemberAction(context, enableOffline()), { code: 'ACCOUNT_FAMILY_FORBIDDEN' });
+  assert.equal(context.rows.get('offline').canLogin, false);
+  assert.equal(context.calls.some(([kind]) => ['auth-create', 'auth-update', 'auth-email', 'profile-update'].includes(kind)), false);
+});
+
+test('new profiles inherit only the current transaction parent household, never the stale request context', async () => {
+  const context = services({ actor: { ...parent, familyId: 'household-current' }, sibling: { ...child, familyId: 'household-current' } });
+  context.profile = { ...parent, familyId: 'household-stale' };
+  const result = await manageMemberAction(context, definition);
+  assert.equal(context.rows.get(result.memberUid).familyId, 'household-current');
+  assert.equal(context.rows.get('actor').familyId, 'household-current');
+  assert.equal(context.calls.some(([kind]) => kind.startsWith('auth-')), false);
+});
+
+test('new login profiles use the freshly read household if trusted provisioning changed it before the transaction', async () => {
+  const context = services({ actor: { ...parent, familyId: 'household-before' }, sibling: child });
+  const createUser = context.auth.createUser;
+  context.auth.createUser = async data => {
+    const result = await createUser(data);
+    context.rows.set('actor', { ...context.rows.get('actor'), familyId: 'household-current' });
+    return result;
+  };
+  const result = await manageMemberAction(context, { ...definition, canLogin: true, email: 'new@example.test' });
+  assert.equal(context.rows.get(result.memberUid).familyId, 'household-current');
+  assert.equal(context.rows.get(result.memberUid).canLogin, true);
+});
+
+test('genuinely unassigned legacy households retain member administration without assigning finance access', async () => {
+  for (const familyId of [undefined, null, '']) {
+    const context = services({ actor: { ...parent, familyId }, sibling: child });
+    const result = await manageMemberAction(context, definition);
+    assert.equal(Object.hasOwn(context.rows.get(result.memberUid), 'familyId'), false);
+    await manageMemberAction(context, updateMember('sibling'));
+    await manageMemberAction(context, { action: 'archive', uid: 'sibling', confirmed: true });
+    assert.equal(context.rows.get('sibling').archived, true);
+    assert.equal(context.rows.get('actor').familyId, familyId);
+  }
+});
+
+test('parents retain same-household management but may never change a member household through an update', async () => {
+  const profiles = new Map([['actor', { ...parent, familyId: 'household-a' }], ['sibling', { ...child, familyId: 'household-a' }], ['unrelated-parent', { ...parent, familyId: 'household-b' }]]);
+  assertMemberChangeAllowed('actor', profiles, 'sibling', { ...profiles.get('sibling'), role: 'parent' });
+  assert.throws(() => assertMemberChangeAllowed('actor', profiles, 'sibling', { ...profiles.get('sibling'), familyId: 'household-b' }), { code: 'ACCOUNT_FAMILY_FORBIDDEN' });
+  assert.throws(() => assertMemberChangeAllowed('actor', profiles, 'actor', { ...profiles.get('actor'), role: 'child' }), { code: 'ACCOUNT_SELF_LOCKOUT' });
+  const context = services(Object.fromEntries(profiles));
+  await assert.rejects(manageMemberAction(context, updateMember('sibling', { familyId: 'household-b' })), { code: 'ACCOUNT_INVALID_REQUEST' });
+  assert.equal(context.calls.length, 0);
+});
+
+test('member creation retains global duplicate identity protection rather than reusing legacy person keys', async () => {
+  const context = services({ actor: { ...parent, familyId: 'household-a' }, sibling: { ...child, familyId: 'household-b' } });
+  await assert.rejects(manageMemberAction(context, { ...definition, name: child.name }), { code: 'ACCOUNT_DUPLICATE_MEMBER' });
+  assert.equal(context.calls.length, 0);
 });

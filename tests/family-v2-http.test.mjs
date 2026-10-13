@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createFamilyRouter } from '../server/family-http.mjs';
 import { EduServerError } from '../server/edu-auth.mjs';
+import { familyMemoryContext, fixtureParent } from './family-v2-test-helpers.mjs';
 
 const host = 'family-v2-preview.example.vercel.app';
 const preview = { VERCEL: '1', VERCEL_ENV: 'preview', VERCEL_URL: host, FAMILY_V2_WRITES_ENABLED: 'true' };
@@ -17,6 +18,23 @@ function mocked(overrides = {}) {
     tasksAction: async () => { calls.tasks += 1; return { count: 0 }; }, healthAction: async () => { calls.health += 1; return { count: 0 }; }, ...overrides });
   return { router, calls };
 }
+
+test('finance HTTP state refuses unassigned households even when the existing write flag is false', async () => {
+  for (const familyId of [undefined, null, '', '__legacy__']) {
+    const storage = familyMemoryContext({ 'members/parent': { ...fixtureParent, familyId },
+      'financeBills/foreign-legacy': { familyId: '__legacy__', ownerUid: 'foreign-parent', title: 'PRIVATE_BILL',
+        amountGrosze: 12000, status: 'unpaid', archived: false, sharedWith: [] } });
+    const router = createFamilyRouter({ env: { ...preview, FAMILY_V2_WRITES_ENABLED: 'false' },
+      services: () => ({}), memberGuard: async () => storage.as('parent') });
+    const res = response();
+    await router(request('state', { url: '/api/family/finance' }), res);
+    assert.equal(res.statusCode, 403);
+    assert.equal(res.body.error.code, 'FINANCE_FAMILY_NOT_CONFIGURED');
+    assert.equal(JSON.stringify(res.body).includes('PRIVATE_BILL'), false);
+    assert.equal(res.headers['Cache-Control'], 'no-store, private, max-age=0');
+    assert.equal(storage.calls.length, 0);
+  }
+});
 
 test('Preview authenticated state can be read but writes remain blocked even when enabled', async () => {
   const { router, calls } = mocked();

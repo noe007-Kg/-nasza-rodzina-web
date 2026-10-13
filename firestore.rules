@@ -166,11 +166,18 @@ service cloud.firestore {
     match /_taskRewardImageCleanup/{id} { allow read, write: if false; }
 
     function financeFamilyId() {
-      let value = profile().get('familyId', '__legacy__');
-      return value is string && value.size() > 0 && !value.matches('[\\s]*') ? value : '__legacy__';
+      return profile().get('familyId', null);
+    }
+    function validFinanceFamilyId(value) {
+      return value is string && value != '__legacy__'
+        && value.matches('[A-Za-z0-9][A-Za-z0-9_-]{0,127}');
     }
     match /financeBills/{id} {
-      allow read: if member() && resource.data.familyId == financeFamilyId()
+      // Missing membership never aggregates independent households into a legacy family.
+      // Exact equality with a validated member ID also validates the bill's ID.
+      allow read: if member() && profile().get('disabled', false) == false
+        && validFinanceFamilyId(financeFamilyId())
+        && resource.data.get('familyId', null) == financeFamilyId()
         && resource.data.archived == false
         && (parent() || (profile().role == 'child' && request.auth.uid in resource.data.sharedWith));
       allow write: if false;

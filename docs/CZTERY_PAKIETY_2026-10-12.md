@@ -34,7 +34,9 @@ Pastelowa lista rachunków i panel szczegółów realizują zatwierdzony szkic n
 
 Rachunek zawiera kwotę PLN zapisaną w całkowitych groszach, termin, kategorię, odbiorcę, rachunek bankowy, tytuł przelewu, notatkę i opcjonalny zweryfikowany link HTTPS. Można kopiować dane przelewu, edytować nieopłacony rachunek i atomowo oznaczyć go jako opłacony. Opłacony okres zachowuje niezmienną historię. Widok historii pokazuje miesiące i sumy kategorii.
 
-Domyślnie dane widzą tylko aktywni rodzice tego samego gospodarstwa. Rodzic może jawnie udostępnić konkretny rachunek wskazanemu dziecku; dziecko ma odczyt, bez zarządzania. Kolejne okresy cyklicznej opłaty nie dziedziczą tego udostępnienia. Wybór profilu na ekranie nie zmienia autoryzowanej tożsamości. Starsze profile bez `familyId` należą do odrębnej przestrzeni `__legacy__`, a nie do wszystkich rodzin.
+Domyślnie dane widzą tylko aktywni rodzice tego samego gospodarstwa. Rodzic może jawnie udostępnić konkretny rachunek wskazanemu dziecku; dziecko ma odczyt, bez zarządzania. Kolejne okresy cyklicznej opłaty nie dziedziczą tego udostępnienia. Wybór profilu na ekranie nie zmienia autoryzowanej tożsamości.
+
+**Korekta bezpieczeństwa 2026-10-13:** wspólne `__legacy__` nie rozróżniało gospodarstw i nie zapewniało ich izolacji. Poprawka odrzuca rachunki i profile bez jawnego, zweryfikowanego `familyId`, w tym `__legacy__`. Nie wykonuje automatycznej migracji. Obowiązują [instrukcja wdrożenia i ograniczenia zgodności starszych danych](FINANCE_HOUSEHOLD_ISOLATION_2026-10-13.md).
 
 Tygodniowe, miesięczne i roczne okresy mają stabilne identyfikatory, indywidualne kwoty/terminy/statusy; ponowne generowanie nie duplikuje danych. Backend tworzy ograniczoną liczbę bieżących/następnych okresów. Kwoty i status jednego okresu nie zmieniają opłaconej historii.
 

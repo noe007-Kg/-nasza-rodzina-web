@@ -27,7 +27,10 @@ function requireParent(actor) { if (!financeParent(actor)) fail('FINANCE_PARENT_
 async function freshActor(transaction, context) {
   const member = await transaction.get(context.db.collection('members').doc(context.uid));
   const actor = member.exists ? { ...member.data(), id: context.uid } : null;
-  if (!financeActiveMember(actor) || !financeSameFamily(actor, context.profile)) fail('FINANCE_MEMBER_REQUIRED', 403, 'Profil nie ma aktywnego dostępu do finansów.');
+  if (!financeActiveMember(actor)) fail('FINANCE_MEMBER_REQUIRED', 403, 'Profil nie ma aktywnego dostępu do finansów.');
+  if (!financeFamilyId(actor)) fail('FINANCE_FAMILY_NOT_CONFIGURED', 403,
+    'Finanse wymagają zweryfikowanego przypisania konta do gospodarstwa. Administrator musi uzupełnić konfigurację rodziny. Dane nie zostały zmienione.');
+  if (!financeSameFamily(actor, context.profile)) fail('FINANCE_MEMBER_REQUIRED', 403, 'Profil nie ma aktywnego dostępu do finansów.');
   return actor;
 }
 function requireBill(value, actor) {

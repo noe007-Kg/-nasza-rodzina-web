@@ -5,6 +5,8 @@ export type FamilyMemberProfile = {
   name?: string;
   personKey?: string;
   role?: string;
+  /** Assigned by trusted server/admin provisioning, never by the profile selector. */
+  familyId?: string;
   photoURL?: string;
   avatarPath?: string;
   avatarSource?: 'google' | 'custom' | 'default';

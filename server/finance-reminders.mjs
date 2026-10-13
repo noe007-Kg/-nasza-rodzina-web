@@ -1,10 +1,10 @@
 import { enqueueInAppEvents } from './notification-inbox.mjs';
-import { financeDaysUntil } from './finance-model.mjs';
+import { financeDaysUntil, financeFamilyId } from './finance-model.mjs';
 import { ensureFinancePeriods } from './finance-service.mjs';
 
 /** Deliberately generic notification text: no amount, account number or payee. */
 export function financeReminderEvent(id, bill, now = new Date()) {
-  if (!bill || bill.archived === true || bill.status !== 'unpaid') return null;
+  if (!bill || !financeFamilyId(bill) || bill.archived === true || bill.status !== 'unpaid') return null;
   const days = financeDaysUntil(bill.dueDate, now);
   if (![7, 3, 0, -1].includes(days)) return null;
   const stage = days === -1 ? 'overdue' : String(days);
