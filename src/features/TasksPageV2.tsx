@@ -1,7 +1,9 @@
-import { collection, db, EmptyState, errorMessage, formatDateInput, formatShortDate, getBlob, isParent, isPersonKey, type Member, memberEmoji, Modal, ModuleHeader, notify, onSnapshot, ownPerson, type PersonKey, personLabel, PersonSelect, React, storage, storageRef, type TaskItem, type TaskPriority, type TaskRepeat, Timestamp, useEffect, useMemo, type User, useRef, useState } from '../app-shared';
+import { getPrivateStorageBlob } from '../private-storage-blob';
+import { collection, db, EmptyState, errorMessage, formatDateInput, formatShortDate, isParent, isPersonKey, type Member, memberEmoji, Modal, ModuleHeader, notify, onSnapshot, ownPerson, type PersonKey, personLabel, PersonSelect, React, storage, storageRef, type TaskItem, type TaskPriority, type TaskRepeat, Timestamp, useEffect, useMemo, type User, useRef, useState } from '../app-shared';
 import { uploadBytesResumable } from 'firebase/storage';
 import { familyAction, familyV2WritesAllowed } from '../family-v2-client';
 import { useFamilyDirectory } from '../family-directory';
+import { householdReadScope, tasksHouseholdQuery } from '../household-scope';
 import { memberPersonKey } from '../family-members';
 import { TASK_PHOTO_LIMIT, uploadTaskPhoto, validateTaskPhoto, type TaskUploadProgress } from './tasks-upload';
 import './tasks-v2.css';
@@ -27,7 +29,7 @@ function RewardImage({ path, uid, title }: { path: string; uid: string; title: s
   const [loaded, setLoaded] = useState<{ uid: string; path: string; url: string } | null>(null);
   useEffect(() => {
     let active = true; let url = '';
-    void getBlob(storageRef(storage, path), TASK_PHOTO_LIMIT).then(blob => {
+    void getPrivateStorageBlob(storageRef(storage, path), TASK_PHOTO_LIMIT).then(blob => {
       if (!active) return;
       url = URL.createObjectURL(blob); setLoaded({ uid, path, url });
     }).catch(() => { if (active) setLoaded(null); });
@@ -39,6 +41,7 @@ function RewardImage({ path, uid, title }: { path: string; uid: string; title: s
 }
 
 export function TasksPage({ user, member }: { user: User; member: Member | null }) {
+  const householdScope = householdReadScope(user.uid, member);
   const directory = useFamilyDirectory();
   const profiles = directory.filter(profile => profile.active !== false && !profile.archived && !profile.disabled);
   const [items, setItems] = useState<ManagedTask[]>([]);
@@ -84,8 +87,10 @@ export function TasksPage({ user, member }: { user: User; member: Member | null 
     }
   }
   useEffect(() => {
-    alive.current = true; void reloadPoints();
-    const stop = onSnapshot(collection(db, 'tasks'), snap => {
+    alive.current = true; setItems([]); void reloadPoints();
+    const target = tasksHouseholdQuery(db, member);
+    if (!target) return () => { alive.current = false; };
+    const stop = onSnapshot(target, snap => {
       const next = snap.docs.map((record): ManagedTask => {
         const raw = record.data();
         return { id: record.id, title: String(raw.title || ''), person: isPersonKey(raw.person) ? raw.person : 'family', done: raw.done === true,
@@ -102,7 +107,7 @@ export function TasksPage({ user, member }: { user: User; member: Member | null 
       setItems(next);
     });
     return () => { alive.current = false; stop(); };
-  }, [user.uid, parent, own]);
+  }, [householdScope, parent, own]);
   useEffect(() => () => { if (proofPreview) URL.revokeObjectURL(proofPreview.url); }, [proofPreview]);
 
   const visible = items.filter(item => filter === 'today' ? !item.done && item.dueDate === today
@@ -151,7 +156,7 @@ export function TasksPage({ user, member }: { user: User; member: Member | null 
   }
   async function openProof(item: ManagedTask) {
     if (!item.proofPath) return;
-    try { const blob = await getBlob(storageRef(storage, item.proofPath), TASK_PHOTO_LIMIT); setProofPreview({ title: item.title, url: URL.createObjectURL(blob) }); }
+    try { const blob = await getPrivateStorageBlob(storageRef(storage, item.proofPath), TASK_PHOTO_LIMIT); setProofPreview({ title: item.title, url: URL.createObjectURL(blob) }); }
     catch (error) { notify(errorMessage(error), 'error'); }
   }
   function openRewardForm(reward?: Reward) {

@@ -5,8 +5,8 @@ import { googleHistoryEventInRange, googleHistoryRange, sameGoogleHistoryRange }
 import { calendarEncryptionConfigured, decryptCalendarSecrets, encryptCalendarSecrets } from './calendar-secrets.mjs';
 import { assertFamilyV2WriteAllowed } from './family-v2-policy.mjs';
 import { exchangeGoogleCode, googleAuthorizationUrl, googleCalendarClient, GOOGLE_CALENDAR_WRITE_SCOPE, normalizeGoogleHistoryEvent } from './calendar-google.mjs';
-import { CALENDAR_LEASE_MS, acquireCalendarLease, assertCalendarActor, assertCalendarLease, assertCalendarNotRemoving, assertCalendarSelection, assertOwnedConnection, connectionRef,
-  calendarEventFingerprint, googleEventDocumentId, persistCalendarCredentials, releaseCalendarLease, sourceCalendarDocuments, timestampMillis, updateCalendarLease, upsertGoogleEvents } from './calendar-storage.mjs';
+import { CALENDAR_LEASE_MS, acquireCalendarLease, assertCalendarActor, assertCalendarEventFamily, assertCalendarLease, assertCalendarNotRemoving, assertCalendarSelection, assertOwnedConnection, connectionRef,
+  calendarEventFingerprint, googleEventDocumentId, persistCalendarCredentials, readOwnedCalendarConnection, releaseCalendarLease, sourceCalendarDocuments, timestampMillis, updateCalendarLease, upsertGoogleEvents } from './calendar-storage.mjs';
 
 const OAUTH_TTL_MS = 10 * 60000;
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -63,16 +63,16 @@ export async function startCalendarOAuth(context, body, { now = Date.now() } = {
     const actor = actorSnapshot.data(), rate = rateSnapshot.data(), person = await assertCalendarSelection(transaction, context, actor, selection);
     let connection;
     if (body.connectionId) {
-      connection = (await transaction.get(connectionRef(context, body.connectionId))).data(); assertOwnedConnection(context, connection);
+      connection = (await transaction.get(connectionRef(context, body.connectionId))).data(); assertOwnedConnection(context, connection, actor);
       assertCalendarNotRemoving(connection, now);
       if (connection.mode === 'import' && connection.status === 'imported') failCalendar('CALENDAR_IMPORT_COMPLETE', 409, 'Ten kalendarz został już zaimportowany jednorazowo.');
       if (connection.ownerProfileId !== selection.ownerProfileId || connection.mode !== selection.mode) failCalendar('CALENDAR_SOURCE_LOCKED', 409, 'Ponowne połączenie musi zachować przypisanie istniejącego źródła.');
     }
     if (Number.isFinite(timestampMillis(rate?.startedAt)) && now - timestampMillis(rate.startedAt) < 10000) failCalendar('CALENDAR_RATE_LIMITED', 429, 'Połączenie zostało rozpoczęte przed chwilą. Spróbuj za moment.');
     if (rate?.stateId) transaction.delete(stateRef(context, rate.stateId));
-    transaction.set(ref, { ownerUid: context.uid, ...selection, person, writeRequested: body.write === true, ...(body.connectionId ? { connectionId: body.connectionId, expectedConnectionVersion: connection.version } : {}), phase: 'started', nonceHash: digest(nonce), envelope,
+    transaction.set(ref, { ownerUid: context.uid, familyId: assertCalendarActor(context, actor), ...selection, person, writeRequested: body.write === true, ...(body.connectionId ? { connectionId: body.connectionId, expectedConnectionVersion: connection.version } : {}), phase: 'started', nonceHash: digest(nonce), envelope,
       expiresAt: Timestamp.fromMillis(now + OAUTH_TTL_MS), createdAt: Timestamp.fromMillis(now) });
-    transaction.set(rateRef, { startedAt: Timestamp.fromMillis(now), stateId: id });
+    transaction.set(rateRef, { ownerUid: context.uid, familyId: assertCalendarActor(context, actor), startedAt: Timestamp.fromMillis(now), stateId: id });
   });
   return { authorizationUrl: googleAuthorizationUrl(config, id, createHash('sha256').update(verifier).digest('base64url'), { write: body.write === true }), cookie: calendarOAuthCookie(`${id}.${nonce}`) };
 }
@@ -90,8 +90,9 @@ export async function completeCalendarOAuth(services, query, cookie, { clock = D
     if (data.writeRequested) rejectGoogleCalendarWrite();
     const actorSnapshot = await transaction.get(context.db.collection('members').doc(context.uid));
     await assertCalendarSelection(transaction, context, actorSnapshot.data(), data);
+    assertOwnedConnection(context, { ...data, provider: 'google' }, actorSnapshot.data());
     if (data.connectionId) {
-      const existing = (await transaction.get(connectionRef(context, data.connectionId))).data(); assertOwnedConnection(context, existing);
+      const existing = (await transaction.get(connectionRef(context, data.connectionId))).data(); assertOwnedConnection(context, existing, actorSnapshot.data());
       assertCalendarNotRemoving(existing, clock());
       if (!data.expectedConnectionVersion || existing.version !== data.expectedConnectionVersion) failCalendar('CALENDAR_SYNC_STALE', 409, 'Połączenie zmieniło się. Zacznij ponowne połączenie od nowa.');
     }
@@ -108,8 +109,9 @@ export async function completeCalendarOAuth(services, query, cookie, { clock = D
     assertGoogleCalendarImportOwner(context); assertCalendarV2WritesAllowed(context);
     if (data.writeRequested) rejectGoogleCalendarWrite();
     await assertCalendarSelection(transaction, context, actor, data);
+    assertOwnedConnection(context, { ...data, provider: 'google' }, actor);
     if (data.connectionId) {
-      const existing = (await transaction.get(connectionRef(context, data.connectionId))).data(); assertOwnedConnection(context, existing);
+      const existing = (await transaction.get(connectionRef(context, data.connectionId))).data(); assertOwnedConnection(context, existing, actor);
       assertCalendarNotRemoving(existing, clock());
       if (!data.expectedConnectionVersion || existing.version !== data.expectedConnectionVersion) failCalendar('CALENDAR_SYNC_STALE', 409, 'Połączenie zmieniło się. Zacznij ponowne połączenie od nowa.');
     }
@@ -129,6 +131,7 @@ export async function finalizeCalendarOAuth(context, body, cookie, { clock = Dat
     assertGoogleCalendarImportOwner(context);
     const actorSnapshot = await transaction.get(context.db.collection('members').doc(context.uid));
     const person = await assertCalendarSelection(transaction, context, actorSnapshot.data(), state);
+    const familyId = assertOwnedConnection(context, { ...state, provider: 'google' }, actorSnapshot.data());
     const id = state.connectionId || newId, connection = connectionRef(context, id), oldSnapshot = await transaction.get(connection), old = oldSnapshot.data();
     const existing = await transaction.get(context.db.collection('_calendarConnections').where('ownerUid', '==', context.uid).limit(31));
     // Retained history counts toward the bounded status response. Reconnecting
@@ -136,13 +139,13 @@ export async function finalizeCalendarOAuth(context, body, cookie, { clock = Dat
     if (!old && existing.docs.length >= 30) failCalendar('CALENDAR_SOURCE_HISTORY_LIMIT', 409, 'Osiągnięto limit 30 zapisanych źródeł kalendarza. Połącz ponownie istniejące źródło.');
     if (!old && existing.docs.filter(row => ['connected', 'needs-reconnect'].includes(row.data().status)).length >= 10) failCalendar('CALENDAR_CONNECTION_LIMIT', 409, 'Masz już dziesięć aktywnych źródeł. Rozłącz nieużywane źródło.');
     if (state.connectionId && (!old || !state.expectedConnectionVersion || old.version !== state.expectedConnectionVersion)) failCalendar('CALENDAR_SYNC_STALE', 409, 'Połączenie zmieniło się. Zacznij ponowne połączenie od nowa.');
-    if (old) { assertOwnedConnection(context, old); assertCalendarNotRemoving(old, clock()); if (old.ownerProfileId !== state.ownerProfileId || old.mode !== state.mode) failCalendar('CALENDAR_SOURCE_LOCKED', 409, 'Przypisanie źródła zmieniło się. Zacznij ponownie.'); }
+    if (old) { assertOwnedConnection(context, old, actorSnapshot.data()); assertCalendarNotRemoving(old, clock()); if (old.ownerProfileId !== state.ownerProfileId || old.mode !== state.mode) failCalendar('CALENDAR_SOURCE_LOCKED', 409, 'Przypisanie źródła zmieniło się. Zacznij ponownie.'); }
     const { tokens } = decryptCalendarSecrets(state.envelope, { uid: context.uid, id: body.completionId, purpose: 'oauth' });
     if (state.writeRequested) {
       rejectGoogleCalendarWrite();
     }
     validState(state, body.completionId, cookie, clock(), 'authorized');
-    transaction.set(connection, { ...(old || {}), ownerUid: context.uid, provider: 'google', ownerProfileId: state.ownerProfileId, person, visibility: state.visibility, mode: state.mode,
+    transaction.set(connection, { ...(old || {}), ownerUid: context.uid, familyId, provider: 'google', ownerProfileId: state.ownerProfileId, person, visibility: state.visibility, mode: state.mode,
       calendarId: old?.calendarId || 'primary', calendarName: old?.calendarName || 'Google Calendar', selectionConfirmed: false,
       status: 'connected', version: randomUUID(), leaseId: null, leaseExpiresAt: null, lastErrorCode: null,
       removingEvents: false, removalExpiresAt: null,
@@ -161,7 +164,7 @@ export async function calendarStatus(context, body) {
   if (snapshot.docs.length > 30) failCalendar('CALENDAR_CONNECTION_LIMIT', 409, 'Lista źródeł wymaga uporządkowania.');
   const importOwner = googleCalendarImportOwner();
   return { configured: configured(), importOwnerConfigured: !!importOwner, importAllowed: !!importOwner && context.uid === importOwner,
-    readOnly: true, connections: snapshot.docs.map(row => publicCalendarConnection(row.id, row.data())) };
+    readOnly: true, connections: snapshot.docs.map(row => { assertOwnedConnection(context, row.data(), actorSnapshot.data()); return publicCalendarConnection(row.id, row.data()); }) };
 }
 
 async function withClient(context, body, operation, { clock = Date.now, clientFactory = googleCalendarClient, syncing = false } = {}) {
@@ -206,7 +209,7 @@ export async function configureGoogleCalendar(context, body, options) {
     const envelope = encryptCalendarSecrets({ ...secrets, tokens: client.tokens(), syncToken: data.calendarId === calendar.id ? secrets.syncToken : null }, { uid: context.uid, id: data.id, purpose: 'connection' });
     await context.db.runTransaction(async transaction => {
       const snapshot = await transaction.get(ref), actorSnapshot = await transaction.get(context.db.collection('members').doc(context.uid)), current = snapshot.data();
-      assertOwnedConnection(context, current); const person = await assertCalendarSelection(transaction, context, actorSnapshot.data(), selection); assertCalendarLease(current, lease, clock());
+      const familyId = assertOwnedConnection(context, current, actorSnapshot.data()); const person = await assertCalendarSelection(transaction, context, actorSnapshot.data(), selection); assertCalendarLease(current, lease, clock());
       const others = await transaction.get(context.db.collection('_calendarConnections').where('ownerUid', '==', context.uid).limit(31));
       if (others.docs.some(row => row.id !== data.id && row.data().calendarId === calendar.id && (row.data().hasEvents === true || ['connected', 'needs-reconnect'].includes(row.data().status)))) {
         failCalendar('CALENDAR_SOURCE_ALREADY_EXISTS', 409, 'Ten kalendarz jest już powiązany z istniejącym źródłem. Połącz ponownie dotychczasowe źródło.');
@@ -215,7 +218,7 @@ export async function configureGoogleCalendar(context, body, options) {
         failCalendar('CALENDAR_SOURCE_LOCKED', 409, 'Zaimportowane źródło zachowuje kalendarz i właściciela. Rozłącz je, aby utworzyć inne źródło.');
       }
       assertCalendarLease(current, lease, clock());
-      transaction.update(ref, { ...selection, person, calendarId: calendar.id, calendarName: calendar.name, timeZone: calendar.timeZone, envelope,
+      transaction.update(ref, { ...selection, familyId, person, calendarId: calendar.id, calendarName: calendar.name, timeZone: calendar.timeZone, envelope,
         selectionConfirmed: true, googleCalendarCanWrite: calendar.canWrite === true, lastErrorCode: null, ...(current.calendarId === calendar.id ? {} : { recurringIds: [], historyComplete: false, historyProgress: null }), updatedAt: Timestamp.fromMillis(clock()) });
     });
     return { connectionId: data.id };
@@ -224,7 +227,7 @@ export async function configureGoogleCalendar(context, body, options) {
 export async function syncGoogleCalendar(context, body, options) {
   expectCalendarFields(body, ['connectionId']);
   assertGoogleCalendarImportOwner(context);
-  const current = (await connectionRef(context, body.connectionId).get()).data();
+  const current = await readOwnedCalendarConnection(context, body.connectionId);
   if (current?.historyImportVersion === 2) return syncGoogleHistory(context, body, options);
   assertCalendarV2WritesAllowed(context);
   if (current && !current.historyImportWindow) failCalendar('CALENDAR_HISTORY_RANGE_REQUIRED', 409, 'Najpierw wybierz i zatwierdź zakres prywatnego importu historii. Dotychczasowe wydarzenia pozostają zachowane.');
@@ -266,15 +269,16 @@ export async function changeGoogleEventVisibility(context, body, { clock = Date.
   const ref = connectionRef(context, body.connectionId), sharedRef = context.db.collection('calendarEvents').doc(body.eventId), privateRef = context.db.collection('privateCalendarEvents').doc(body.eventId);
   await context.db.runTransaction(async transaction => {
     const [connection, actor, shared, privateSnapshot] = await Promise.all([transaction.get(ref), transaction.get(context.db.collection('members').doc(context.uid)), transaction.get(sharedRef), transaction.get(privateRef)]);
-    assertCalendarActor(context, actor.data()); assertOwnedConnection(context, connection.data());
+    const familyId = assertOwnedConnection(context, connection.data(), actor.data());
     assertCalendarNotRemoving(connection.data(), clock());
     if (shared.exists && privateSnapshot.exists) failCalendar('CALENDAR_EVENT_CONFLICT', 409, 'Wydarzenie wymaga sprawdzenia ustawień prywatności.');
     const event = shared.exists ? shared.data() : privateSnapshot.data();
-    if (!event || event.source !== 'google' || event.sourceConnectionId !== body.connectionId || event.sourceOwnerUid !== context.uid || event.ownerUid !== context.uid || event.createdBy !== context.uid) failCalendar('CALENDAR_EVENT_FORBIDDEN', 403, 'Nie możesz zmienić widoczności tego wydarzenia.');
+    assertCalendarEventFamily(context, event, actor.data());
+    if (!event || event.source !== 'google' || event.sourceConnectionId !== body.connectionId || event.sourceOwnerUid !== context.uid || event.ownerUid !== context.uid || event.createdBy !== context.uid || event.externalCalendarId !== connection.data().calendarId || googleEventDocumentId(context.uid, body.connectionId, connection.data().calendarId, event.externalEventId) !== body.eventId) failCalendar('CALENDAR_EVENT_FORBIDDEN', 403, 'Nie możesz zmienić widoczności tego wydarzenia.');
     await assertCalendarSelection(transaction, context, actor.data(), connection.data());
     assertCalendarNotRemoving(connection.data(), clock());
     const isPrivate = body.visibility === 'private', target = isPrivate ? privateRef : sharedRef, oldRef = shared.exists ? sharedRef : privateRef;
-    transaction.set(target, { ...event, private: isPrivate, visibilityOverride: body.visibility, updatedAt: Timestamp.fromMillis(now), updatedBy: context.uid });
+    transaction.set(target, { ...event, familyId, private: isPrivate, visibility: body.visibility, visibilityOverride: body.visibility, updatedAt: Timestamp.fromMillis(now), updatedBy: context.uid });
     if (oldRef.path !== target.path) transaction.delete(oldRef);
   });
   return { eventId: body.eventId, visibility: body.visibility };
@@ -287,9 +291,9 @@ export async function disconnectGoogleCalendar(context, body, { clock = Date.now
   const ref = connectionRef(context, body.connectionId), version = randomUUID();
   await context.db.runTransaction(async transaction => {
     const [snapshot, actor] = await Promise.all([transaction.get(ref), transaction.get(context.db.collection('members').doc(context.uid))]);
-    assertCalendarActor(context, actor.data()); assertOwnedConnection(context, snapshot.data());
+    const familyId = assertOwnedConnection(context, snapshot.data(), actor.data());
     assertCalendarNotRemoving(snapshot.data(), clock());
-    transaction.update(ref, { envelope: null, version, status: 'disconnected', selectionConfirmed: false, leaseId: null, leaseExpiresAt: null, lastErrorCode: null,
+    transaction.update(ref, { familyId, envelope: null, version, status: 'disconnected', selectionConfirmed: false, leaseId: null, leaseExpiresAt: null, lastErrorCode: null,
       removingEvents: body.removeEvents, removalExpiresAt: body.removeEvents ? Timestamp.fromMillis(clock() + CALENDAR_LEASE_MS) : null, updatedAt: Timestamp.fromMillis(clock()) });
   });
   let removed = 0;
@@ -299,13 +303,14 @@ export async function disconnectGoogleCalendar(context, body, { clock = Date.now
       for (let offset = 0; offset < rows.length; offset += 100) {
         const count = await context.db.runTransaction(async transaction => {
           const [snapshot, actor] = await Promise.all([transaction.get(ref), transaction.get(context.db.collection('members').doc(context.uid))]);
-          assertCalendarActor(context, actor.data()); assertOwnedConnection(context, snapshot.data());
+          assertOwnedConnection(context, snapshot.data(), actor.data());
           const locked = snapshot.data();
           if (locked.version !== version || locked.status !== 'disconnected' || locked.removingEvents !== true
             || !Number.isFinite(timestampMillis(locked.removalExpiresAt)) || timestampMillis(locked.removalExpiresAt) <= clock()) failCalendar('CALENDAR_SYNC_STALE', 409, 'Połączenie zmieniło się podczas rozłączania.');
           const fresh = await Promise.all(rows.slice(offset, offset + 100).map(row => transaction.get(row.ref)));
           for (const row of fresh) if (row.exists) {
             const event = row.data();
+            assertCalendarEventFamily(context, event, actor.data());
             if (event.sourceConnectionId !== body.connectionId || event.sourceOwnerUid !== context.uid || event.ownerUid !== context.uid || event.createdBy !== context.uid || event.source !== 'google') failCalendar('CALENDAR_EVENT_CONFLICT', 409, 'Źródło kalendarza wymaga sprawdzenia właściciela.');
           }
           if (timestampMillis(locked.removalExpiresAt) <= clock()) failCalendar('CALENDAR_SYNC_STALE', 409, 'Usuwanie trwało zbyt długo. Spróbuj ponownie.');
@@ -315,7 +320,7 @@ export async function disconnectGoogleCalendar(context, body, { clock = Date.now
       }
       await context.db.runTransaction(async transaction => {
         const [snapshot, actor] = await Promise.all([transaction.get(ref), transaction.get(context.db.collection('members').doc(context.uid))]);
-        assertCalendarActor(context, actor.data()); assertOwnedConnection(context, snapshot.data());
+        assertOwnedConnection(context, snapshot.data(), actor.data());
         if (snapshot.data().version !== version || snapshot.data().status !== 'disconnected' || snapshot.data().removingEvents !== true
           || !Number.isFinite(timestampMillis(snapshot.data().removalExpiresAt)) || timestampMillis(snapshot.data().removalExpiresAt) <= clock()) failCalendar('CALENDAR_SYNC_STALE', 409, 'Połączenie zmieniło się podczas rozłączania.');
         transaction.update(ref, { hasEvents: false, removingEvents: false, removalExpiresAt: null });
@@ -323,8 +328,10 @@ export async function disconnectGoogleCalendar(context, body, { clock = Date.now
     } finally {
       // A failed cleanup preserves history and unlocks a retry; a newer connection is never modified.
       await context.db.runTransaction(async transaction => {
-        const snapshot = await transaction.get(ref), current = snapshot.data();
+        const [snapshot, actor] = await Promise.all([transaction.get(ref), transaction.get(context.db.collection('members').doc(context.uid))]);
+        const current = snapshot.data();
         if (current?.ownerUid === context.uid && current.version === version && current.status === 'disconnected' && current.removingEvents === true) {
+          assertOwnedConnection(context, current, actor.data());
           transaction.update(ref, { removingEvents: false, removalExpiresAt: null });
         }
       }).catch(() => {});
@@ -362,7 +369,7 @@ async function commitHistoryPage(context, client, data, secrets, lease, ref, clo
   for (const event of page.events) {
     if (event.exportReference && /^[a-f0-9]{64}$/.test(event.exportReference)) {
       const exported = (await context.db.collection('_calendarExports').doc(event.exportReference).get()).data();
-      if (exported?.ownerUid === context.uid && exported.sourceConnectionId === data.id && exported.externalEventId === event.externalEventId) continue;
+      if (exported?.ownerUid === context.uid && exported.familyId === data.familyId && exported.sourceConnectionId === data.id && exported.externalEventId === event.externalEventId) continue;
     }
     sourceEvents.push(event);
   }
@@ -393,7 +400,7 @@ async function filterGoogleHistoryEvents(context, data, sourceEvents, window, ph
     // Initial scans never look up every unrelated old event in Firestore.
     if (!eligible && phase === 'sync') {
       const snapshots = await Promise.all(['privateCalendarEvents', 'calendarEvents'].map(name => context.db.collection(name).doc(id).get()));
-      known = snapshots.some(snapshot => snapshot.exists && snapshot.data().sourceOwnerUid === context.uid && snapshot.data().sourceConnectionId === data.id);
+      known = snapshots.some(snapshot => snapshot.exists && snapshot.data().familyId === data.familyId && snapshot.data().sourceOwnerUid === context.uid && snapshot.data().ownerUid === context.uid && snapshot.data().createdBy === context.uid && snapshot.data().sourceConnectionId === data.id && snapshot.data().externalCalendarId === data.calendarId && snapshot.data().externalEventId === event.externalEventId);
     }
     if (eligible || known) events.push({ ...event, ...(event.sourceRecurrence?.length ? { sourceImportWindow: window } : {}) });
   }
@@ -403,7 +410,7 @@ async function filterGoogleHistoryEvents(context, data, sourceEvents, window, ph
 export async function syncGoogleHistory(context, body, options) {
   assertGoogleCalendarImportOwner(context);
   assertCalendarV2WritesAllowed(context);
-  const current = (await connectionRef(context, body.connectionId).get()).data();
+  const current = await readOwnedCalendarConnection(context, body.connectionId);
   const continuation = current?.historyProgress?.complete === false && ['import', 'sync'].includes(current.historyProgress.phase);
   return withClient({ ...context, calendarHistoryContinuation: continuation }, body, async (client, data, secrets, lease, ref, clock) => {
     if (data.historyComplete !== true && secrets.historyJob?.phase !== 'import') failCalendar('CALENDAR_HISTORY_CONFIRM_REQUIRED', 409, 'Najpierw sprawdź i zatwierdź import historii.');
@@ -457,6 +464,9 @@ async function ownedLocalEvent(context, eventId) {
   if (privateSnapshot.exists && shared.exists) failCalendar('CALENDAR_EVENT_CONFLICT', 409, 'Wydarzenie ma niejednoznaczną widoczność.');
   const snapshot = privateSnapshot.exists ? privateSnapshot : shared;
   const event = snapshot.data();
+  const actor = (await context.db.collection('members').doc(context.uid).get()).data();
+  assertCalendarEventFamily(context, event, actor);
+  if (privateSnapshot.exists && event.ownerUid !== context.uid) failCalendar('CALENDAR_EVENT_FORBIDDEN', 403, 'Prywatne wydarzenie jest dostępne wyłącznie jego właścicielowi.');
   if (!event || event.ownerUid !== context.uid && event.createdBy !== context.uid || event.readOnly === true || event.source && event.source !== 'manual') failCalendar('CALENDAR_EVENT_FORBIDDEN', 403, 'Możesz eksportować wyłącznie własne, ręcznie dodane wydarzenia.');
   return { event, ref: privateSnapshot.exists ? privateRef : sharedRef };
 }
@@ -501,10 +511,11 @@ export async function exportLocalEventToGoogle(context, body, options) {
     const externalEventId = `nr${mappingRef.id}`, googleBody = { ...localEventGoogleBody(local.event, data.timeZone), extendedProperties: { private: { naszaRodzinaExport: mappingRef.id } } };
     await context.db.runTransaction(async transaction => {
       const [connection, actor, fresh, prior] = await Promise.all([transaction.get(ref), transaction.get(context.db.collection('members').doc(context.uid)), transaction.get(local.ref), transaction.get(mappingRef)]);
-      assertCalendarActor(context, actor.data()); assertOwnedConnection(context, connection.data()); assertCalendarLease(connection.data(), lease, clock());
+      const familyId = assertOwnedConnection(context, connection.data(), actor.data()); assertCalendarLease(connection.data(), lease, clock());
+      assertCalendarEventFamily(context, fresh.data(), actor.data());
       if (!fresh.exists || calendarEventFingerprint(fresh.data()) !== calendarEventFingerprint(local.event)) failCalendar('CALENDAR_WRITE_CONFLICT', 409, 'Wydarzenie zmieniło się przed eksportem.');
       if (prior.exists && prior.data().ownerUid !== context.uid) failCalendar('CALENDAR_EVENT_FORBIDDEN', 403, 'Nieprawidłowe przypisanie eksportu.');
-      if (!prior.exists) transaction.set(mappingRef, { ownerUid: context.uid, sourceConnectionId: data.id, localEventId: body.eventId, externalEventId, ready: false, localFingerprint: calendarEventFingerprint(local.event), conflict: false, updatedAt: Timestamp.fromMillis(clock()) });
+      if (!prior.exists) transaction.set(mappingRef, { ownerUid: context.uid, familyId, sourceConnectionId: data.id, localEventId: body.eventId, externalEventId, ready: false, localFingerprint: calendarEventFingerprint(local.event), conflict: false, updatedAt: Timestamp.fromMillis(clock()) });
     });
     let remote;
     try { remote = await client.writeEvent(data.calendarId, externalEventId, googleBody, { insert: true }); }
@@ -516,10 +527,11 @@ export async function exportLocalEventToGoogle(context, body, options) {
     if (!remote.etag || remote.id !== externalEventId) failCalendar('CALENDAR_PROVIDER_DATA', 502, 'Google nie potwierdził zapisu wydarzenia.');
     await context.db.runTransaction(async transaction => {
       const [connection, actor, fresh, prior] = await Promise.all([transaction.get(ref), transaction.get(context.db.collection('members').doc(context.uid)), transaction.get(local.ref), transaction.get(mappingRef)]);
-      assertCalendarActor(context, actor.data()); assertOwnedConnection(context, connection.data()); assertCalendarLease(connection.data(), lease, clock());
+      const familyId = assertOwnedConnection(context, connection.data(), actor.data()); assertCalendarLease(connection.data(), lease, clock());
+      assertCalendarEventFamily(context, fresh.data(), actor.data());
       if (!fresh.exists || fresh.data().ownerUid !== context.uid && fresh.data().createdBy !== context.uid || calendarEventFingerprint(fresh.data()) !== calendarEventFingerprint(local.event)) failCalendar('CALENDAR_WRITE_CONFLICT', 409, 'Lokalne wydarzenie zmieniło się podczas eksportu. Nie nadpisano jego nowej wersji.');
       if (prior.exists && prior.data().ready === true) return;
-      transaction.set(mappingRef, { ownerUid: context.uid, sourceConnectionId: data.id, localEventId: body.eventId, externalEventId, ready: true, localFingerprint: calendarEventFingerprint(local.event), providerEtag: remote.etag, conflict: false, updatedAt: Timestamp.fromMillis(clock()) });
+      transaction.set(mappingRef, { ownerUid: context.uid, familyId, sourceConnectionId: data.id, localEventId: body.eventId, externalEventId, ready: true, localFingerprint: calendarEventFingerprint(local.event), providerEtag: remote.etag, conflict: false, updatedAt: Timestamp.fromMillis(clock()) });
     });
     await persistCalendarCredentials(context, ref, lease, data, client.tokens(), secrets.syncToken, clock(), clock, secrets);
     return { exported: true, eventId: body.eventId };
@@ -537,6 +549,7 @@ export async function updateImportedGoogleEvent(context, body, options) {
     const [privateRef, sharedRef] = calendarEventReferences(context, body.eventId), [privateSnapshot, shared] = await Promise.all([privateRef.get(), sharedRef.get()]);
     if (privateSnapshot.exists && shared.exists) failCalendar('CALENDAR_EVENT_CONFLICT', 409, 'Wydarzenie ma niejednoznaczną widoczność.');
     const event = privateSnapshot.exists ? privateSnapshot.data() : shared.data();
+    assertCalendarEventFamily(context, event);
     if (!event || event.source !== 'google' || event.sourceConnectionId !== data.id || event.sourceOwnerUid !== context.uid || event.ownerUid !== context.uid || !event.providerEtag) failCalendar('CALENDAR_EVENT_FORBIDDEN', 403, 'Możesz zmienić tylko własne wydarzenie z potwierdzoną wersją Google.');
     const remote = await client.event(data.calendarId, event.externalEventId);
     if (remote.etag !== event.providerEtag) failCalendar('CALENDAR_WRITE_CONFLICT', 409, 'Wydarzenie zmieniło się w Google. Najpierw zsynchronizuj i sprawdź aktualną wersję.');

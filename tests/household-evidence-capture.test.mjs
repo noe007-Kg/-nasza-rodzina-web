@@ -38,7 +38,8 @@ function fixture({ rules403 = false, storageFailure = false, storageDrift = fals
   const rows = { members: config.members.map(member => ({ id: member.uid, data: { name: member.expectedName,
     personKey: member.expectedPersonKey, role: member.expectedRole, canLogin: member.expectedCanLogin,
     active: true, ...(member.uid === 'capture-profile-0' ? { photoURL: 'https://lh3.googleusercontent.com/member.png' } : {}) } })),
-    quickProducts: [{ id: 'asset-a', data: { imageURL: '/assets/product.png' } }, { id: 'asset-b', data: { imageURL: 'assets/product.png' } }] };
+    quickProducts: [{ id: 'asset-a', data: { imageURL: '/assets/product.png', createdBy: 'capture-profile-0' } },
+      { id: 'asset-b', data: { imageURL: 'assets/product.png', createdBy: 'capture-profile-0' } }] };
   if (extraMember) rows.members.push({ id: 'other-household-active', data: { name: 'Other fixture', role: 'parent', active: true, canLogin: true } });
   const nativeRows = Object.entries(rows).flatMap(([collection, values]) => values.map(row => document(`${collection}/${row.id}`, row.data)));
   const opaque = document('_eduConnections/encrypted-fixture', { envelope: { keyId: 'v1', ciphertext: 'SYNTHETIC_OPAQUE_PROVIDER_CIPHERTEXT' } });
@@ -137,7 +138,7 @@ test('read-only capture copies full native records, encrypted provider envelopes
   const f = fixture(), result = await f.capture();
   assert.deepEqual(result.plan.blockers, []);
   assert.equal(result.captureComplete, true); assert.equal(result.plan.writesPerformed, 0); assert.equal(result.plan.canApply, false);
-  assert.equal(result.plan.changes.length, 5); assert.equal(result.payload.documents.length, 9);
+  assert.equal(result.plan.changes.length, 7); assert.equal(result.payload.documents.length, 9);
   const provider = result.payload.documents.find(row => row.name === f.opaque.name);
   assert.equal(provider.fields.int64.integerValue, '9223372036854775807');
   assert.equal(provider.fields.envelope.mapValue.fields.ciphertext.stringValue, 'SYNTHETIC_OPAQUE_PROVIDER_CIPHERTEXT');
@@ -146,6 +147,11 @@ test('read-only capture copies full native records, encrypted provider envelopes
   assert.equal(result.payload.objects[0].name, 'unclassified-files/capture.png');
   assert.equal(result.payload.objects[0].sha256, backupDigest(PNG));
   assert.equal(result.payload.evidence.tokens.privateTokenCount, 1);
+  assert.equal(result.payload.downloadTokenReview.canApply, false);
+  assert.equal(result.payload.downloadTokenReview.writesPerformed, 0);
+  assert.equal(result.payload.downloadTokenReview.objects.length, 1);
+  assert.equal(result.payload.downloadTokenReview.objects[0].generation, '10000000000000001');
+  assert.doesNotMatch(JSON.stringify(result.payload.downloadTokenReview), /SYNTHETIC_BEARER_TOKEN/);
   assert.equal(result.payload.auth.at(-1).exists, false); assert.equal(result.payload.manifest.secretManagerKeysIncluded, false);
   assert.equal(canonicalJson(result.payload.auth).includes('NOT_FOR_BACKUP'), false);
   assert.equal(canonicalJson(result.inventory).includes('SYNTHETIC_BEARER_TOKEN'), false);
@@ -166,6 +172,11 @@ test('relative asset aliases share one download while retaining a captured recor
   for (const value of aliases) assert.ok(result.payload.externalFiles.some(row => row.id === backupDigest(value) && row.status === 'captured'));
   assert.equal(result.payload.externalFiles.length, result.payload.manifest.externalReferenceCount);
   assert.equal(result.captureComplete, true);
+  assert.equal(result.payload.downloadTokenReview.canApply, false);
+  assert.equal(result.payload.downloadTokenReview.writesPerformed, 0);
+  assert.equal(result.payload.downloadTokenReview.objects.length, 1);
+  assert.equal(result.payload.downloadTokenReview.objects[0].generation, '10000000000000001');
+  assert.doesNotMatch(JSON.stringify(result.payload.downloadTokenReview), /SYNTHETIC_BEARER_TOKEN/);
 });
 
 test('the captured fixture payload survives authenticated encryption without exposing URLs, bearer tokens or clinical/provider contents', async () => {

@@ -9,8 +9,8 @@ import { EduServerError } from '../server/edu-auth.mjs';
 
 const NOW = Date.parse('2026-10-05T08:00:00Z'); // 10:00 Warsaw, CEST
 const identity = { studentName: 'Synthetic student', schoolName: 'Synthetic school', schoolSymbol: 'TEST' };
-const parent = { role: 'parent', active: true, canLogin: true };
-const child = { role: 'child', active: true, canLogin: true, personKey: 'Nikodem', schoolEnabled: true };
+const parent = { familyId: 'source-test-family', role: 'parent', active: true, canLogin: true };
+const child = { familyId: 'source-test-family', role: 'child', active: true, canLogin: true, personKey: 'Nikodem', schoolEnabled: true };
 const passiveChild = { ...child, canLogin: false };
 const dynamicPerson = 'member-0123456789abcdef01234567';
 
@@ -26,6 +26,9 @@ function storedConnection(changes = {}) {
 
 function fakeDatabase({ members = { 'parent-a': parent, 'parent-b': parent, 'school-nikodem': passiveChild }, connections = { family: storedConnection() },
   bindings = { Nikodem: { identity } } } = {}) {
+  if (connections.family?.connectedByUid === 'parent-b' && !members['parent-b'] && members['parent-a']) connections.family = { ...connections.family, connectedByUid: 'parent-a' };
+  members = { 'approving-parent': { ...parent, active:false, canLogin:false }, ...members };
+  bindings = Object.fromEntries(Object.entries(bindings).map(([key, value]) => [key, { establishedByUid:'approving-parent', ...value }]));
   const data = { members, _eduConnections: connections, _eduStudentBindings: bindings };
   const reads = [];
   function document(collection, id) {
@@ -39,12 +42,12 @@ function fakeDatabase({ members = { 'parent-a': parent, 'parent-b': parent, 'sch
         doc(id) { return { get: async () => { reads.push(`${collection}/${id}`); return document(collection, id); } }; },
         where(field, operator, value) {
           assert.equal(operator, '==');
-          return { limit(limit) { return { get: async () => {
+          const filters = [[field, value]]; const target = { where(otherField, otherOp, otherValue) { assert.equal(otherOp, '=='); filters.push([otherField, otherValue]); return target; }, limit(limit) { return { get: async () => {
             reads.push(`${collection}?${field}=${value}&limit=${limit}`);
-            const docs = Object.keys(data[collection] || {}).filter((id) => data[collection][id][field] === value)
+            const docs = Object.keys(data[collection] || {}).filter((id) => filters.every(([key, expected]) => data[collection][id][key] === expected))
               .slice(0, limit).map((id) => document(collection, id));
             return { docs, size: docs.length };
-          } }; } };
+          } }; } }; return target;
         },
       };
     },

@@ -203,7 +203,7 @@ test('an unsafe verified picture is ignored and unchanged Google photos do not c
 });
 
 test('memberOnly endpoints admit adults, while the default parent endpoint and eduVULCAN connection management deny them', async () => {
-  const adult = { ...active, role: 'adult' };
+  const adult = { ...active, role: 'adult', familyId:'account-test-family' };
   for (const memberOnly of [true, false]) {
     let calls = 0;
     const context = services({ profile: adult });

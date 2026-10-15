@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { getBlob, ref } from 'firebase/storage';
+import { ref } from 'firebase/storage';
+import { getPrivateStorageBlob } from '../private-storage-blob';
 import { auth, storage } from '../firebase';
 import { Modal } from '../app-shared';
 
@@ -16,7 +17,7 @@ export function HealthDocumentViewer({ file, uid, onClose }: { file: HealthPrevi
   useEffect(() => {
     let active = true; let blobURL = '';
     setURL(''); setError(''); setZoom(1);
-    void getBlob(ref(storage, file.path), 10 * 1024 * 1024).then(blob => {
+    void getPrivateStorageBlob(ref(storage, file.path), 10 * 1024 * 1024, true).then(blob => {
       if (!active || auth.currentUser?.uid !== uid) return;
       blobURL = URL.createObjectURL(blob); setMime(file.mimeType || blob.type); setURL(blobURL);
     }).catch(() => { if (active) setError('Nie udało się otworzyć pliku. Sprawdź połączenie i uprawnienia do dokumentu.'); });

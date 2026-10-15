@@ -148,14 +148,14 @@ test('replacing a linked attachment updates the existing visit and queues only i
   assert.equal([...context.rows.keys()].filter(key => key.startsWith('calendarEvents/')).length, 1);
 });
 
-test('authorized state lists own ready documents with a fresh family check, preserves legacy ACLs and omits private bearer URLs', async () => {
+test('authorized state lists own ready documents with a fresh family check, preserves migrated legacy ACLs and omits private bearer URLs', async () => {
   const context = makeContext();
   const document = changes => ({ title: 'Synthetic document', ownerProfileId: 'child', createdBy: 'parent', state: 'ready',
     readers: ['parent'], editors: ['parent'], storagePath: 'healthDocuments/owned/parent/test.pdf',
     documentURL: 'https://private.example/ignored?token=not-a-real-token', secret: 'not-returned', ...changes });
   context.rows.set('healthDocuments/owned', document({ attachmentKind: 'health-record', familyId: 'fixture-family' }));
   context.rows.set('healthDocuments/foreign-family', document({ attachmentKind: 'health-record', familyId: 'foreign-family', storagePath: 'healthDocuments/foreign-family/parent/test.pdf' }));
-  context.rows.set('healthDocuments/legacy', document({ storagePath: 'healthDocuments/legacy/parent/test.pdf' }));
+  context.rows.set('healthDocuments/legacy', document({ familyId: 'fixture-family', storagePath: 'healthDocuments/legacy/parent/test.pdf' }));
   context.rows.set('healthDocuments/other-uid', document({ readers: ['adult'], storagePath: 'healthDocuments/other-uid/adult/test.pdf' }));
   context.rows.set('healthDocuments/draft', document({ state: 'draft', storagePath: 'healthDocuments/draft/parent/test.pdf' }));
   const result = await manageHealthAction(context, { operation: 'state', uid: 'adult', familyId: 'foreign-family' });

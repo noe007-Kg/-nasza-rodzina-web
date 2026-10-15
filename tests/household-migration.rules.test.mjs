@@ -103,11 +103,7 @@ function syntheticFixture() {
   rows.set('financeBills/migration-shared-child', { ...bill, sharedWith: [child] });
   rows.set('financeBillAudit/migration-audit', { billId: 'migration-shared-child', actorUid: parents[0],
     familyId: '__legacy__', kind: 'created', createdAt: timestamp });
-  const unchangedPaths = new Set([
-    `members/${foreignUid}`, `healthDocumentGrants/${adult}`,
-    `_taskRewardPending/${sha256(`${personKeys[child]}:migration-reward`)}`,
-    'calendarEvents/health-visit-migration-visit', 'privateCalendarEvents/migration-private-event',
-  ]);
+  const unchangedPaths = new Set([`members/${foreignUid}`]);
   return { rows, proofUploadId, rewardUploadId, documentId, paths: [proofPath, rewardPath, documentPath],
     patchPaths: [...rows.keys()].filter(path => !unchangedPaths.has(path)), unchangedPaths };
 }
@@ -125,11 +121,19 @@ beforeEach(async () => {
   });
 });
 
+function metadataPatch(path) {
+  const value=fixture.rows.get(path);
+  if (!path.startsWith('calendarEvents/') && !path.startsWith('privateCalendarEvents/')) return {familyId};
+  const privateRecord=path.startsWith('privateCalendarEvents/');
+  return {familyId,private:privateRecord,visibility:privateRecord?'private':'family',ownerUid:value.ownerUid||value.createdBy,
+    ownerProfileId:value.ownerProfileId||Object.keys(personKeys).find(uid=>personKeys[uid]===value.person)};
+}
+
 async function patchSyntheticFamily(paths) {
   await environment.withSecurityRulesDisabled(async context => {
     const db = context.firestore();
     const batch = writeBatch(db);
-    for (const path of paths) batch.update(doc(db, path), { familyId });
+    for (const path of paths) batch.update(doc(db, path), metadataPatch(path));
     await batch.commit();
   });
 }
@@ -148,12 +152,12 @@ async function expectFileDenied(uid, path) {
   await assertFails(getBytes(ref(storageFor(uid), path), 1024));
 }
 
-test('legacy file ACLs work before a household assignment and legacy finance remains quarantined', async () => {
+test('strict Rules quarantine unassigned legacy files and finance until the complete reviewed migration', async () => {
   for (const uid of [...parents, child]) {
-    for (const path of fixture.paths) await expectFileRead(uid, path);
+    for (const path of fixture.paths) await expectFileDenied(uid, path);
   }
-  await expectFileRead(adult, fixture.paths[2]);
-  await assertSucceeds(getDocFromServer(doc(dbFor(adult), 'healthDocuments', fixture.documentId)));
+  await expectFileDenied(adult, fixture.paths[2]);
+  await assertFails(getDocFromServer(doc(dbFor(adult), 'healthDocuments', fixture.documentId)));
   for (const path of fixture.paths) {
     await expectFileDenied(sibling, path);
     await expectFileDenied(foreignUid, path);
@@ -166,7 +170,7 @@ test('legacy file ACLs work before a household assignment and legacy finance rem
 });
 
 test('assigning only member familyId cuts off legacy files; the complete companion batch restores the same authorized access', async () => {
-  for (const uid of parents) for (const path of fixture.paths) await expectFileRead(uid, path);
+  for (const uid of parents) for (const path of fixture.paths) await expectFileDenied(uid, path);
   await patchSyntheticFamily(householdUids.map(uid => `members/${uid}`));
   for (const uid of [...parents, child]) for (const path of fixture.paths) await expectFileDenied(uid, path);
   for (const uid of [...parents, adult, child]) {
@@ -180,7 +184,7 @@ test('assigning only member familyId cuts off legacy files; the complete compani
   }
 });
 
-test('a single complete family-only fixture batch preserves shared files and per-bill child sharing while excluding other households', async () => {
+test('a single complete isolation-metadata fixture batch preserves shared files and per-bill child sharing while excluding other households', async () => {
   await patchSyntheticFamily(fixture.patchPaths);
   for (const uid of [...parents, child]) for (const path of fixture.paths) await expectFileRead(uid, path);
   for (const uid of [sibling, foreignUid]) {
@@ -201,9 +205,8 @@ test('a single complete family-only fixture batch preserves shared files and per
   }
 });
 
-test('family-only patches leave IDs, balances, ledger, legal consent, medical ACLs and calendar privacy unchanged', async () => {
+test('isolation patches leave IDs, balances, ledger, legal consent, medical ACLs and calendar privacy unchanged', async () => {
   await patchSyntheticFamily(fixture.patchPaths);
-  const withoutFamily = value => { const { familyId: ignored, ...rest } = value; return rest; };
   await environment.withSecurityRulesDisabled(async context => {
     for (const [path, beforeData] of fixture.rows) {
       const snapshot = await getDocFromServer(doc(context.firestore(), path));
@@ -212,7 +215,7 @@ test('family-only patches leave IDs, balances, ledger, legal consent, medical AC
       if (fixture.unchangedPaths.has(path)) assert.deepEqual(actual, beforeData, path);
       else {
         assert.equal(actual.familyId, familyId, path);
-        assert.deepEqual(withoutFamily(actual), withoutFamily(beforeData), path);
+        assert.deepEqual(actual, {...beforeData,...metadataPatch(path)}, path);
       }
     }
   });

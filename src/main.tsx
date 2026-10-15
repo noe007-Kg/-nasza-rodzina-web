@@ -1,8 +1,9 @@
-import { onSnapshot as observeDocument } from 'firebase/firestore';
+import { onSnapshot as observeDocument, query, where } from 'firebase/firestore';
 import { APP_VERSION, AppIcon, auth, collection, createRoot, db, doc, ErrorBoundary, errorMessage, Feedback, onAuthStateChanged, onSnapshot, pageFromHash, React, registerPwa, SchoolModule, signOut, useEffect, useMemo, useRef, useState, type Member, type Page, type PersonKey, type User } from "./app-shared";
 
 import { FamilyAggregateContext, FamilyDirectoryContext } from './family-directory';
 import { memberPersonKey, type FamilyAggregateProfile, type FamilyMemberProfile } from './family-members';
+import { householdFamilyId, householdReadScope } from './household-scope';
 import { useProfileAvatars } from './account/useProfileAvatars';
 import { FamilyTopBar } from './FamilyTopBar';
 import { useEduActivationSync } from './school/useEduActivationSync';
@@ -65,7 +66,7 @@ function FamilyApp({ user }: { user: User }) {
   const [profileError, setProfileError] = useState('');
   const [member, setMember] = useState<Member | null>(null);
   const [familyMembers, setFamilyMembers] = useState<FamilyMemberProfile[]>([]);
-  const [aggregateProfile, setAggregateProfile] = useState<FamilyAggregateProfile>({ emoji: '👨‍👩‍👧‍👦' });
+  const [aggregateState, setAggregateState] = useState<{ familyId: string; profile: FamilyAggregateProfile }>({ familyId: '', profile: { emoji: '👨‍👩‍👧‍👦' } });
   const [calendarSelection, setCalendarSelection] = useState<{ person: PersonKey; requestId: number }>();
   const [calendarNotice, setCalendarNotice] = useState<CalendarNotice>();
   const [selectedFamilyPerson, setSelectedFamilyPerson] = useState<PersonKey>('family');
@@ -91,11 +92,13 @@ function FamilyApp({ user }: { user: User }) {
   }, [user.uid]);
 
   const authorized = member?.active === true && member?.canLogin === true && member?.archived !== true && ['parent', 'adult', 'child'].includes(member?.role || '');
+  const familyId = householdFamilyId(member);
+  const aggregateProfile = familyId && aggregateState.familyId === familyId ? aggregateState.profile : { emoji: '👨‍👩‍👧‍👦' };
   const avatarProfiles = useMemo(() => {
-    const directory = new Map(familyMembers.map(profile => [profile.id, profile]));
+    const directory = new Map(familyMembers.filter(profile => familyId && householdFamilyId(profile) === familyId).map(profile => [profile.id, profile]));
     if (member) directory.set(user.uid, { ...member, id: user.uid });
     return [...directory.values()];
-  }, [familyMembers, member, user.uid]);
+  }, [familyMembers, member, user.uid, familyId]);
   const displayedMembers = useProfileAvatars(user.uid, avatarProfiles);
   const displayedMember = member ? { ...member, photoURL: displayedMembers.find(profile => profile.id === user.uid)?.photoURL } : null;
   const aggregateAvatars = useMemo(() => [{ ...aggregateProfile, id: '__family_aggregate__', familyAggregate: true }], [aggregateProfile]);
@@ -105,15 +108,22 @@ function FamilyApp({ user }: { user: User }) {
   useEduActivationSync(user, authorized && member?.role === 'parent');
   useCalendarActivationSync(user, authorized);
   useEffect(() => {
-    if (!authorized) { setFamilyMembers([]); return; }
-    return onSnapshot(collection(db, 'members'), snapshot => {
+    setFamilyMembers([]);
+    if (!authorized || !familyId) return;
+    return onSnapshot(query(collection(db, 'members'), where('familyId', '==', familyId)), snapshot => {
       setFamilyMembers(snapshot.docs.map(row => ({ ...row.data(), id: row.id }) as FamilyMemberProfile));
     }, () => setFamilyMembers(member ? [{ ...member, id: user.uid }] : []));
-  }, [user.uid, authorized]);
+  }, [user.uid, authorized, familyId]);
   useEffect(() => {
-    if (!authorized) { setAggregateProfile({ emoji: '👨‍👩‍👧‍👦' }); return; }
-    return observeDocument(doc(db, 'familySettings', 'profile'), snapshot => setAggregateProfile(snapshot.exists() ? snapshot.data() as FamilyAggregateProfile : { emoji: '👨‍👩‍👧‍👦' }), () => setAggregateProfile({ emoji: '👨‍👩‍👧‍👦' }));
-  }, [user.uid, authorized]);
+    if (!authorized || !familyId) return;
+    let alive = true;
+    let keyed: FamilyAggregateProfile | null = null, legacy: FamilyAggregateProfile | null = null;
+    const publish = () => { if (alive) setAggregateState({ familyId, profile: keyed || legacy || { emoji: '👨‍👩‍👧‍👦' } }); };
+    const read = (data: Record<string, unknown> | undefined) => data?.familyId === familyId ? data as FamilyAggregateProfile : null;
+    const stopKeyed = observeDocument(doc(db, 'familySettings', familyId), snapshot => { keyed = read(snapshot.data()); publish(); }, () => { keyed = null; publish(); });
+    const stopLegacy = observeDocument(doc(db, 'familySettings', 'profile'), snapshot => { legacy = read(snapshot.data()); publish(); }, () => { legacy = null; publish(); });
+    return () => { alive = false; stopKeyed(); stopLegacy(); };
+  }, [user.uid, authorized, familyId]);
 
   useEffect(() => {
     const changed = () => {
@@ -168,7 +178,7 @@ function FamilyApp({ user }: { user: User }) {
       <main className="main-area">
         <CalendarCallbackCompletion user={user} onComplete={notice => { setCalendarNotice(notice); goTo('Ustawienia'); }} />
         <FamilyTopBar user={user} parent={member?.role === 'parent'} onSelect={profile => { setSelectedFamilyPerson(memberPersonKey(profile)); goTo('Rodzina'); }} onFamilySelect={() => { setCalendarSelection(current => ({ person: 'family', requestId: (current?.requestId || 0) + 1 })); goTo('Kalendarz'); }} />
-        {renderPage()}
+        <React.Fragment key={householdReadScope(user.uid, member)}>{renderPage()}</React.Fragment>
       </main>
       <MobileNavigation page={page} goTo={goTo} moreOpen={mobileMoreOpen} onMore={() => setMobileMoreOpen(true)} />
       {mobileMoreOpen && (

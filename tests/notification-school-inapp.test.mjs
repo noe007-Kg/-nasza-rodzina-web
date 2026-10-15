@@ -65,9 +65,9 @@ function fixture() {
     },
   };
   for (const [id, name, role] of [['sebastian', 'Sebastian', 'parent'], ['dominika', 'Dominika', 'parent'], ['nikodem', 'Nikodem', 'child'], ['pawel', 'Paweł', 'child']]) {
-    records.set(`members/${id}`, { name, personKey: name, role, active: true, canLogin: true });
+    records.set(`members/${id}`, { familyId: 'source-test-family', name, personKey: name, role, active: true, canLogin: true });
   }
-  records.set('_eduConnections/family', { scope: 'family', accountRole: 'parent',
+  records.set('_eduConnections/family', { connectedByUid:'dominika', scope: 'family', accountRole: 'parent',
     expiresAt: Timestamp.fromMillis(Date.now() + 3600000), sessionVersion: 'same-protected-session',
     students: [{ id: 'nikodem-school', studentName: 'Nikodem', schoolName: 'SP4' }],
     selectedStudent: { profileId: 'nikodem-school', personKey: 'Nikodem' },
@@ -268,7 +268,7 @@ test('fresh transaction membership prevents delivery after an account was archiv
 
 test('generic IN-APP sender supports an authenticated single-UID refresh without writing other inboxes', async () => {
   const f = fixture();
-  const event = deriveNotificationEvent('tasks', 'task-one', null, { title: 'Zadanie', person: 'family' });
+  const event = deriveNotificationEvent('tasks', 'task-one', null, { familyId: 'source-test-family', title: 'Zadanie', person: 'family' });
   assert.deepEqual(await enqueueInAppEvents(f.context, [event], { recipientUid: 'dominika' }), { created: 1, checked: 1 });
   assert.equal(f.inbox('dominika').length, 1); assert.equal(f.inbox('sebastian').length, 0); assert.equal(f.inbox('nikodem').length, 0);
   assert.equal((await enqueueInAppEvents(f.context, [event], { recipientUid: 'dominika' })).created, 0);
@@ -276,7 +276,7 @@ test('generic IN-APP sender supports an authenticated single-UID refresh without
 
 test('source privacy is reread atomically before a pending health alert reaches a child inbox', async () => {
   const f = fixture();
-  const shared = { title: 'Wynik testowy', person: 'Nikodem', privateToParents: false, createdBy: 'dominika' };
+  const shared = { familyId: 'source-test-family', title: 'Wynik testowy', person: 'Nikodem', privateToParents: false, createdBy: 'dominika' };
   f.records.set('healthRecords/result', shared);
   const staleEvent = deriveNotificationEvent('healthRecords', 'result', null, shared);
   // The producer saw a shared record; a parent changes privacy immediately
@@ -299,7 +299,7 @@ test('fresh chat participants and deleted records cannot be bypassed by a previo
 
 test('source validation uses the existing static collection allowlist and rejects record path injection', async () => {
   const f = fixture();
-  const event = deriveNotificationEvent('tasks', 'valid', null, { title: 'Zadanie', person: 'family' });
+  const event = deriveNotificationEvent('tasks', 'valid', null, { familyId: 'source-test-family', title: 'Zadanie', person: 'family' });
   for (const invalid of [{ ...event, collection: '_eduConnections' }, { ...event, recordId: '../victim' }, { ...event, recordId: '.' }]) {
     await assert.rejects(enqueueInAppEvents(f.context, [invalid], { recipientUid: 'nikodem', revalidateSource: true }), /Invalid notification source/);
   }

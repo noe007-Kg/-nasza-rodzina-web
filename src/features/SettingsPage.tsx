@@ -12,6 +12,8 @@ import { StartTileColorsSettings } from './StartTileColorsSettings';
 import { StartTileSizesSettings } from './StartTileSizesSettings';
 import { SchoolConnectionsPreparation } from '../school/SchoolSources';
 import './settings-appearance.css';
+import { query, where } from 'firebase/firestore';
+import { requireHouseholdFamilyId } from '../household-scope';
 
 export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout, calendarNotice }: { user: User; member: Member | null; theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void; goTo: (page: Page) => void; onLogout: () => Promise<void>; calendarNotice?: CalendarNotice }) {
   const parent=isParent(member);
@@ -27,8 +29,18 @@ export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout, ca
     setExporting(true);
     try {
       const names = ['members','calendarEvents','tasks','shoppingItems','quickProducts','healthRecords','medicalContacts','schoolItems'];
-      const snapshots = await Promise.all(names.map(name=>getDocs(collection(db,name))));
-      const data = Object.fromEntries(names.map((name,i)=>[name,snapshots[i].docs.map(row=>({ id:row.id, data:row.data() }))]));
+      const familyId = requireHouseholdFamilyId(member);
+      const snapshots = await Promise.all(names.map(name => name === 'shoppingItems' ? null : getDocs(name === 'calendarEvents'
+        ? query(collection(db, name), where('familyId', '==', familyId), where('private', '==', false), where('visibility', '==', 'family'))
+        : query(collection(db, name), where('familyId', '==', familyId)))));
+      const data = Object.fromEntries(names.map((name,i)=>[name,(snapshots[i]?.docs || []).map(row=>({ id:row.id, data:row.data() }))]));
+      // Legacy shopping records have no familyId yet. Preserve their backup
+      // using verified household creator UIDs, never a project-wide read.
+      const householdUids = (snapshots[0]?.docs || []).map(row => row.id);
+      const shopping = await Promise.all(Array.from({length:Math.ceil(householdUids.length / 30)}, (_,index) =>
+        getDocs(query(collection(db,'shoppingItems'), where('createdBy','in',householdUids.slice(index*30,index*30+30))))));
+      data.shoppingItems = shopping.flatMap(snapshot => snapshot.docs.filter(row =>
+        !row.data().familyId || row.data().familyId === familyId).map(row => ({id:row.id,data:row.data()})));
       downloadFile(JSON.stringify({ schemaVersion:1, appVersion:APP_VERSION, exportedAt:new Date().toISOString(), data }, null, 2), `nasza-rodzina-kopia-${dateKey()}.json`, 'application/json');
       notify('Pobrano kopię danych. Przechowuj ten plik prywatnie; pliki dokumentów i wiadomości nie są częścią kopii.');
     } catch (error) { notify(errorMessage(error), 'error'); }
@@ -38,7 +50,7 @@ export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout, ca
     if (exporting) return;
     setExporting(true);
     try {
-      const events = await fetchCalendarEvents(user.uid);
+      const events = await fetchCalendarEvents(user.uid, member);
       downloadFile(exportCalendarIcs(events, { uid: user.uid }), `nasza-rodzina-kalendarz-${dateKey()}.ics`, 'text/calendar;charset=utf-8');
     } catch (error) { notify(errorMessage(error), 'error'); }
     finally { setExporting(false); }

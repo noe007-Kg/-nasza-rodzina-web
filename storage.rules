@@ -10,7 +10,32 @@ service firebase.storage {
         && profile().role in ['parent', 'adult', 'child'];
     }
     function parent() { return member() && profile().role == 'parent'; }
-    function ownPerson() { return profile().personKey; }
+    function validFamilyId(value) {
+      return value is string && value != '__legacy__'
+        && value.matches('[A-Za-z0-9][A-Za-z0-9_-]{0,127}');
+    }
+    function householdMember() {
+      return member() && profile().get('disabled', false) == false
+        && validFamilyId(profile().get('familyId', null));
+    }
+    function sameHousehold(data) {
+      return householdMember() && data.get('familyId', null) == profile().familyId;
+    }
+    function householdUid(uid) {
+      return uid == request.auth.uid ? householdMember()
+        : firestore.exists(/databases/(default)/documents/members/$(uid))
+          && sameHousehold(firestore.get(/databases/(default)/documents/members/$(uid)).data);
+    }
+    function ownPerson() { return profile().get('personKey', profile().get('name', '')); }
+    // Marked files retain their original household even if an Admin later moves
+    // a UID. Unmarked legacy prefixes still require the reviewed migration.
+    function storedObjectHousehold() {
+      return !resource.metadata.keys().hasAny(['familyId']) || sameHousehold(resource.metadata);
+    }
+    function preserveObjectHousehold() {
+      return resource == null || storedObjectHousehold()
+        && resource.metadata.get('familyId', null) == request.resource.metadata.get('familyId', null);
+    }
     function image() { return request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp', 'image/gif']; }
     function medicalFile() { return image() || request.resource.contentType == 'application/pdf'; }
     function healthAccess(visibility, person) {
@@ -23,7 +48,7 @@ service firebase.storage {
       return firestore.get(/databases/(default)/documents/members/$(uid)).data;
     }
     function avatarEditor(uid) {
-      return member()
+      return householdUid(uid)
         && firestore.exists(/databases/(default)/documents/members/$(uid))
         && avatarTarget(uid).get('active', false) == true
         && avatarTarget(uid).get('archived', false) == false
@@ -34,29 +59,32 @@ service firebase.storage {
       return filename.matches('[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\\.(jpg|jpeg|png|webp|gif)');
     }
     match /avatars/members/{targetUid}/{uploaderUid}/{filename} {
-      allow read: if member();
+      // Target profile is the household authority; uploaders can create only
+      // under an editable profile in their own household. Existing object
+      // prefixes must be reviewed by preflight before deployment.
+      allow read: if householdUid(targetUid) && storedObjectHousehold();
       allow create, update: if uploaderUid == request.auth.uid && avatarEditor(targetUid)
-        && avatarFilename(filename) && request.resource.size <= 5 * 1024 * 1024 && image();
-      allow delete: if avatarEditor(targetUid) && avatarFilename(filename);
+        && preserveObjectHousehold() && avatarFilename(filename) && request.resource.size <= 5 * 1024 * 1024 && image();
+      allow delete: if avatarEditor(targetUid) && storedObjectHousehold() && avatarFilename(filename);
     }
     match /avatars/family/{uploaderUid}/{filename} {
-      allow read: if member();
-      allow create, update: if parent() && uploaderUid == request.auth.uid
-        && avatarFilename(filename) && request.resource.size <= 5 * 1024 * 1024 && image();
-      allow delete: if parent() && avatarFilename(filename);
+      allow read: if householdUid(uploaderUid) && storedObjectHousehold();
+      allow create, update: if householdUid(uploaderUid) && parent() && uploaderUid == request.auth.uid
+        && preserveObjectHousehold() && avatarFilename(filename) && request.resource.size <= 5 * 1024 * 1024 && image();
+      allow delete: if householdUid(uploaderUid) && storedObjectHousehold() && parent() && avatarFilename(filename);
     }
     match /quick-products/{uid}/{filename} {
-      allow read: if member();
-      allow create, update: if member() && uid == request.auth.uid
-        && request.resource.size <= 5 * 1024 * 1024 && image();
-      allow delete: if member() && (uid == request.auth.uid || parent());
+      allow read: if householdUid(uid) && storedObjectHousehold();
+      allow create, update: if householdUid(uid) && uid == request.auth.uid
+        && preserveObjectHousehold() && request.resource.size <= 5 * 1024 * 1024 && image();
+      allow delete: if householdUid(uid) && storedObjectHousehold() && (uid == request.auth.uid || parent());
     }
     match /health/{visibility}/{person}/{uid}/{filename} {
-      allow read: if healthAccess(visibility, person);
-      allow create, update: if healthAccess(visibility, person) && uid == request.auth.uid
+      allow read: if householdUid(uid) && storedObjectHousehold() && healthAccess(visibility, person);
+      allow create, update: if householdUid(uid) && healthAccess(visibility, person) && uid == request.auth.uid
         && (parent() || person == ownPerson())
-        && request.resource.size <= 10 * 1024 * 1024 && medicalFile();
-      allow delete: if parent();
+        && preserveObjectHousehold() && request.resource.size <= 10 * 1024 * 1024 && medicalFile();
+      allow delete: if householdUid(uid) && storedObjectHousehold() && healthAccess(visibility, person) && parent();
     }
     function taskUpload(filename) {
       return firestore.get(/databases/(default)/documents/_taskPhotoUploads/$(filename.split('[.]')[0])).data;
@@ -68,14 +96,14 @@ service firebase.storage {
     // the current member and this Admin-issued, atomically revoked upload ticket.
     function proofTicketAccess(taskId, uid, filename) {
       let ticket = taskUpload(filename);
-      return ticket.get('familyId', null) == profile().get('familyId', null)
+      return sameHousehold(ticket)
         && ticket.taskId == taskId && ticket.uid == uid
         && ticket.path == 'taskProof/' + taskId + '/' + uid + '/' + filename
         && ticket.state in ['open', 'submitted']
         && (parent() || (uid == request.auth.uid && (ticket.person == ownPerson() || ticket.person == 'family')));
     }
     function proofAccess(taskId, uid, filename) {
-      return member() && proofFilename(filename) && proofTicketAccess(taskId, uid, filename);
+      return householdMember() && proofFilename(filename) && proofTicketAccess(taskId, uid, filename);
     }
     match /taskProof/{taskId}/{uid}/{filename} {
       allow read: if proofAccess(taskId, uid, filename);
@@ -94,7 +122,7 @@ service firebase.storage {
       let ticket = rewardImageTicket(filename);
       let personKey = profile().get('personKey', '');
       let rewardPerson = personKey is string && personKey.size() > 0 ? personKey : profile().get('name', '');
-      return ticket.get('familyId', null) == profile().get('familyId', null)
+      return sameHousehold(ticket)
         && ticket.rewardId == rewardId && ticket.uid == uid
         && ticket.path == 'taskRewardImages/' + rewardId + '/' + uid + '/' + filename
         && (ticket.state == 'open' && parent() && uid == request.auth.uid
@@ -102,8 +130,8 @@ service firebase.storage {
             || (ticket.active == true && (ticket.people.size() == 0 || rewardPerson in ticket.people))));
     }
     match /taskRewardImages/{rewardId}/{uid}/{filename} {
-      allow read: if member() && proofFilename(filename) && rewardImageAccess(rewardId, uid, filename);
-      allow create: if resource == null && member() && parent() && uid == request.auth.uid
+      allow read: if householdMember() && proofFilename(filename) && rewardImageAccess(rewardId, uid, filename);
+      allow create: if resource == null && householdMember() && parent() && uid == request.auth.uid
         && proofFilename(filename) && rewardImageAccess(rewardId, uid, filename)
         && rewardImageTicket(filename).state == 'open' && rewardImageTicket(filename).expiresAt > request.time
         && request.resource.size > 0 && request.resource.size <= 8 * 1024 * 1024
@@ -116,8 +144,7 @@ service firebase.storage {
       return firestore.get(/databases/(default)/documents/healthDocuments/$(id)).data;
     }
     function medicalDocumentFamily(id) {
-      return medicalDocument(id).get('attachmentKind', '') != 'health-record'
-        || medicalDocument(id).get('familyId', null) == profile().get('familyId', null);
+      return sameHousehold(medicalDocument(id));
     }
     match /healthDocuments/{documentId}/{uploaderUid}/{filename} {
       allow read: if member() && medicalDocument(documentId).state == 'ready'

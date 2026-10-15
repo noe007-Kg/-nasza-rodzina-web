@@ -8,6 +8,7 @@ import { deleteObject, getMetadata, ref, uploadBytes } from 'firebase/storage';
 
 // This suite has no production path. It only accepts the explicitly selected local emulators.
 const projectId = 'demo-nasza-rodzina';
+const familyId = 'v2-security-household-test';
 if (process.env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8080'
   || process.env.FIREBASE_STORAGE_EMULATOR_HOST !== '127.0.0.1:9199') {
   throw new Error('V2 security tests require local Firestore and Storage emulators.');
@@ -41,14 +42,14 @@ beforeEach(async () => {
   await environment.withSecurityRulesDisabled(async context => {
     const db = context.firestore();
     await Promise.all(Object.entries(people).map(([uid, profile]) => setDoc(doc(db, 'members', uid), {
-      ...profile, active: true, canLogin: true, archived: false,
+      ...profile, familyId, active: true, canLogin: true, archived: false,
     })));
     await Promise.all([
-      setDoc(doc(db, 'tasks', 'assigned'), { person: childPerson, title: 'Zadanie testowe', points: 20,
+      setDoc(doc(db, 'tasks', 'assigned'), { familyId, person: childPerson, title: 'Zadanie testowe', points: 20,
         done: false, requireApproval: true, approvalStatus: 'none', verificationMode: 'photo', createdBy: 'parent-a' }),
       setDoc(doc(db, 'familyMessages', 'family-test'), { channel: 'family', participants: [], text: 'Wiadomość testowa', uid: 'parent-a', name: 'Rodzic testowy A', createdAt: now() }),
       setDoc(doc(db, 'familyMessages', 'parents-test'), { channel: 'private:parent-a:parent-b', participants: ['parent-a', 'parent-b'], text: 'Prywatna wiadomość testowa', uid: 'parent-a', name: 'Rodzic testowy A', createdAt: now() }),
-      setDoc(doc(db, 'schoolParentMessages', 'parent-test'), { person: childPerson, title: 'Prywatna wiadomość szkolna testowa', source: 'eduvulcan' }),
+      setDoc(doc(db, 'schoolParentMessages', 'parent-test'), { familyId, person: childPerson, title: 'Prywatna wiadomość szkolna testowa', source: 'eduvulcan' }),
     ]);
   });
 });
@@ -57,7 +58,7 @@ after(async () => { await environment?.cleanup(); });
 async function seedProof(overrides = {}) {
   const id = randomUUID();
   const path = `taskProof/assigned/child-a/${id}.png`;
-  const data = { taskId: 'assigned', uid: 'child-a', person: childPerson, path, state: 'open', expiresAt: future(),
+  const data = { familyId, taskId: 'assigned', uid: 'child-a', person: childPerson, path, state: 'open', expiresAt: future(),
     orphanAfter: Timestamp.fromMillis(Date.now() + 24 * 60 * 60_000), size: png.length, contentType: 'image/png', ...overrides };
   await environment.withSecurityRulesDisabled(context => setDoc(doc(context.firestore(), '_taskPhotoUploads', id), data));
   return { id, path, data };
@@ -65,7 +66,7 @@ async function seedProof(overrides = {}) {
 async function seedDocument(overrides = {}) {
   const id = randomUUID();
   const path = `healthDocuments/${id}/parent-a/${randomUUID()}.png`;
-  const data = { ownerProfileId: 'adult-a', ownerUid: 'adult-a', readers: ['parent-a'], editors: ['parent-a'],
+  const data = { familyId, ownerProfileId: 'adult-a', ownerUid: 'adult-a', readers: ['parent-a'], editors: ['parent-a'],
     createdBy: 'parent-a', state: 'draft', protected: true, documentType: 'general', title: 'Dokument testowy',
     storagePath: path, mimeType: 'image/png', size: png.length, uploadExpiresAt: future(), createdAt: now(), updatedAt: now(), ...overrides };
   await environment.withSecurityRulesDisabled(context => setDoc(doc(context.firestore(), 'healthDocuments', id), data));
@@ -142,7 +143,7 @@ test('adult document metadata requires an explicit UID ACL, never the parent rol
     await assertFails(getDoc(doc(dbFor(uid), 'healthDocuments', document.id)));
     await assertFails(getDocs(collection(dbFor(uid), 'healthDocuments')));
   }
-  const readable = await assertSucceeds(getDocs(query(collection(dbFor('parent-a'), 'healthDocuments'), where('readers', 'array-contains', 'parent-a'), where('state', '==', 'ready'))));
+  const readable = await assertSucceeds(getDocs(query(collection(dbFor('parent-a'), 'healthDocuments'), where('familyId', '==', familyId), where('readers', 'array-contains', 'parent-a'), where('state', '==', 'ready'))));
   assert.equal(readable.size, 1);
   await assertFails(getDocs(query(collection(dbFor('parent-b'), 'healthDocuments'), where('readers', 'array-contains', 'parent-a'), where('state', '==', 'ready'))));
   for (const uid of ['parent-a', 'adult-a']) {
@@ -183,7 +184,7 @@ test('sharing and revocation protect both metadata and file despite an unchanged
 
 test('health grants cannot be fabricated or inspected by an unrelated parent', async () => {
   await environment.withSecurityRulesDisabled(context => setDoc(doc(context.firestore(), 'healthDocumentGrants', 'adult-a'), {
-    ownerUid: 'adult-a', authorizedUids: ['parent-a'], grants: [{ uid: 'parent-a', basis: 'consent', canEdit: true }],
+    familyId, ownerProfileId: 'adult-a', ownerUid: 'adult-a', authorizedUids: ['parent-a'], grants: [{ uid: 'parent-a', basis: 'consent', canEdit: true }],
   }));
   await assertSucceeds(getDoc(doc(dbFor('adult-a'), 'healthDocumentGrants', 'adult-a')));
   await assertSucceeds(getDoc(doc(dbFor('parent-a'), 'healthDocumentGrants', 'adult-a')));
@@ -244,11 +245,12 @@ test('chat unread cursors are isolated by UID and cannot mark another private ch
 });
 
 test('important family calendar fields do not expose another UID private calendar or school inbox', async () => {
-  const event = { title: 'Ważny termin testowy', person: 'family', private: false, createdBy: 'parent-a', important: true };
+  const event = { familyId, title: 'Ważny termin testowy', person: 'family', private: false, visibility: 'family',
+    ownerUid: 'parent-a', ownerProfileId: 'family', createdBy: 'parent-a', important: true };
   await assertSucceeds(setDoc(doc(dbFor('parent-a'), 'calendarEvents', 'family-test'), event));
   await assertSucceeds(getDoc(doc(dbFor('child-a'), 'calendarEvents', 'family-test')));
   await assertFails(updateDoc(doc(dbFor('parent-a'), 'calendarEvents', 'family-test'), { important: 'yes' }));
-  await assertSucceeds(setDoc(doc(dbFor('parent-a'), 'privateCalendarEvents', 'private-test'), { ...event, private: true, ownerUid: 'parent-a' }));
+  await assertSucceeds(setDoc(doc(dbFor('parent-a'), 'privateCalendarEvents', 'private-test'), { ...event, private: true, visibility: 'private', ownerUid: 'parent-a' }));
   await assertFails(getDoc(doc(dbFor('parent-b'), 'privateCalendarEvents', 'private-test')));
   await assertFails(getDoc(doc(dbFor('child-a'), 'privateCalendarEvents', 'private-test')));
   await assertSucceeds(getDoc(doc(dbFor('parent-a'), 'schoolParentMessages', 'parent-test')));
@@ -257,7 +259,7 @@ test('important family calendar fields do not expose another UID private calenda
 
 test('anonymous, archived and unrelated accounts cannot use any new family access path', async () => {
   await environment.withSecurityRulesDisabled(context => setDoc(doc(context.firestore(), 'members', 'archived-test'), {
-    ...people['parent-a'], active: true, canLogin: true, archived: true,
+    ...people['parent-a'], familyId, active: true, canLogin: true, archived: true,
   }));
   for (const context of [environment.unauthenticatedContext(), environment.authenticatedContext('outsider'), environment.authenticatedContext('archived-test')]) {
     const db = context.firestore();

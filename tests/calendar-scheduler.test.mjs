@@ -168,14 +168,14 @@ test('fresh target guards allow passive child profiles but reject unavailable pr
   try {
     for (const change of [{ active: false }, { archived: true }, { disabled: true }]) {
       const context = managedContext({ [sourcePath(calendarId)]: calendarConnection({ envelope: envelope(calendarId), ownerProfileId: 'child', person: 'Nikodem' }),
-        'members/child': { role: 'child', active: true, canLogin: false, personKey: 'Nikodem', ...change } });
+        'members/child': { role: 'child', active: true, canLogin: false, personKey: 'Nikodem', familyId: 'calendar-fixture-household', ...change } });
       const summary = await run(context, testNow, { sync: async () => assert.fail('Unavailable target must not synchronize') });
       assert.equal(summary.skipped, 1);
     }
     const passive = managedContext({ [sourcePath(calendarId)]: calendarConnection({ envelope: envelope(calendarId), ownerProfileId: 'child', person: 'Nikodem' }),
-      'members/child': { role: 'child', active: true, canLogin: false, personKey: 'Nikodem' } });
+      'members/child': { role: 'child', active: true, canLogin: false, personKey: 'Nikodem', familyId: 'calendar-fixture-household' } });
     assert.equal((await run(passive)).synced, 1);
-    passive.rows.set('members/actor', { role: 'adult', active: true, canLogin: true, personKey: 'Sebastian' });
+    passive.rows.set('members/actor', { role: 'adult', active: true, canLogin: true, personKey: 'Sebastian', familyId: 'calendar-fixture-household' });
     const forbidden = await run(passive, testNow + 3600000, { sync: async () => assert.fail('Adult cannot impersonate another child') });
     assert.equal(forbidden.codes.CALENDAR_PROFILE_FORBIDDEN, 1);
   } finally { restore(); }

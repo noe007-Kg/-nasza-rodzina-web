@@ -1,7 +1,7 @@
 import { Timestamp } from 'firebase-admin/firestore';
 
-export const calendarParent = { name: 'Sebastian', personKey: 'Sebastian', role: 'parent', active: true, canLogin: true };
-export const calendarChild = { name: 'Nikodem', personKey: 'Nikodem', role: 'child', active: true, canLogin: true };
+export const calendarParent = { name: 'Sebastian', personKey: 'Sebastian', role: 'parent', active: true, canLogin: true, familyId: 'calendar-fixture-household' };
+export const calendarChild = { name: 'Nikodem', personKey: 'Nikodem', role: 'child', active: true, canLogin: true, familyId: 'calendar-fixture-household' };
 export const calendarId = '7574613c-b808-46e7-8af0-4cb0b302b640';
 export const testNow = Date.parse('2026-10-08T08:00:00Z');
 
@@ -62,7 +62,7 @@ export function calendarMemoryContext(initial = {}, uid = 'actor') {
   return { uid, profile: rows.get(`members/${uid}`), db, rows, calls, controls };
 }
 
-export const calendarConnection = (changes = {}) => ({ ownerUid: 'actor', provider: 'google', ownerProfileId: 'actor', person: 'Sebastian', visibility: 'private', mode: 'sync',
+export const calendarConnection = (changes = {}) => ({ ownerUid: 'actor', familyId: 'calendar-fixture-household', provider: 'google', ownerProfileId: 'actor', person: 'Sebastian', visibility: 'private', mode: 'sync',
   historyImportWindow: { from: '1900-01-01T00:00:00.000Z', to: '2201-01-01T00:00:00.000Z', futureFrom: new Date(testNow).toISOString() }, calendarId: 'primary-id', calendarName: 'Test Calendar', selectionConfirmed: true, status: 'connected', version: 'first-version', leaseId: null, leaseExpiresAt: null, ...changes });
 export const googleFixtureEvent = (id = 'event-1', changes = {}) => ({ externalEventId: id, title: 'Wizyta', description: 'Opis', location: 'Kołobrzeg',
   start: testNow + 3600000, end: testNow + 7200000, allDay: false, timeZone: 'Europe/Warsaw', cancelled: false, ...changes });

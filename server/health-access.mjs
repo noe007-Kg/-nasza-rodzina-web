@@ -4,7 +4,7 @@ export const HEALTH_DOCUMENT_TYPES = Object.freeze(['general', 'disability_certi
 export const HEALTH_DOCUMENT_MIME_TYPES = Object.freeze(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
 export const HEALTH_DOCUMENT_MAX_BYTES = 10 * 1024 * 1024;
 export const activeHealthMember = profile => profile?.active === true && profile.canLogin === true
-  && profile.archived !== true && ['parent', 'adult', 'child'].includes(profile.role);
+  && profile.archived !== true && profile.disabled !== true && ['parent', 'adult', 'child'].includes(profile.role);
 export const activeHealthProfile = profile => profile?.active === true && profile.archived !== true && profile.disabled !== true;
 function warsawDate(now) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Warsaw', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);

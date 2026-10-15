@@ -7,6 +7,8 @@ import { db } from '../firebase';
 import { onSnapshot } from '../feedback';
 import { AppIcon, capitalize, formatShortDate, formatTime, isAdultMember, isParent, isPersonKey, ownPerson, personLabel, type CalendarEventData, type Member, type Page, type TaskItem, type QuickProduct, Modal, DetailRow } from '../app-shared';
 import { subscribeCalendar } from '../calendar-store';
+import { householdFamilyId, householdReadScope, tasksHouseholdQuery } from '../household-scope';
+import { productStoragePath, publicProductImage, usePrivateProductImages } from '../usePrivateProductImages';
 import { Icon } from '../ui';
 import { useDashboardOrder } from './useDashboardOrder';
 import { reorderDashboardCards, type StartCardId } from './start-layout';
@@ -73,17 +75,21 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const name = member?.name || 'Rodzina';
   const parent = isParent(member); const own = ownPerson(member);
   const directory = useFamilyDirectory();
+  const householdScope = householdReadScope(user.uid, member);
   const profiles = useMemo(() => orderedFamilyProfiles(directory, user.uid), [directory, user.uid]);
   const { items: notifications } = useNotifications();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [calendarData, setCalendarData] = useState<{ uid: string; rows: CalendarEventData[] }>({ uid: user.uid, rows: [] });
-  const events = calendarData.uid === user.uid ? calendarData.rows : [];
+  const events = calendarData.uid === householdScope ? calendarData.rows : [];
   const [calendarDetail, setCalendarDetail] = useState<{ uid: string; key: string } | null>(null);
   const healthSources = useCalendarHealthSources({ uid: user.uid, member });
   const schoolSources = useCalendarSchoolSources(user.uid, member);
   const schoolRecords = schoolSources.rows;
   const [shopping, setShopping] = useState<StartShoppingItem[]>([]);
   const [quickProducts, setQuickProducts] = useState<QuickProduct[]>([]);
+  const productImages = usePrivateProductImages(user.uid, quickProducts);
+  const visibleQuickProducts = useMemo(() => quickProducts.map(product => ({ ...product,
+    imageURL: productStoragePath(product) ? productImages[product.id] : publicProductImage(product) })), [quickProducts, productImages]);
   const [messages, setMessages] = useState<StartChatMessage[]>([]);
   const [health, setHealth] = useState<HealthPreview[]>([]);
   const [weather, setWeather] = useState<Weather | null>(null);
@@ -99,7 +105,7 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
     useSensor(TouchSensor, { activationConstraint: { delay: 550, tolerance: 8 } }),
     useSensor(KeyboardSensor),
   );
-  useEffect(() => onSnapshot(collection(db, 'tasks'), snap => {
+  useEffect(() => { setTasks([]); const target = tasksHouseholdQuery(db, member); if (!target) return; return onSnapshot(target, snap => {
     setTasks(snap.docs.map(d => {
       const x = d.data();
       return { id: d.id, title: String(x.title || ''), person: isPersonKey(x.person) ? x.person : 'family', done: x.done === true,
@@ -109,16 +115,18 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
         repeat: x.repeat === 'daily' || x.repeat === 'weekly' || x.repeat === 'monthly' ? x.repeat : 'none',
         createdAt: timestampDate(x.createdAt), completedAt: timestampDate(x.completedAt) };
     }));
-  }), [user.uid]);
+  }); }, [householdScope]);
   useEffect(() => onSnapshot(collection(db, 'shoppingItems'), snap => setShopping(snap.docs.map(d => {
     const x = d.data(); const title = String(x.title || ''); return { id: d.id, title, done: x.done === true, category: isShoppingCategory(x.category) ? x.category : categorizeProduct(title), quantity: typeof x.quantity === 'string' ? x.quantity : '', unit: typeof x.unit === 'string' ? x.unit : '', createdAt: timestampDate(x.createdAt) };
   }))), [user.uid]);
-  useEffect(() => onSnapshot(collection(db, 'quickProducts'), snap => setQuickProducts(snap.docs.map(d => {
+  useEffect(() => { setQuickProducts([]); const familyId = householdFamilyId(member); if (!familyId) return;
+    return onSnapshot(query(collection(db, 'quickProducts'), where('familyId', '==', familyId)), snap => setQuickProducts(snap.docs.map(d => {
     const x = d.data(); return { id: d.id, title: String(x.title || 'Produkt'), category: isShoppingCategory(x.category) ? x.category : 'inne',
       icon: typeof x.icon === 'string' ? x.icon : undefined, imageURL: typeof x.imageURL === 'string' ? x.imageURL : undefined,
+      imagePath:typeof x.imagePath === 'string' ? x.imagePath : undefined,
       adultOnly: typeof x.adultOnly === 'boolean' ? x.adultOnly : undefined, hidden: x.hidden === true, defaultQuantity: String(x.defaultQuantity || '1'), defaultUnit: String(x.defaultUnit || 'szt.') };
-  }))), [user.uid]);
-  useEffect(() => { let active = true; const uid = user.uid; const stop = subscribeCalendar(uid, rows => { if (active) setCalendarData({ uid, rows }); }); return () => { active = false; stop(); }; }, [user.uid]);
+  }))); }, [householdScope]);
+  useEffect(() => { let active = true; const uid = user.uid; const stop = subscribeCalendar(uid, member, rows => { if (active) setCalendarData({ uid: householdScope, rows }); }); return () => { active = false; stop(); }; }, [householdScope]);
   useEffect(() => {
     const groups: Record<string, StartChatMessage[]> = { family: [], private: [] };
     const load = (group: string, snap: import('firebase/firestore').QuerySnapshot) => {
@@ -129,9 +137,9 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
     const privateMessages = onSnapshot(query(collection(db, 'familyMessages'), where('participants', 'array-contains', user.uid)), snap => load('private', snap));
     return () => { family(); privateMessages(); };
   }, [user.uid]);
-  useEffect(() => onSnapshot(parent ? collection(db, 'healthRecords') : query(collection(db, 'healthRecords'), where('privateToParents', '==', false), where('person', 'in', ['family', own])), snap => {
+  useEffect(() => { setHealth([]); const familyId = householdFamilyId(member); if (!familyId) return; return onSnapshot(parent ? query(collection(db, 'healthRecords'), where('familyId', '==', familyId)) : query(collection(db, 'healthRecords'), where('familyId', '==', familyId), where('privateToParents', '==', false), where('person', 'in', ['family', own])), snap => {
     setHealth(snap.docs.map(d => { const x = d.data(); return { id: d.id, title: String(x.title || ''), person: String(x.person || 'family'), type: String(x.type || ''), date: String(x.date || ''), time: String(x.time || ''), status: String(x.status || ''), medicineTime: String(x.medicineTime || x.time || ''), confirmedDate: String(x.confirmedDate || '') }; }));
-  }), [user.uid, parent, own]);
+  }); }, [householdScope, parent, own]);
   useEffect(() => {
     const controller = new AbortController();
     async function loadWeather() {
@@ -175,7 +183,7 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const openTasks = tasks.filter(item => !item.done).sort((a, b) => ({ high: 0, normal: 1, low: 2 }[a.priority] - { high: 0, normal: 1, low: 2 }[b.priority] || (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99')));
   const openShopping = shopping.filter(item => !item.done);
   const conversations = latestConversations(messages, profiles, user.uid);
-  const shoppingRows = shoppingPreview(shopping, DEFAULT_QUICK_PRODUCTS, quickProducts, isAdultMember(member));
+  const shoppingRows = shoppingPreview(shopping, DEFAULT_QUICK_PRODUCTS, visibleQuickProducts, isAdultMember(member));
   const healthUpcoming = health.filter(record => record.type === 'visit' && record.date >= todayKey && record.status !== 'cancelled' && record.status !== 'done').sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
   const medicines = health.filter(record => record.type === 'medicine' && record.confirmedDate !== todayKey).sort((a, b) => a.medicineTime.localeCompare(b.medicineTime));
   const schoolUpcoming = schoolRecords.filter(record => (record.type === 'homework' || record.type === 'test') && (!record.date || record.date >= todayKey)).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999'));

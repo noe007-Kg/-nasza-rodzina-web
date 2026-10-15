@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { EduServerError } from './edu-auth.mjs';
 import { canReceiveNotification, deriveNotificationEvent, semanticRecord } from './notification-events.mjs';
 import { enqueueInAppEvents } from './notification-inbox.mjs';
+import { explicitFamilyId } from './family-identity.mjs';
 
 // All requests and reads are bounded. A collection over this limit is skipped
 // rather than treating an incomplete snapshot as a new notification baseline.
@@ -25,11 +26,14 @@ export function validateRefreshBody(body) {
  * record, text or arbitrary notification is ever accepted by this endpoint. */
 export function refreshSources(db, uid, profile) {
   const ownPerson = profile.personKey || profile.name;
+  const familyId = explicitFamilyId(profile);
+  if (!familyId) throw new EduServerError('EDU_MEMBER_REQUIRED', 403, 'Profil gospodarstwa wymaga przypisania.');
   const bounded = query => query.limit(MAX_REFRESH_RECORDS + 1);
   return [
-    { scope: 'calendar', collection: 'calendarEvents', query: bounded(db.collection('calendarEvents')) },
-    { scope: 'private-calendar', collection: 'privateCalendarEvents', query: bounded(db.collection('privateCalendarEvents').where('ownerUid', '==', uid)) },
-    { scope: 'tasks', collection: 'tasks', query: bounded(db.collection('tasks')) },
+    { scope: 'calendar', collection: 'calendarEvents', query: bounded(db.collection('calendarEvents').where('familyId', '==', familyId).where('private', '==', false).where('visibility', '==', 'family')) },
+    { scope: 'private-calendar', collection: 'privateCalendarEvents', query: bounded(db.collection('privateCalendarEvents').where('familyId', '==', familyId).where('ownerUid', '==', uid)) },
+    { scope: 'tasks', collection: 'tasks', query: bounded(profile.role === 'parent' ? db.collection('tasks').where('familyId', '==', familyId)
+      : db.collection('tasks').where('familyId', '==', familyId).where('person', 'in', ['family', ownPerson])) },
     { scope: 'shopping', collection: 'shoppingItems', query: bounded(db.collection('shoppingItems')) },
     // Admin can read one recent window and authorize every candidate before
     // enqueueing. This single-field query needs no new composite index and
@@ -37,12 +41,12 @@ export function refreshSources(db, uid, profile) {
     { scope: 'chat', collection: 'familyMessages', rolling: true,
       query: db.collection('familyMessages').orderBy('createdAt', 'desc').limit(MAX_REFRESH_RECORDS) },
     { scope: 'health', collection: 'healthRecords', query: bounded(profile.role === 'parent'
-      ? db.collection('healthRecords')
-      : db.collection('healthRecords').where('privateToParents', '==', false).where('person', 'in', ['family', ownPerson])) },
+      ? db.collection('healthRecords').where('familyId', '==', familyId)
+      : db.collection('healthRecords').where('familyId', '==', familyId).where('privateToParents', '==', false).where('person', 'in', ['family', ownPerson])) },
   ];
 }
 
-const privacyFields = ['person', 'private', 'privateToParents', 'ownerUid', 'createdBy', 'uid', 'channel', 'participants', 'updatedBy'];
+const privacyFields = ['familyId', 'person', 'private', 'privateToParents', 'ownerUid', 'createdBy', 'uid', 'channel', 'participants', 'updatedBy'];
 function pendingEvent(event) {
   // The baseline stores fingerprints and routing only, never chat/health text.
   const record = Object.fromEntries(privacyFields.filter(key => event.record[key] !== undefined).map(key => {

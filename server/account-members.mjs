@@ -9,16 +9,13 @@ const parentActive = (profile) => profile?.role === 'parent' && profile.active =
 const failure = (code, status, message) => { throw new EduServerError(code, status, message); };
 const idValid = (value) => typeof value === 'string' && value.length > 0 && value.length <= 128 && !/[\x00-\x1f/]/.test(value);
 
-// Compatibility for existing non-financial member administration only. A
-// reserved or malformed identifier is never treated as an unassigned family.
-const unassignedFamily = profile => profile?.familyId === undefined || profile?.familyId === null || profile?.familyId === '';
 function sameMemberFamily(left, right) {
   const leftId = explicitFamilyId(left), rightId = explicitFamilyId(right);
-  return leftId !== null && rightId !== null ? leftId === rightId : unassignedFamily(left) && unassignedFamily(right);
+  return leftId !== null && rightId !== null && leftId === rightId;
 }
 function requireMemberParent(profile) {
   if (!parentActive(profile)) failure('ACCOUNT_PARENT_REQUIRED', 403, 'Członkami rodziny zarządza aktywny rodzic.');
-  if (explicitFamilyId(profile) === null && !unassignedFamily(profile)) {
+  if (explicitFamilyId(profile) === null) {
     failure('ACCOUNT_FAMILY_FORBIDDEN', 403, 'Przypisanie gospodarstwa wymaga weryfikacji przez administratora.');
   }
 }
@@ -78,8 +75,9 @@ async function activeProfiles(transaction, db) {
   const snapshot = await transaction.get(db.collection('members'));
   return new Map(snapshot.docs.map((item) => [item.id, item.data()]));
 }
-function duplicatePerson(profiles, name, uid) {
+function duplicatePerson(profiles, name, uid, familyId) {
   return [...profiles.entries()].some(([id, profile]) => id !== uid
+    && explicitFamilyId(profile) === familyId
     && (String(profile.name || '').toLocaleLowerCase('pl-PL') === name.toLocaleLowerCase('pl-PL')
       || (legacyPeople.has(name) && profile.personKey === name)));
 }
@@ -91,7 +89,7 @@ async function createMember(context, body) {
   const roster = await db.collection('members').get();
   const profiles = new Map(roster.docs.map((item) => [item.id, item.data()]));
   requireMemberParent(profiles.get(actorUid));
-  if (duplicatePerson(profiles, definition.name)) failure('ACCOUNT_DUPLICATE_MEMBER', 409, 'Ta osoba ma już profil. Edytuj istniejący profil zamiast tworzyć drugi.');
+  if (duplicatePerson(profiles, definition.name, undefined, explicitFamilyId(profiles.get(actorUid)))) failure('ACCOUNT_DUPLICATE_MEMBER', 409, 'Ta osoba ma już profil. Edytuj istniejący profil zamiast tworzyć drugi.');
   let account;
   let createdAccount = false;
   if (definition.canLogin) {
@@ -115,14 +113,14 @@ async function createMember(context, body) {
       const latest = await activeProfiles(transaction, db);
       const actor = latest.get(actorUid);
       requireMemberParent(actor);
-      if (latest.has(uid) || duplicatePerson(latest, definition.name, uid)) {
+      if (latest.has(uid) || duplicatePerson(latest, definition.name, uid, explicitFamilyId(actor))) {
         failure('ACCOUNT_DUPLICATE_MEMBER', 409, 'Ta osoba ma już profil. Nie utworzono duplikatu.');
       }
       transaction.create(db.collection('members').doc(uid), {
         name: definition.name, personKey, role: definition.role,
         active: true, canLogin: createdAccount ? false : definition.canLogin,
         schoolEnabled: definition.schoolEnabled, adult: ['parent', 'adult'].includes(definition.role),
-        ...(explicitFamilyId(actor) !== null ? { familyId: explicitFamilyId(actor) } : {}),
+        familyId: explicitFamilyId(actor),
         createdBy: actorUid, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
       });
     });

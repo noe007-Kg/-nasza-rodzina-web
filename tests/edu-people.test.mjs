@@ -1,17 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { activeEduActor, assertCurrentSchoolTarget, schoolPersonKey, schoolProfileEnabled, schoolProfileRoster, validSchoolPersonKey } from '../server/edu-people.mjs';
+import { activeEduActor, assertCurrentSchoolTarget, schoolPersonKey, schoolProfileEnabled, schoolProfileRoster as scopedSchoolProfileRoster, validSchoolPersonKey } from '../server/edu-people.mjs';
 
+const schoolProfileRoster = db => scopedSchoolProfileRoster(db, 'source-test-family');
 const key = 'member-0123456789abcdef01234567';
-const child = { role: 'child', active: true, canLogin: false, personKey: key, schoolEnabled: true };
+const child = { familyId: 'source-test-family', role: 'child', active: true, canLogin: false, personKey: key, schoolEnabled: true };
 function database(rows) {
   return { collection: name => {
     assert.equal(name, 'members');
     return { where: (field, operator, role) => {
       assert.deepEqual([field, operator, role], ['role', '==', 'child']);
-      return { limit: limit => { assert.equal(limit, 65); return { get: async () => ({
+      const target = { where: (field, op, family) => { assert.deepEqual([field, op, family], ['familyId', '==', 'source-test-family']); return target; }, limit: limit => { assert.equal(limit, 65); return { get: async () => ({
         size: Math.min(rows.length, limit), docs: rows.slice(0, limit).map(([id, profile]) => ({ id, data: () => profile })),
-      }) }; } };
+      }) }; } }; return target;
     }, doc: id => ({ id }) };
   } };
 }
@@ -36,9 +37,9 @@ test('school targets include passive children; actor eligibility still requires 
 });
 
 test('legacy school defaults apply only when flags are missing; explicit settings win', () => {
-  for (const personKey of ['Paweł', 'Nikodem']) assert.equal(schoolProfileEnabled({ role: 'child', active: true, personKey }), true);
-  assert.equal(schoolProfileEnabled({ role: 'child', active: true, personKey: 'Layla' }), false);
-  assert.equal(schoolProfileEnabled({ role: 'child', active: true, personKey: 'Layla', schoolEnabled: true }), true);
+  for (const personKey of ['Paweł', 'Nikodem']) assert.equal(schoolProfileEnabled({ familyId: 'source-test-family', role: 'child', active: true, personKey }), true);
+  assert.equal(schoolProfileEnabled({ familyId: 'source-test-family', role: 'child', active: true, personKey: 'Layla' }), false);
+  assert.equal(schoolProfileEnabled({ familyId: 'source-test-family', role: 'child', active: true, personKey: 'Layla', schoolEnabled: true }), true);
   assert.equal(schoolProfileEnabled({ ...child, schoolEnabled: undefined }), false);
   assert.equal(schoolProfileEnabled({ ...child, personKey: 'Nikodem', schoolEnabled: false }), false);
   for (const personKey of ['Paweł', 'Nikodem']) {
@@ -77,9 +78,9 @@ test('transaction target revalidation rejects eligibility changes and personal U
   const db = database([]);
   const scope = { scope: 'family', actorUid: 'parent', allowedPersonKeys: [key], personProfileIds: { [key]: 'profile-real-child' } };
   const transaction = profile => ({ get: async ref => { assert.equal(ref.id, 'profile-real-child'); return { exists: profile !== null, data: () => profile }; } });
-  await assertCurrentSchoolTarget(transaction(child), { db }, scope, key);
+  await assertCurrentSchoolTarget(transaction(child), { db, profile: { familyId: 'source-test-family' } }, scope, key);
   for (const profile of [null, { ...child, archived: true }, { ...child, schoolEnabled: false }, { ...child, active: false }, { ...child, personKey: 'Nikodem' }]) {
-    await assert.rejects(assertCurrentSchoolTarget(transaction(profile), { db }, scope, key), { code: 'EDU_STUDENT_LINK_REQUIRED' });
+    await assert.rejects(assertCurrentSchoolTarget(transaction(profile), { db, profile: { familyId: 'source-test-family' } }, scope, key), { code: 'EDU_STUDENT_LINK_REQUIRED' });
   }
-  await assert.rejects(assertCurrentSchoolTarget(transaction({ ...child, canLogin: true }), { db }, { ...scope, scope: 'student', actorUid: 'other-uid' }, key), { code: 'EDU_STUDENT_LINK_REQUIRED' });
+  await assert.rejects(assertCurrentSchoolTarget(transaction({ ...child, canLogin: true }), { db, profile: { familyId: 'source-test-family' } }, { ...scope, scope: 'student', actorUid: 'other-uid' }, key), { code: 'EDU_STUDENT_LINK_REQUIRED' });
 });

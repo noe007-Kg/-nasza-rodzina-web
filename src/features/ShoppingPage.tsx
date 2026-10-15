@@ -1,8 +1,10 @@
-import { addDoc, collection, db, deleteDoc, doc, EmptyState, errorMessage, getDownloadURL, isAdultMember, isParent, type Member, Modal, ModuleHeader, notify, onSnapshot, type QuickProduct, React, setDoc, type ShoppingCategory, type ShoppingItem, storage, storageRef, Timestamp, updateDoc, uploadBytes, useEffect, useMemo, type User, useRef, useState, writeBatch } from "../app-shared";
-import { onSnapshot as subscribe } from 'firebase/firestore';
+import { addDoc, collection, db, deleteDoc, doc, EmptyState, errorMessage, isAdultMember, isParent, type Member, Modal, ModuleHeader, notify, onSnapshot, type QuickProduct, React, setDoc, type ShoppingCategory, type ShoppingItem, storage, storageRef, Timestamp, updateDoc, uploadBytes, useEffect, useMemo, type User, useRef, useState, writeBatch } from "../app-shared";
+import { onSnapshot as subscribe, query, where } from 'firebase/firestore';
 import { normalizeShopIds, productsForStore, remainingForStore, shoppingStores, type ShoppingStore } from './shopping-stores';
 import { ShoppingStorePicker } from './ShoppingStorePicker';
-import { assertFamilyV2WriteAllowed } from '../family-v2-client';
+import { assertFamilyV2WriteAllowed, familyAction } from '../family-v2-client';
+import { householdFamilyId, requireHouseholdFamilyId } from '../household-scope';
+import { productStoragePath, publicProductImage, usePrivateProductImages } from '../usePrivateProductImages';
 import './shopping-cards.css';
 
 
@@ -147,7 +149,13 @@ export function ShoppingPage({ user, member }: { user: User; member: Member | nu
   const [quickCategory, setQuickCategory] = useState<ShoppingCategory | 'all'>('all');
   const [editingQuick, setEditingQuick] = useState<QuickProduct | null>(null);
   const [quickMenu, setQuickMenu] = useState<QuickProduct | null>(null);
-  const [quickForm, setQuickForm] = useState({ title:'', category:'inne' as ShoppingCategory, quantity:'1', unit:'szt.', imageURL:'', icon:'📦' });
+  const [quickForm, setQuickForm] = useState({ title:'', category:'inne' as ShoppingCategory, quantity:'1', unit:'szt.', imageURL:'', imagePath:'', icon:'📦' });
+  const previewProducts = useMemo<QuickProduct[]>(() => [{id:'draft-preview',title:'Podgląd',category:'inne',defaultQuantity:'1',defaultUnit:'szt.',
+    imagePath:quickForm.imagePath,imageURL:quickForm.imageURL}], [quickForm.imagePath,quickForm.imageURL]);
+  const previewImages = usePrivateProductImages(user.uid, previewProducts);
+  const quickPreviewURL = productStoragePath(previewProducts[0]) ? previewImages['draft-preview'] : publicProductImage(previewProducts[0]);
+  const familyId = householdFamilyId(member);
+  const protectedImages = usePrivateProductImages(user.uid, customQuick);
   const holdTimer = useRef<number | null>(null);
   const holdOrigin = useRef<{ x: number; y: number } | null>(null);
   const holdOpened = useRef<string | null>(null);
@@ -184,19 +192,24 @@ export function ShoppingPage({ user, member }: { user: User; member: Member | nu
     if (selectedStore !== 'all' && !allStores.some(store => store.id === selectedStore && !store.archived)) setSelectedStore('all');
   }, [allStores, selectedStore]);
 
-  useEffect(() => onSnapshot(collection(db, 'quickProducts'), (snap) => {
+  useEffect(() => {
+    setCustomQuick([]);
+    if (!familyId) return;
+    return onSnapshot(query(collection(db, 'quickProducts'), where('familyId', '==', familyId)), (snap) => {
     setCustomQuick(snap.docs.map((d) => {
       const x = d.data();
-      return { id:d.id, title:String(x.title || 'Produkt'), category:isShoppingCategory(x.category) ? x.category : 'inne', icon:typeof x.icon === 'string' ? x.icon : undefined, imageURL:typeof x.imageURL === 'string' ? x.imageURL : undefined, adultOnly:typeof x.adultOnly === 'boolean' ? x.adultOnly : undefined, defaultQuantity:String(x.defaultQuantity || '1'), defaultUnit:String(x.defaultUnit || 'szt.'), custom:x.custom === true, hidden:x.hidden === true };
+      return { id:typeof x.productKey === 'string' ? x.productKey : d.id, storageId:d.id, title:String(x.title || 'Produkt'), category:isShoppingCategory(x.category) ? x.category : 'inne', icon:typeof x.icon === 'string' ? x.icon : undefined, imagePath:typeof x.imagePath === 'string' ? x.imagePath : undefined, imageURL:typeof x.imageURL === 'string' ? x.imageURL : undefined, adultOnly:typeof x.adultOnly === 'boolean' ? x.adultOnly : undefined, defaultQuantity:String(x.defaultQuantity || '1'), defaultUnit:String(x.defaultUnit || 'szt.'), custom:x.custom === true, hidden:x.hidden === true };
     }));
-  }), []);
+    });
+  }, [user.uid, familyId]);
 
   const quickProducts = useMemo(() => {
     const overrides = new Map(customQuick.map((x) => [x.id, x]));
     const merged = DEFAULT_QUICK_PRODUCTS.map((base) => overrides.has(base.id) ? { ...base, ...overrides.get(base.id) } as QuickProduct : base);
     for (const custom of customQuick) if (!DEFAULT_QUICK_PRODUCTS.some((b) => b.id === custom.id)) merged.push(custom);
-    return merged.filter((p) => !p.hidden && (!p.adultOnly || adult) && (quickCategory === 'all' || p.category === quickCategory));
-  }, [customQuick, adult, quickCategory]);
+    return merged.filter((p) => !p.hidden && (!p.adultOnly || adult) && (quickCategory === 'all' || p.category === quickCategory))
+      .map(product => ({ ...product, imageURL: productStoragePath(product) ? protectedImages[product.id] : publicProductImage(product) }));
+  }, [customQuick, adult, quickCategory, protectedImages]);
 
   async function addItem(productTitle: string, qty = '1', productUnit = 'szt.', category?: ShoppingCategory) {
     const clean = productTitle.trim(); if (!clean) return;
@@ -314,7 +327,8 @@ export function ShoppingPage({ user, member }: { user: User; member: Member | nu
   function openQuickEditor(product?: QuickProduct) {
     const item = product || { id:`custom-${Date.now()}`, title:'', category:'inne' as ShoppingCategory, icon:'📦', defaultQuantity:'1', defaultUnit:'szt.', custom:true };
     setEditingQuick(item);
-    setQuickForm({ title:item.title, category:item.category, quantity:item.defaultQuantity, unit:item.defaultUnit, imageURL:item.imageURL || '', icon:item.icon || '📦' });
+    const saved = customQuick.find(row => row.id === item.id) || item;
+    setQuickForm({ title:item.title, category:item.category, quantity:item.defaultQuantity, unit:item.defaultUnit, imageURL:saved.imagePath ? '' : saved.imageURL || '', imagePath:productStoragePath(saved) || '', icon:item.icon || '📦' });
     setQuickMenu(null);
   }
 
@@ -322,16 +336,19 @@ export function ShoppingPage({ user, member }: { user: User; member: Member | nu
     if (file.size > 5 * 1024 * 1024 || !['image/jpeg','image/png','image/webp','image/gif'].includes(file.type)) { notify('Wybierz zdjęcie JPG, PNG, WebP lub GIF do 5 MB.', 'error'); return; }
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-');
     const target = storageRef(storage, `quick-products/${user.uid}/${Date.now()}-${safeName}`);
+    requireHouseholdFamilyId(member);
+    assertFamilyV2WriteAllowed();
     await uploadBytes(target, file);
-    const url = await getDownloadURL(target);
-    setQuickForm((f) => ({ ...f, imageURL:url }));
+    await familyAction('storage', { operation:'finalizeProductImage', path:target.fullPath });
+    setQuickForm((f) => ({ ...f, imageURL:'', imagePath:target.fullPath }));
   }
 
   async function saveQuick(e: React.FormEvent) {
     e.preventDefault(); if (!editingQuick || !quickForm.title.trim() || quickSavingRef.current) return;
     quickSavingRef.current = true; setSavingQuick(true);
     try {
-    await setDoc(doc(db, 'quickProducts', editingQuick.id), { title:quickForm.title.trim(), category:quickForm.category, defaultQuantity:quickForm.quantity || '1', defaultUnit:quickForm.unit || 'szt.', imageURL:quickForm.imageURL, icon:quickForm.icon || '📦', adultOnly:editingQuick.adultOnly === true, custom:editingQuick.custom === true || !DEFAULT_QUICK_PRODUCTS.some((p) => p.id === editingQuick.id), hidden:false, updatedAt:Timestamp.now() }, { merge:true });
+    const familyId = requireHouseholdFamilyId(member);
+    await setDoc(doc(db, 'quickProducts', editingQuick.storageId || `${familyId}--${editingQuick.id}`), { productKey:editingQuick.id, familyId, ...(!editingQuick.storageId ? { createdBy:user.uid } : {}), title:quickForm.title.trim(), category:quickForm.category, defaultQuantity:quickForm.quantity || '1', defaultUnit:quickForm.unit || 'szt.', imageURL:quickForm.imageURL, imagePath:quickForm.imagePath, icon:quickForm.icon || '📦', adultOnly:editingQuick.adultOnly === true, custom:editingQuick.custom === true || !DEFAULT_QUICK_PRODUCTS.some((p) => p.id === editingQuick.id), hidden:false, updatedAt:Timestamp.now() }, { merge:true });
     setEditingQuick(null);
     } catch (error) { notify(errorMessage(error), 'error'); }
     finally { quickSavingRef.current = false; setSavingQuick(false); }
@@ -340,9 +357,10 @@ export function ShoppingPage({ user, member }: { user: User; member: Member | nu
   async function removeQuick(product: QuickProduct) {
     if (!window.confirm(`Usunąć kafelek „${product.title}” z szybkich zakupów?`)) return;
     if (DEFAULT_QUICK_PRODUCTS.some((p) => p.id === product.id)) {
-      await setDoc(doc(db, 'quickProducts', product.id), { hidden:true, updatedAt:Timestamp.now() }, { merge:true });
+      const familyId = requireHouseholdFamilyId(member);
+      await setDoc(doc(db, 'quickProducts', product.storageId || `${familyId}--${product.id}`), { familyId, ...(!product.storageId ? {createdBy:user.uid} : {}), productKey:product.id, title:product.title, hidden:true, updatedAt:Timestamp.now() }, { merge:true });
     } else {
-      await deleteDoc(doc(db, 'quickProducts', product.id));
+      await deleteDoc(doc(db, 'quickProducts', product.storageId || `${requireHouseholdFamilyId(member)}--${product.id}`));
     }
     setQuickMenu(null);
   }
@@ -428,7 +446,7 @@ export function ShoppingPage({ user, member }: { user: User; member: Member | nu
           <label className="field"><span>Emoji awaryjne</span><input value={quickForm.icon} onChange={(e) => setQuickForm((f) => ({ ...f, icon:e.target.value }))} /></label>
           <label className="field"><span>Domyślna ilość</span><input value={quickForm.quantity} onChange={(e) => setQuickForm((f) => ({ ...f, quantity:e.target.value }))} /></label>
           <label className="field"><span>Jednostka</span><select aria-label="Jednostka" value={quickForm.unit} onChange={(e) => setQuickForm((f) => ({ ...f, unit:e.target.value }))}><option>szt.</option><option>kg</option><option>g</option><option>l</option><option>ml</option><option>opak.</option><option>pęczek</option></select></label>
-          <label className="field field-wide"><span>Własne zdjęcie / ikonka</span><input type="file" accept="image/*" onChange={(e) => { const file=e.target.files?.[0]; if (file) void uploadQuickImage(file).catch(() => alert('Nie udało się wysłać zdjęcia. Sprawdź Firebase Storage.')); }} />{quickForm.imageURL && <img className="quick-image-preview" src={quickForm.imageURL} alt="Podgląd" />}</label>
+          <label className="field field-wide"><span>Własne zdjęcie / ikonka</span><input type="file" accept="image/*" onChange={(e) => { const file=e.target.files?.[0]; if (file) void uploadQuickImage(file).catch(() => alert('Nie udało się wysłać zdjęcia. Sprawdź Firebase Storage.')); }} />{quickPreviewURL && <img className="quick-image-preview" src={quickPreviewURL} alt="Podgląd" />}</label>
           <div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={() => setEditingQuick(null)}>Anuluj</button><button className="primary-button">✓ Zapisz</button></div>
         </form>
       </Modal>}

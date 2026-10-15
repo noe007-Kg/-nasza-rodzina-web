@@ -8,10 +8,10 @@ import { deriveNotificationEvent, eventDocumentId } from '../server/notification
 import { enqueueInAppEvents } from '../server/notification-inbox.mjs';
 import { flushSchoolNotifications, schoolNotificationBaselineRef } from '../server/school-notifications.mjs';
 
-const parent = name => ({ name, personKey: name, role: 'parent', active: true, canLogin: true });
-const child = name => ({ name, personKey: name, role: 'child', active: true, canLogin: true });
+const parent = name => ({ familyId:'notification-functions-family', name, personKey: name, role: 'parent', active: true, canLogin: true });
+const child = name => ({ familyId:'notification-functions-family', name, personKey: name, role: 'child', active: true, canLogin: true });
 const message = { uid: 'dominika', name: 'Dominika', text: 'Treść pozostaje tylko w czacie.', channel: 'family', participants: [], createdAt: new Date(2000) };
-const grade = { source: 'eduvulcan', sourceConnectionId: 'family', sourceConnectionScope: 'family', sourceOwnerUid: 'dominika',
+const grade = { familyId:'notification-functions-family', source: 'eduvulcan', sourceConnectionId: 'family', sourceConnectionScope: 'family', sourceOwnerUid: 'dominika',
   sourceProfileId: 'nikodem-school', sourceSyncId: 'protected-lease', sourceRecordId: 'grade-one', person: 'Nikodem',
   type: 'grade', title: 'Matematyka: 5', createdAt: new Date(2000) };
 const dependencies = { derive: deriveNotificationEvent, enqueue: enqueueInAppEvents, baselineRef: schoolNotificationBaselineRef, bootstrap: schoolSyncBootstrap };
@@ -195,7 +195,7 @@ test('school metadata, read receipts and syncedAt changes never derive an alert 
 
 test('manual school writes still notify actual changes without inventing a provider baseline', async () => {
   const f = fixture();
-  const manual = { title: 'Sprawdzian', person: 'Nikodem', type: 'test', createdBy: 'dominika' };
+  const manual = { familyId:'notification-functions-family', title: 'Sprawdzian', person: 'Nikodem', type: 'test', createdBy: 'dominika' };
   assert.equal((await write(f, 'schoolItems', 'manual', null, manual)).created, 3);
   assert.equal([...f.values.keys()].some(path => path.startsWith('_notificationBaselines/')), false);
 });

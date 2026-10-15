@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import { EduServerError } from './edu-auth.mjs';
+import { explicitFamilyId } from './family-identity.mjs';
 import { activeHealthMember, activeHealthProfile, canManageHealthOwner, HEALTH_DOCUMENT_MAX_BYTES,
   HEALTH_DOCUMENT_MIME_TYPES, normalizeHealthDocumentMetadata, validHealthFileHeader } from './health-access.mjs';
 import { discardVisitAttachment, finalizeVisitAttachment, prepareVisitAttachment } from './health-visit-attachments.mjs';
@@ -27,10 +28,11 @@ async function ownerContext(transaction, context, ownerProfileId) {
   const [actorSnapshot, ownerSnapshot, grantSnapshot] = await transaction.getAll(...refs);
   const actor = actorSnapshot.exists ? { ...actorSnapshot.data(), id: context.uid } : null;
   const owner = ownerSnapshot.exists ? { ...ownerSnapshot.data(), id: ownerProfileId } : null;
+  const grant = explicitFamilyId(grantSnapshot.data()) === explicitFamilyId(actor) ? grantSnapshot.data() : undefined;
   if (!activeHealthMember(actor) || !activeHealthProfile(owner)
-    || actor.familyId && owner.familyId && actor.familyId !== owner.familyId
-    || !canManageHealthOwner(actor, owner, grantSnapshot.data(), context.now || new Date())) fail();
-  return { actor, owner, grant: grantSnapshot.data(), grantRef: refs[2] };
+    || explicitFamilyId(actor) === null || explicitFamilyId(actor) !== explicitFamilyId(owner)
+    || !canManageHealthOwner(actor, owner, grant, context.now || new Date())) fail();
+  return { actor, owner, grant, grantRef: refs[2] };
 }
 
 async function documentContext(transaction, context, documentId) {
@@ -41,7 +43,19 @@ async function documentContext(transaction, context, documentId) {
   const record = snapshot.data();
   if (!Array.isArray(record.editors) || !record.editors.includes(context.uid)) fail();
   const permission = await ownerContext(transaction, context, record.ownerProfileId);
+  if (explicitFamilyId(record) !== explicitFamilyId(permission.actor) || !validHealthStoragePath(record, documentId)) fail();
+  const identities = [...new Set([...(record.readers || []), ...(record.editors || [])])];
+  if (identities.some(uid => !identifier(uid))) fail();
+  const profiles = await transaction.getAll(...identities.map(uid => context.db.collection('members').doc(uid)));
+  if (profiles.some(profile => !profile.exists || explicitFamilyId(profile.data()) !== explicitFamilyId(permission.actor))) fail();
   return { ...permission, ref, record };
+}
+
+function validHealthStoragePath(record, documentId) {
+  if (!identifier(record.createdBy) || typeof record.storagePath !== 'string') return false;
+  const parts = record.storagePath.split('/');
+  return parts.length === 4 && parts[0] === 'healthDocuments' && parts[1] === documentId && parts[2] === record.createdBy
+    && /^[A-Za-z0-9_-]+\.(pdf|jpg|jpeg|png|webp)$/.test(parts[3]);
 }
 
 function documentReaders(record, metadata) {
@@ -55,14 +69,22 @@ function documentReaders(record, metadata) {
 async function healthDocumentState(context) {
   const actorSnapshot = await context.db.collection('members').doc(context.uid).get();
   const actor = actorSnapshot.data();
-  if (!activeHealthMember(actor)) fail();
-  const snapshot = await context.db.collection('healthDocuments').where('state', '==', 'ready').where('readers', 'array-contains', context.uid).get();
+  if (!activeHealthMember(actor) || explicitFamilyId(actor) === null) fail();
+  const snapshot = await context.db.collection('healthDocuments').where('familyId', '==', explicitFamilyId(actor))
+    .where('state', '==', 'ready').where('readers', 'array-contains', context.uid).get();
   const text = (record, key, maximum = 4000) => typeof record[key] === 'string' ? record[key].slice(0, maximum) : '';
   const identities = value => Array.isArray(value) ? value.filter(identifier) : [];
+  const memberIds = [...new Set(snapshot.docs.flatMap(document => {
+    const record = document.data();
+    return [record.ownerProfileId, record.createdBy, ...(record.readers || []), ...(record.editors || [])].filter(identifier);
+  }))];
+  const members = new Map(await Promise.all(memberIds.map(async uid => [uid, (await context.db.collection('members').doc(uid).get()).data()])));
   const documents = snapshot.docs.flatMap(document => {
     const record = document.data();
     if (record.state !== 'ready' || !record.readers?.includes(context.uid)
-      || record.attachmentKind === 'health-record' && (record.familyId ?? null) !== (actor.familyId ?? null)
+      || explicitFamilyId(record) !== explicitFamilyId(actor)
+      || [record.ownerProfileId, record.createdBy, ...(record.readers || []), ...(record.editors || [])]
+        .some(uid => !identifier(uid) || explicitFamilyId(members.get(uid)) !== explicitFamilyId(actor))
       || !identifier(record.ownerProfileId) || typeof record.storagePath !== 'string'
       || !record.storagePath.startsWith(`healthDocuments/${document.id}/`)) return [];
     return [{ id: document.id, title: text(record, 'title', 300), documentType: text(record, 'documentType', 50),
@@ -84,9 +106,9 @@ async function prepareDocument(context, body) {
   const extension = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[body.mimeType];
   const storagePath = `healthDocuments/${documentId}/${context.uid}/${randomUUID()}.${extension}`;
   await context.db.runTransaction(async transaction => {
-    const { owner } = await ownerContext(transaction, context, body.ownerProfileId);
+    const { owner, actor } = await ownerContext(transaction, context, body.ownerProfileId);
     const ownerUid = owner.canLogin === true ? owner.id : null;
-    const record = { ...metadata, ownerProfileId: owner.id, ownerUid, ownerPersonKey: owner.personKey || owner.name || owner.id,
+    const record = { ...metadata, familyId: explicitFamilyId(actor), ownerProfileId: owner.id, ownerUid, ownerPersonKey: owner.personKey || owner.name || owner.id,
       readers: [...new Set([context.uid, ...(metadata.shareOwner && ownerUid ? [ownerUid] : [])])], editors: [context.uid],
       createdBy: context.uid, state: 'draft', protected: true, storagePath, mimeType: body.mimeType, size: body.size,
       fileName: body.fileName.replace(/[\u0000-\u001f/\\]/g, '-'), createdAt: stamp(), updatedAt: stamp(),
@@ -97,13 +119,13 @@ async function prepareDocument(context, body) {
 }
 
 async function saveDocument(context, body) {
-  const target = context.db.collection('healthDocuments').doc(identifier(body.documentId) ? body.documentId : 'invalid');
-  const snapshot = await target.get();
-  const record = snapshot.data();
+  // Authorization precedes every file read, even a retry of a ready record.
+  const authorized = await context.db.runTransaction(transaction => documentContext(transaction, context, body.documentId));
+  const { record } = authorized;
   if (record?.attachmentKind === 'health-record') fail('HEALTH_INVALID_DOCUMENT', 400);
   if (!record || record.createdBy !== context.uid || !record.editors?.includes(context.uid)
     || !['draft', 'ready'].includes(record.state)) fail();
-  if (record.state === 'ready') return { documentId: snapshot.id, state: 'ready' };
+  if (record.state === 'ready') return { documentId: body.documentId, state: 'ready' };
   await validateStoredDocument(context, record);
   await context.db.runTransaction(async transaction => {
     const current = await documentContext(transaction, context, body.documentId);
@@ -119,6 +141,10 @@ async function validateStoredDocument(context, record) {
   const [actual] = await file.getMetadata();
   // Protected files are accessed using authenticated Storage rules, never a public bearer URL.
   await file.setMetadata({ metadata: { ...(actual.metadata || {}), firebaseStorageDownloadTokens: null } });
+  const [confirmed] = await file.getMetadata();
+  if (confirmed.metadata?.firebaseStorageDownloadTokens || Number(confirmed.size) !== record.size
+    || confirmed.contentType !== record.mimeType
+    || actual.generation && String(confirmed.generation) !== String(actual.generation)) fail('HEALTH_FILE_NOT_READY', 409);
 }
 
 async function verifyStoredDocument(context, record) {
@@ -189,12 +215,14 @@ async function changeGrant(context, body, revoke) {
     const [actorSnapshot, recipientSnapshot, prior] = await transaction.getAll(actorRef, recipientRef, ref);
     const actor = actorSnapshot.data(); const recipient = recipientSnapshot.data();
     if (!activeHealthMember(actor) || !activeHealthMember(recipient)
-      || actor.familyId && recipient.familyId && actor.familyId !== recipient.familyId) fail();
-    const documents = revoke ? await transaction.get(context.db.collection('healthDocuments').where('ownerProfileId', '==', body.ownerProfileId).limit(401)) : null;
+      || explicitFamilyId(actor) === null || explicitFamilyId(actor) !== explicitFamilyId(recipient)) fail();
+    if (prior.exists && explicitFamilyId(prior.data()) !== explicitFamilyId(actor)) fail();
+    const documents = revoke ? await transaction.get(context.db.collection('healthDocuments').where('familyId', '==', explicitFamilyId(actor))
+      .where('ownerProfileId', '==', body.ownerProfileId).limit(401)) : null;
     if (documents?.size > 400) fail('HEALTH_TOO_MANY_DOCUMENTS', 409);
     const grants = (prior.data()?.grants || []).filter(item => item.uid !== body.granteeUid);
     if (!revoke) grants.push({ uid: body.granteeUid, basis: 'consent', canEdit: body.canEdit, authorizedBy: context.uid });
-    transaction.set(ref, { ownerProfileId: body.ownerProfileId, ownerUid: context.uid, grants,
+    transaction.set(ref, { familyId: explicitFamilyId(actor), ownerProfileId: body.ownerProfileId, ownerUid: context.uid, grants,
       authorizedUids: [...new Set(grants.map(item => item.uid))], updatedAt: stamp() });
     documents?.docs.forEach(document => transaction.update(document.ref, {
       readers: (document.data().readers || []).filter(uid => uid !== body.granteeUid),
@@ -224,11 +252,25 @@ export async function manageHealthAction(context, body) {
 
 /** Ready medical files never expire. Only explicit deletion and abandoned, unlinked upload drafts are cleaned. */
 export async function retryHealthDocumentDeletes(context) {
-  const drafts = await context.db.collection('healthDocuments').where('state', '==', 'draft').limit(100).get();
+  let documents = context.db.collection('healthDocuments');
+  if (context.uid) {
+    const actor = (await context.db.collection('members').doc(context.uid).get()).data();
+    if (!activeHealthMember(actor) || explicitFamilyId(actor) === null) fail();
+    documents = documents.where('familyId', '==', explicitFamilyId(actor));
+  }
+  const validCleanupRecord = async (record, documentId) => {
+    if (explicitFamilyId(record) === null || !identifier(record.ownerProfileId) || !validHealthStoragePath(record, documentId)) return false;
+    const owner = await context.db.collection('members').doc(record.ownerProfileId).get();
+    const creator = await context.db.collection('members').doc(record.createdBy).get();
+    return owner.exists && creator.exists && explicitFamilyId(owner.data()) === explicitFamilyId(record)
+      && explicitFamilyId(creator.data()) === explicitFamilyId(record);
+  };
+  const drafts = await documents.where('state', '==', 'draft').limit(100).get();
   for (const snapshot of drafts.docs) {
     const record = snapshot.data();
     if (record.attachmentKind !== 'health-record' || !record.attachmentRecordId
-      || !record.uploadExpiresAt?.toMillis || record.uploadExpiresAt.toMillis() > (context.now || new Date()).getTime()) continue;
+      || !record.uploadExpiresAt?.toMillis || record.uploadExpiresAt.toMillis() > (context.now || new Date()).getTime()
+      || !await validCleanupRecord(record, snapshot.id)) continue;
     await context.db.runTransaction(async transaction => {
       const current = await transaction.get(snapshot.ref);
       const linked = await transaction.get(context.db.collection('healthRecords').doc(record.attachmentRecordId));
@@ -239,11 +281,11 @@ export async function retryHealthDocumentDeletes(context) {
         deletionRequestedAt: stamp(), updatedAt: stamp() });
     });
   }
-  const pending = await context.db.collection('healthDocuments').where('state', '==', 'deleting').limit(100).get();
+  const pending = await documents.where('state', '==', 'deleting').limit(100).get();
   let deleted = 0;
   for (const snapshot of pending.docs) {
     const record = snapshot.data();
-    if (!record.deletionRequestedBy || !record.deletionRequestedAt || !record.storagePath?.startsWith(`healthDocuments/${snapshot.id}/`)) continue;
+    if (!record.deletionRequestedBy || !record.deletionRequestedAt || !await validCleanupRecord(record, snapshot.id)) continue;
     try {
       await healthStorageBucket(context).file(record.storagePath).delete({ ignoreNotFound: true });
       await context.db.runTransaction(async transaction => {

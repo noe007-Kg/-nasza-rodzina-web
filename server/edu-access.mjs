@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { EduServerError, eduRequestHeader, getServerFirebase, requireMember, requireParent } from './edu-auth.mjs';
 import { activeEduActor, schoolPersonKey, schoolProfileEnabled, schoolProfileRoster, validSchoolPersonKey, validMemberDocumentId } from './edu-people.mjs';
+import { explicitFamilyId } from './family-identity.mjs';
 
 export const FAMILY_CONNECTION_ID = 'family';
 
@@ -12,7 +13,7 @@ export function studentConnectionId(uid) {
 }
 
 /** The requester manages a connection; they need not own the provider account.
- * One Firebase project represents one family. Personal student scopes are bound
+ * The existing family connection belongs to its verified owner's household. Personal student scopes are bound
  * to the verified Firebase UID and a school identity approved by a parent.
  */
 export async function resolveConnectionAccess(context, scope = 'family') {
@@ -20,9 +21,17 @@ export async function resolveConnectionAccess(context, scope = 'family') {
   if (!validMemberDocumentId(uid) || !activeEduActor(profile)) {
     throw new EduServerError('EDU_MEMBER_REQUIRED', 403, 'Konto Naszej Rodziny nie ma aktywnego dostępu.');
   }
+  const familyId = explicitFamilyId(profile);
+  if (!familyId) throw new EduServerError('EDU_HOUSEHOLD_REQUIRED', 403, 'Profil gospodarstwa wymaga bezpiecznego przypisania.');
   if (scope === 'family') {
     if (profile.role !== 'parent') throw new EduServerError('EDU_PARENT_REQUIRED', 403, 'Wspólnym połączeniem rodziny zarządza konto z rolą parent w Naszej Rodzinie.');
-    const roster = await schoolProfileRoster(context.db);
+    const stored = await context.db.collection('_eduConnections').doc(FAMILY_CONNECTION_ID).get();
+    if (stored.exists) {
+      const ownerUid = stored.data().connectedByUid;
+      const owner = validMemberDocumentId(ownerUid) ? await context.db.collection('members').doc(ownerUid).get() : null;
+      if (!owner?.exists || explicitFamilyId(owner.data()) !== familyId) throw new EduServerError('EDU_CONNECTION_FORBIDDEN', 403, 'Połączenie nie należy do Twojego gospodarstwa.');
+    }
+    const roster = await schoolProfileRoster(context.db, familyId);
     return { ...context, connection: { id: FAMILY_CONNECTION_ID, scope, accountRole: 'parent', actorUid: uid, ...roster } };
   }
   if (scope !== 'student') throw new EduServerError('EDU_INVALID_REQUEST', 400, 'Nieprawidłowy zakres połączenia z dziennikiem.');
@@ -34,6 +43,11 @@ export async function resolveConnectionAccess(context, scope = 'family') {
   if (!identity || typeof identity.studentName !== 'string' || !identity.studentName.trim() || identity.studentName.length > 300
     || typeof identity.schoolName !== 'string' || !identity.schoolName.trim() || identity.schoolName.length > 300) {
     throw new EduServerError('EDU_STUDENT_LINK_REQUIRED', 403, 'Rodzic musi najpierw potwierdzić właściwy dziennik tego ucznia.');
+  }
+  const approverUid = binding.data().establishedByUid;
+  const approver = validMemberDocumentId(approverUid) ? await context.db.collection('members').doc(approverUid).get() : null;
+  if (!approver?.exists || approver.data().role !== 'parent' || explicitFamilyId(approver.data()) !== familyId) {
+    throw new EduServerError('EDU_STUDENT_LINK_REQUIRED', 403, 'Rodzic musi potwierdzić przypisanie dziennika w tym gospodarstwie.');
   }
   return { ...context, connection: {
     id: studentConnectionId(uid), scope, accountRole: 'student', actorUid: uid,

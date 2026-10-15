@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { EduServerError } from './edu-auth.mjs';
+import { explicitFamilyId } from './family-identity.mjs';
 import { HEALTH_DOCUMENT_MAX_BYTES, HEALTH_DOCUMENT_MIME_TYPES, normalizeHealthDocumentMetadata, validHealthDate } from './health-access.mjs';
 
 const id = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
@@ -46,12 +47,7 @@ async function existingVisit(transaction, context, reference, owner, actor, ownR
   if (!snapshot.exists) return null;
   if (!['visit', 'doctor'].includes(current.type) || current.person !== (owner.personKey || owner.name || owner.id)
     || !(actor.role === 'parent' || ownRetry && owner.id === context.uid && current.createdBy === context.uid)
-    || current.familyId && actor.familyId && current.familyId !== actor.familyId) fail('HEALTH_FORBIDDEN', 403);
-  // Legacy records do not have a familyId. Check their real creator instead of accepting a guessed record ID.
-  if (!current.familyId && current.createdBy && current.createdBy !== context.uid) {
-    const creator = await transaction.get(context.db.collection('members').doc(current.createdBy));
-    if (!creator.exists || actor.familyId && creator.data().familyId !== actor.familyId) fail('HEALTH_FORBIDDEN', 403);
-  }
+    || explicitFamilyId(actor) === null || explicitFamilyId(current) !== explicitFamilyId(actor)) fail('HEALTH_FORBIDDEN', 403);
   return current;
 }
 
@@ -70,7 +66,7 @@ export async function prepareVisitAttachment(context, body, helpers) {
     const prior = await transaction.get(reference);
     if (prior.exists) {
       const record = prior.data();
-      if (record.createdBy !== context.uid || record.attachmentRecordId !== body.recordId || record.ownerProfileId !== permission.owner.id
+      if (explicitFamilyId(record) !== explicitFamilyId(permission.actor) || record.createdBy !== context.uid || record.attachmentRecordId !== body.recordId || record.ownerProfileId !== permission.owner.id
         || record.state !== 'draft' || record.mimeType !== body.mimeType || record.size !== body.size
         || record.fileName !== body.fileName.replace(/[\u0000-\u001f/\\]/g, '-') || record.attachmentPrivate !== body.privateToParents
         || record.uploadExpiresAt.toMillis() <= (context.now || new Date()).getTime()) fail('HEALTH_ATTACHMENT_EXPIRED', 409);
@@ -83,7 +79,7 @@ export async function prepareVisitAttachment(context, body, helpers) {
     transaction.create(reference, { ...metadata, shareOwner: !body.privateToParents && metadata.shareOwner,
       ownerProfileId: permission.owner.id, ownerUid, ownerPersonKey: permission.owner.personKey || permission.owner.name || permission.owner.id,
       readers: [...new Set([context.uid, ...(!body.privateToParents && metadata.shareOwner && ownerUid ? [ownerUid] : [])])], editors: [context.uid],
-      familyId: permission.owner.familyId || permission.actor.familyId || null, attachmentRecordId: body.recordId,
+      familyId: explicitFamilyId(permission.actor), attachmentRecordId: body.recordId,
       attachmentKind: 'health-record', attachmentPrivate: body.privateToParents, createdBy: context.uid, protected: true,
       state: 'draft', storagePath, mimeType: body.mimeType, size: body.size, fileName: body.fileName.replace(/[\u0000-\u001f/\\]/g, '-'),
       createdAt: stamp(), updatedAt: stamp(), uploadExpiresAt: Timestamp.fromMillis((context.now || new Date()).getTime() + 3600000) });
@@ -118,19 +114,20 @@ export async function finalizeVisitAttachment(context, body, helpers) {
     let previous;
     if (existing?.attachmentDocumentId && existing.attachmentDocumentId !== body.documentId) {
       previous = await transaction.get(context.db.collection('healthDocuments').doc(existing.attachmentDocumentId));
-      if (!previous.exists || previous.data().attachmentRecordId !== body.recordId || !previous.data().editors?.includes(context.uid)) fail('HEALTH_FORBIDDEN', 403);
+      if (!previous.exists || explicitFamilyId(previous.data()) !== explicitFamilyId(current.actor)
+        || previous.data().attachmentRecordId !== body.recordId || !previous.data().editors?.includes(context.uid)) fail('HEALTH_FORBIDDEN', 403);
     }
     const calendarId = `health-visit-${body.recordId}`;
     const calendar = body.addToCalendar && !existing && !record.privateToParents && record.type === 'visit' && record.date
       ? context.db.collection('calendarEvents').doc(calendarId) : null;
     const payload = { ...record, documentPath: '', documentURL: '', attachmentDocumentId: body.documentId,
-      updatedAt: stamp(), ...(existing ? {} : { createdBy: context.uid, confirmedDate: '', createdAt: stamp(), familyId: current.owner.familyId || current.actor.familyId || null }),
+      updatedAt: stamp(), ...(existing ? {} : { createdBy: context.uid, confirmedDate: '', createdAt: stamp(), familyId: explicitFamilyId(current.actor) }),
       ...(calendar ? { calendarEventId: calendarId } : {}) };
     if (existing) transaction.update(visit, payload);
     else transaction.create(visit, payload);
     if (calendar) {
       const start = visitStart(record.date, record.time);
-      transaction.create(calendar, { title: `❤️ ${record.title}`, person: record.person, date: Timestamp.fromDate(start),
+      transaction.create(calendar, { familyId: explicitFamilyId(current.actor), title: `❤️ ${record.title}`, person: record.person, date: Timestamp.fromDate(start),
         endDate: Timestamp.fromMillis(start.getTime() + 3600000), allDay: false, private: false, visibility: 'family',
         description: [record.specialty, record.doctor, record.location].filter(Boolean).join(' · '), location: record.location,
         repeat: 'none', repeatUntil: null, source: 'health', sourceRecordId: body.recordId, ownerProfileId: current.owner.id,

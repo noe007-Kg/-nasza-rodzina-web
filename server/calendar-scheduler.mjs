@@ -1,6 +1,6 @@
 import { calendarConfiguration, calendarSelection, activeCalendarMember, calendarError, googleCalendarImportOwner } from './calendar-config.mjs';
 import { calendarEncryptionConfigured } from './calendar-secrets.mjs';
-import { assertCalendarSelection, timestampMillis } from './calendar-storage.mjs';
+import { assertCalendarActor, assertCalendarSelection, assertOwnedConnection, timestampMillis } from './calendar-storage.mjs';
 import { syncGoogleCalendar } from './calendar-service.mjs';
 
 export const GOOGLE_CALENDAR_SCHEDULE = '0 * * * *';
@@ -14,10 +14,12 @@ const identifier = value => typeof value === 'string' && value.length > 0 && val
 const sourceId = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const safeErrorCodes = new Set(['CALENDAR_BUSY', 'CALENDAR_RATE_LIMITED', 'CALENDAR_SCHEDULE_SLOT_CONSUMED', 'CALENDAR_SYNC_STALE',
   'CALENDAR_RECONNECT_REQUIRED', 'CALENDAR_MEMBER_REQUIRED', 'CALENDAR_PROFILE_UNAVAILABLE', 'CALENDAR_PROFILE_FORBIDDEN',
+  'CALENDAR_FAMILY_REQUIRED',
   'CALENDAR_CONNECTION_FORBIDDEN', 'CALENDAR_SELECTION_REQUIRED', 'CALENDAR_NOT_CONFIGURED', 'CALENDAR_DECRYPT_FAILED', 'CALENDAR_PROVIDER_DATA',
   'CALENDAR_AUTH_UNAVAILABLE', 'CALENDAR_PROVIDER_LIMIT', 'CALENDAR_PROVIDER_RATE_LIMITED', 'CALENDAR_PROVIDER_UNAVAILABLE', 'CALENDAR_EVENT_CONFLICT']);
 const skippedCodes = new Set(['CALENDAR_BUSY', 'CALENDAR_RATE_LIMITED', 'CALENDAR_SCHEDULE_SLOT_CONSUMED', 'CALENDAR_SYNC_STALE',
   'CALENDAR_MEMBER_REQUIRED', 'CALENDAR_PROFILE_UNAVAILABLE', 'CALENDAR_PROFILE_FORBIDDEN', 'CALENDAR_CONNECTION_FORBIDDEN', 'CALENDAR_SELECTION_REQUIRED']);
+skippedCodes.add('CALENDAR_FAMILY_REQUIRED');
 const codeFor = error => safeErrorCodes.has(error?.code) ? error.code : 'CALENDAR_PROVIDER_UNAVAILABLE';
 const count = (summary, code, quantity = 1) => { summary.codes[code] = (summary.codes[code] || 0) + quantity; };
 const stamp = value => Number.isFinite(timestampMillis(value)) ? timestampMillis(value) : -Infinity;
@@ -107,6 +109,7 @@ export async function runScheduledGoogleCalendarSync(context, event = {}, depend
           if (!target.exists || target.data().active !== true || target.data().archived === true || target.data().disabled === true) return null;
         }
         const authorised = { ...context, uid: data.ownerUid, profile: actor, scheduledCalendarSlotStartMs: slot };
+        assertCalendarActor(authorised, actor); assertOwnedConnection(authorised, data, actor);
         await assertCalendarSelection(transaction, authorised, actor, selection);
         return authorised;
       }, { readOnly: true });

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deriveNotificationEvent, canReceiveNotification, wantsNotification, notificationPreferences, safePushData, inboxEvent, eventDocumentId } from '../server/notification-events.mjs';
-const school = { source: 'eduvulcan', sourceProfileId: 'p-school', sourceRecordId: 'grade-8', person: 'Nikodem', type: 'grade', title: 'Matematyka: 5', note: 'Prywatne dane', date: '2026-10-02' };
-const parent = { id: 'sebastian-uid', role: 'parent', name: 'Sebastian', active: true, canLogin: true };
-const child = { id: 'nikodem-uid', role: 'child', name: 'Nikodem', active: true, canLogin: true };
+const school = { familyId: 'source-test-family', source: 'eduvulcan', sourceProfileId: 'p-school', sourceRecordId: 'grade-8', person: 'Nikodem', type: 'grade', title: 'Matematyka: 5', note: 'Prywatne dane', date: '2026-10-02' };
+const parent = { id: 'sebastian-uid', role: 'parent', name: 'Sebastian', familyId: 'source-test-family', active: true, canLogin: true };
+const child = { id: 'nikodem-uid', role: 'child', name: 'Nikodem', familyId: 'source-test-family', active: true, canLogin: true };
 test('same edu sync with different timestamps, syncId and read receipt does not produce duplicates', () => {
   const previous = { ...school, syncedAt: 100, sourceSyncId: 'a', read: false };
   const next = { ...school, syncedAt: 200, sourceSyncId: 'b', updatedAt: 200, read: true };
@@ -47,7 +47,7 @@ test('school inbox notifications are only for parents; future student mailbox be
   assert.equal(canReceiveNotification({ ...child, id: 'another-child' }, personal), false);
 });
 test('private event never alerts a different parent or a child', () => {
-  const event = deriveNotificationEvent('calendarEvents', 'c1', null, { title: 'Prywatne', private: true, ownerUid: parent.id, createdBy: 'someone', person: 'family' });
+  const event = deriveNotificationEvent('calendarEvents', 'c1', null, { familyId: 'source-test-family', title: 'Prywatne', private: true, ownerUid: parent.id, createdBy: 'someone', person: 'family' });
   assert.equal(canReceiveNotification(parent, event), true); assert.equal(canReceiveNotification({ ...parent, id: 'wife' }, event), false); assert.equal(canReceiveNotification(child, event), false);
 });
 test('private 1:1 messages only alert participant other than sender', () => {
@@ -55,7 +55,7 @@ test('private 1:1 messages only alert participant other than sender', () => {
   assert.equal(canReceiveNotification(parent, event), false); assert.equal(canReceiveNotification(child, event), true); assert.equal(canReceiveNotification({ ...parent, id: 'third-person' }, event), false);
 });
 test('health recipient permissions match record privacy and own-person binding', () => {
-  const privateHealth = deriveNotificationEvent('healthRecords', 'h1', null, { title: 'Secret PDF', person: 'Nikodem', privateToParents: true });
+  const privateHealth = deriveNotificationEvent('healthRecords', 'h1', null, { familyId: 'source-test-family', title: 'Secret PDF', person: 'Nikodem', privateToParents: true });
   assert.equal(canReceiveNotification(parent, privateHealth), true); assert.equal(canReceiveNotification(child, privateHealth), false);
   const shared = { ...privateHealth, record: { ...privateHealth.record, privateToParents: false } };
   assert.equal(canReceiveNotification(child, shared), true); assert.equal(canReceiveNotification({ ...child, name: 'Paweł' }, shared), false);
@@ -98,9 +98,9 @@ test('cancellation of a restored lesson with changed details gets a distinct sta
 });
 
 test('adult receives general and own private notifications without receiving parental or student school mailboxes', () => {
-  const adult = { id: 'adult-uid', role: 'adult', personKey: 'member-0123456789abcdef01234567', name: 'Dorosły', active: true, canLogin: true };
+  const adult = { id: 'adult-uid', role: 'adult', personKey: 'member-0123456789abcdef01234567', name: 'Dorosły', familyId: 'source-test-family', active: true, canLogin: true };
   for (const collection of ['tasks', 'shoppingItems', 'calendarEvents']) {
-    const event = deriveNotificationEvent(collection, 'general', null, { title: 'Wpis rodzinny', person: 'family', createdBy: 'other' });
+    const event = deriveNotificationEvent(collection, 'general', null, { familyId: 'source-test-family', title: 'Wpis rodzinny', person: 'family', createdBy: 'other' });
     assert.equal(canReceiveNotification(adult, event), true);
   }
   const family = deriveNotificationEvent('familyMessages', 'family', null, { channel: 'family', participants: [], uid: 'other', text: 'Cześć' });
@@ -108,10 +108,10 @@ test('adult receives general and own private notifications without receiving par
   const personal = deriveNotificationEvent('familyMessages', 'private', null, { channel: 'private:adult-uid:other', participants: ['adult-uid', 'other'], uid: 'other', text: 'Prywatne' });
   assert.equal(canReceiveNotification(adult, personal), true);
   assert.equal(canReceiveNotification({ ...adult, id: 'another' }, personal), false);
-  const health = deriveNotificationEvent('healthRecords', 'own', null, { title: 'Wpis', person: adult.personKey, privateToParents: false });
+  const health = deriveNotificationEvent('healthRecords', 'own', null, { familyId: 'source-test-family', title: 'Wpis', person: adult.personKey, privateToParents: false });
   assert.equal(canReceiveNotification(adult, health), true);
   assert.equal(canReceiveNotification(adult, { ...health, record: { ...health.record, privateToParents: true } }), false);
-  const privateCalendar = deriveNotificationEvent('privateCalendarEvents', 'own', null, { title: 'Mój kalendarz', ownerUid: adult.id, createdBy: 'other', private: true });
+  const privateCalendar = deriveNotificationEvent('privateCalendarEvents', 'own', null, { familyId: 'source-test-family', title: 'Mój kalendarz', ownerUid: adult.id, createdBy: 'other', private: true });
   assert.equal(canReceiveNotification(adult, privateCalendar), true);
   assert.equal(canReceiveNotification({ ...adult, id: 'another' }, privateCalendar), false);
   for (const collection of ['schoolParentMessages', 'schoolStudentMessages', 'schoolItems']) {

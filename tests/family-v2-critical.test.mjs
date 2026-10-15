@@ -157,9 +157,10 @@ test('orphan cleanup deletes abandoned uploads but preserves submitted photos aw
   const { context, ticket } = await submittedPhoto();
   const orphanId = '00112233-4455-6677-8899-aabbccddeeff';
   const orphanPath = `taskProof/orphan-task/child/${orphanId}.png`;
-  context.rows.set(`_taskPhotoUploads/${orphanId}`, { taskId: 'orphan-task', uid: 'child', path: orphanPath, state: 'open',
+  context.rows.set('tasks/orphan-task', task({verificationMode:'photo'}));
+  context.rows.set(`_taskPhotoUploads/${orphanId}`, { familyId: 'fixture-family', taskId: 'orphan-task', uid: 'child', person: 'child-person', path: orphanPath, contentType:'image/png', size:png.length, state: 'open',
     orphanAfter: Timestamp.fromMillis(familyTestNow.getTime() - 1) });
-  context.bucket.objects.set(orphanPath, { bytes: png, metadata: { size: png.length, contentType: 'image/png' } });
+  context.bucket.objects.set(orphanPath, { bytes: png, metadata: { size: png.length, contentType: 'image/png', metadata:{taskId:'orphan-task',uploadId:orphanId,uploaderUid:'child'} } });
   const result = await runTaskPhotoCleanup(context, { now: familyTestNow });
   assert.equal(result.abandoned, 1);
   assert.equal(context.bucket.objects.has(orphanPath), false);
@@ -292,7 +293,7 @@ test('90/30/7-day document reminders are deduplicated, ACL-only, preference-awar
   const context = familyMemoryContext({ 'userPreferences/parent': { notifications: { categories: { health: false } } } });
   const dates = { 90: '2027-01-09', 30: '2026-11-10', 7: '2026-10-18' };
   for (const [days, expiresOn] of Object.entries(dates)) context.rows.set(`healthDocuments/doc-${days}`, {
-    state: 'ready', indefinite: false, expiresOn, readers: ['adult', 'adult', 'parent'], title: 'Poufna nazwa dokumentu', number: 'POUFNY-NUMER' });
+    familyId: 'fixture-family', state: 'ready', indefinite: false, expiresOn, readers: ['adult', 'adult', 'parent'], title: 'Poufna nazwa dokumentu', number: 'POUFNY-NUMER' });
   context.rows.set('healthDocuments/indefinite', { state: 'ready', indefinite: true, expiresOn: dates[7], readers: ['adult'] });
   assert.equal((await runHealthDocumentReminders(context, familyTestNow)).delivered, 3);
   assert.equal((await runHealthDocumentReminders(context, familyTestNow)).delivered, 0);
@@ -306,4 +307,27 @@ test('90/30/7-day document reminders are deduplicated, ACL-only, preference-awar
     assert.equal(entry.important, true);
     assert.equal(entry.read, false);
   }
+});
+
+test('medical document reminder never reaches an ACL UID belonging to a foreign or unassigned household', async()=>{
+  const context = familyMemoryContext({ 'members/foreign': { ...fixtureAdult, familyId:'foreign-family' },
+    'members/unassigned': { ...fixtureAdult, familyId:undefined } });
+  context.rows.set('healthDocuments/foreign-reader', { familyId:'fixture-family', state:'ready', indefinite:false,
+    expiresOn:'2026-10-18', readers:['adult','foreign','unassigned'] });
+  assert.equal((await runHealthDocumentReminders(context, familyTestNow)).delivered,1);
+  assert.equal(inCollection(context,'notificationInbox/foreign/items').length,0);
+  assert.equal(inCollection(context,'notificationInbox/unassigned/items').length,0);
+});
+
+test('a provider that retains a photo bearer token cannot finalize task submission or award points', async()=>{
+  const context = familyMemoryContext({ 'tasks/photo-task': task({verificationMode:'photo',requireApproval:true}) },'child');
+  context.bucket=memoryBucket();
+  const ticket=await manageTasksAction(context,{action:'begin-photo',taskId:'photo-task',contentType:'image/png',size:png.length},{now:familyTestNow});
+  context.bucket.objects.set(ticket.path,{bytes:png,metadata:{size:png.length,contentType:'image/png',metadata:{
+    taskId:'photo-task',uploadId:ticket.uploadId,uploaderUid:'child',firebaseStorageDownloadTokens:'synthetic-unremoved-token'}}});
+  const originalFile=context.bucket.file;
+  context.bucket.file=path=>({...originalFile(path),setMetadata:async()=>{}});
+  await assert.rejects(manageTasksAction(context,{action:'submit',taskId:'photo-task',uploadId:ticket.uploadId},{now:familyTestNow}),{code:'TASK_PHOTO_INCOMPLETE'});
+  assert.equal(context.rows.get('tasks/photo-task').approvalStatus,'none');
+  assert.equal(balance(context),undefined);assert.equal(inCollection(context,'taskCompletions').length,0);
 });

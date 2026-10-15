@@ -1,5 +1,7 @@
 import { collectHouseholdInventory } from './household-migration-inventory.mjs';
 import { buildHouseholdMigrationPlan } from './household-migration-plan.mjs';
+import { buildHouseholdIsolationPlan } from './household-isolation-plan.mjs';
+import { ISOLATION_PLAN_FIELDS } from './household-isolation-plan.mjs';
 import { collectFirestoreBackup, recheckFirestoreBackup, verifyProductionRules, readProductionLocations } from './household-production-evidence.mjs';
 import { collectStorageBackup, recheckStorageBackup } from './household-storage-backup.mjs';
 import { collectExternalReferences, captureExternalFiles } from './household-external-files.mjs';
@@ -16,11 +18,13 @@ export function planMatchesBackup(plan, documents) {
   const root = `projects/${plan.projectId}/databases/(default)/documents/`;
   const map = new Map(documents.map(row => [row.name, row]));
   return (plan.changes || []).every(change => {
+    if (!ISOLATION_PLAN_FIELDS.includes(change.field)) return false;
     const row = map.get(root + change.path), version = partsOfTimestamp(row?.updateTime);
     if (!version || version.seconds !== change.updateTime?.seconds || version.nanoseconds !== change.updateTime?.nanoseconds) return false;
-    const native = row.fields?.familyId;
+    const native = row.fields?.[change.field];
     if (change.before?.present !== (native !== undefined)) return false;
-    const value = native === undefined ? undefined : native.stringValue !== undefined ? native.stringValue : Object.hasOwn(native, 'nullValue') ? null : Symbol();
+    const value = native === undefined ? undefined : native.stringValue !== undefined ? native.stringValue
+      : native.booleanValue !== undefined ? native.booleanValue : Object.hasOwn(native, 'nullValue') ? null : Symbol();
     return !change.before.present || value === change.before.value;
   });
 }
@@ -43,7 +47,7 @@ async function metadataOfAuth(auth, members) {
 export async function captureHouseholdEvidence(config, familyId, dependencies, options = {}) {
   const { db, auth, bucket, request, localFirestoreRules, localStorageRules } = dependencies;
   const inventory = await collectHouseholdInventory({ db, auth, bucket }, config);
-  const plan = buildHouseholdMigrationPlan(config, inventory, { familyId });
+  const plan = (options.isolationPreparation === false ? buildHouseholdMigrationPlan : buildHouseholdIsolationPlan)(config, inventory, { familyId });
   const planDigest = backupDigest(canonicalJson(plan));
   // The full-project data copy is not started for an unreviewed extra active
   // household or any failed metadata prerequisite.
@@ -97,6 +101,13 @@ export async function captureHouseholdEvidence(config, familyId, dependencies, o
   const payload = { schemaVersion: 1, createdAt: new Date().toISOString(), projectId: config.projectId, bucket: config.bucket,
     documents: database.documents, missingAncestors: database.missingAncestors, objects: storage.objects, auth: authMetadata,
     externalFiles, config, plan, inventory, rules, locations, consistency, references,
+    downloadTokenReview: { mode: 'review-only', canApply: false, writesPerformed: 0,
+      requiresExplicitOwnershipReviewAndApproval: true,
+      // Never include token values in the review manifest. Exact object versions
+      // are mandatory for any later, separately approved revocation.
+      objects: storage.objects.filter(object => typeof object.metadata?.firebaseStorageDownloadTokens === 'string'
+        && object.metadata.firebaseStorageDownloadTokens.trim()).map(object => ({ bucket: config.bucket, path: object.name,
+          generation: object.generation, metageneration: object.metageneration, bytesSha256: object.sha256 })) },
     manifest: { captureComplete, firestoreComplete: database.complete, storageComplete: storage.complete,
       planBoundToBackup: bound, authScope: 'five-profile-metadata-only', objectScope: 'current-live-selected-bucket-objects',
       archivedObjectVersionsIncluded: false, secretManagerKeysIncluded: false,

@@ -1,5 +1,6 @@
 import { addDoc, collection, db, deleteDoc, deleteObject, doc, EmptyState, errorMessage, formatDateInput, formatShortDate, getDoc, isParent, isPersonKey, Modal, ModuleHeader, notify, onSnapshot, ownPerson, parseLocalDate, personColor, PersonSelect, query, React, storage, storageRef, Timestamp, updateDoc, useEffect, useRef, useState, where, writeBatch, type HealthForm, type HealthRecord, type HealthStatus, type HealthType, type MedicalContact, type Member, type PersonKey, type User } from "../app-shared";
 
+import { calendarEventScopeStamp, householdFamilyId, requireHouseholdFamilyId } from '../household-scope';
 import { uploadBytesResumable } from 'firebase/storage';
 import { useNotifications } from '../notifications';
 
@@ -11,7 +12,7 @@ import { discardVisitAttachment, finalizeVisitAttachment, healthDocumentAction, 
 import { emptyHealthDocument } from '../health/document-model';
 import { assertHealthWriteAccess, sameVisitAttachment, saveVisitAttachment, type VisitAttachmentSession } from '../health/visit-attachment';
 import { useFamilyDirectory } from '../family-directory';
-import { assertFamilyV2WriteAllowed, familyV2WritesAllowed } from '../family-v2-client';
+import { assertFamilyV2WriteAllowed, familyAction, familyV2WritesAllowed } from '../family-v2-client';
 import '../health/health-documents.css';
 import './chat-health.css';
 
@@ -37,7 +38,8 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
   const previewFile = previewState?.uid === user.uid ? previewState.file : null;
   const setPreviewFile = (file: HealthPreviewFile | null) => setPreviewState(file ? { uid: user.uid, file } : null);
   const parent = isParent(member);
-  const healthScope = JSON.stringify([user.uid, parent, ownPerson(member)]);
+  const familyId = householdFamilyId(member);
+  const healthScope = JSON.stringify([user.uid, parent, ownPerson(member), familyId]);
   const records = recordState.scope === healthScope ? recordState.rows : [];
   const contacts = contactState.scope === healthScope ? contactState.rows : [];
   const [recordType, setRecordType] = useState<HealthType | 'all'>('all');
@@ -62,7 +64,7 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
   const [form, setForm] = useState<HealthForm>(emptyForm);
   const [contactForm, setContactForm] = useState({ person:'family' as PersonKey, specialty:'', name:'', doctor:'', phone:'', address:'', note:'' });
 
-  useEffect(() => onSnapshot(parent ? collection(db, 'healthRecords') : query(collection(db, 'healthRecords'), where('privateToParents', '==', false), where('person', 'in', ['family', ownPerson(member)])), (snap) => {
+  useEffect(() => { if (!familyId) return; return onSnapshot(parent ? query(collection(db, 'healthRecords'), where('familyId', '==', familyId)) : query(collection(db, 'healthRecords'), where('familyId', '==', familyId), where('privateToParents', '==', false), where('person', 'in', ['family', ownPerson(member)])), (snap) => {
     const next = snap.docs.map((d): HealthRecord => {
       const x = d.data();
       return {
@@ -71,11 +73,11 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
     });
     next.sort((a,b)=>(b.date || '').localeCompare(a.date || '') || (b.createdAt?.getTime() || 0)-(a.createdAt?.getTime() || 0));
     setRecords({ scope: healthScope, rows: next });
-  }), [healthScope, parent, member?.personKey, member?.name]);
+  }); }, [healthScope, parent, member?.personKey, member?.name]);
 
-  useEffect(() => onSnapshot(parent ? collection(db, 'medicalContacts') : query(collection(db, 'medicalContacts'), where('person', 'in', ['family', ownPerson(member)])), (snap) => {
+  useEffect(() => { if (!familyId) return; return onSnapshot(parent ? query(collection(db, 'medicalContacts'), where('familyId', '==', familyId)) : query(collection(db, 'medicalContacts'), where('familyId', '==', familyId), where('person', 'in', ['family', ownPerson(member)])), (snap) => {
     setContacts({ scope: healthScope, rows: snap.docs.map((d) => { const x=d.data(); return { id:d.id, person:isPersonKey(x.person) ? x.person : 'family', specialty:String(x.specialty || ''), name:String(x.name || ''), doctor:String(x.doctor || ''), phone:String(x.phone || ''), address:String(x.address || ''), note:String(x.note || '') }; }) });
-  }), [healthScope, parent, member?.personKey, member?.name]);
+  }); }, [healthScope, parent, member?.personKey, member?.name]);
 
   useEffect(() => {
     const check = () => {
@@ -148,13 +150,18 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
     validateHealthFile(file);
     const completed = uploadedFile.current;
     const same = completed?.file === file && completed.person === recordPerson && completed.privateToParents === form.privateToParents;
-    if (same && completed.completed) return completed.path;
+    if (same && completed.completed) {
+      await familyAction('storage', { operation: 'finalizeHealthFile', path: completed.path });
+      return completed.path;
+    }
     const safe = file.name.replace(/[^a-zA-Z0-9._-]/g,'-');
     const path = same ? completed.path : `health/${form.privateToParents ? 'parents' : 'shared'}/${recordPerson}/${user.uid}/${Date.now()}-${safe}`;
     uploadedFile.current = { file, path, person: recordPerson, privateToParents: form.privateToParents, completed: false };
     setUploadFileName(file.name); setUploadError('');
     const task = uploadBytesResumable(storageRef(storage, path), file, { contentType: file.type });
     await observeHealthUpload(task, setUploadProgress);
+    setSaveStage('Sprawdzanie kompletności i ochrony dokumentu…');
+    await familyAction('storage', { operation: 'finalizeHealthFile', path });
     uploadedFile.current.completed = true;
     return path;
   }
@@ -208,12 +215,12 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
       const { addToCalendar, file, ...record } = form;
       const batch = writeBatch(db);
       const target = doc(db, 'healthRecords', pendingRecordId.current || (pendingRecordId.current = editingHealth?.id || doc(collection(db, 'healthRecords')).id));
-      const payload = { ...record, title:form.title.trim(), documentPath, documentURL:'', updatedAt:Timestamp.now() };
+      const payload = { ...record, familyId: requireHouseholdFamilyId(member), title:form.title.trim(), documentPath, documentURL:'', updatedAt:Timestamp.now() };
       if (editingHealth) batch.update(target, payload);
       else batch.set(target, { ...payload, confirmedDate:'', createdBy:user.uid, createdAt:Timestamp.now() });
       if (!editingHealth && addToCalendar && !form.privateToParents && form.type === 'visit' && form.date) {
         const start = parseLocalDate(form.date, form.time || '12:00');
-        batch.set(doc(db, 'calendarEvents', pendingCalendarId.current || (pendingCalendarId.current = doc(collection(db,'calendarEvents')).id)), { title:`❤️ ${form.title.trim()}`, person:form.person, date:Timestamp.fromDate(start), endDate:Timestamp.fromDate(new Date(start.getTime()+3600000)), allDay:false, description:[form.specialty,form.doctor,form.location].filter(Boolean).join(' · '), repeat:'none', repeatUntil:null, createdBy:user.uid, createdAt:Timestamp.now() });
+        batch.set(doc(db, 'calendarEvents', pendingCalendarId.current || (pendingCalendarId.current = doc(collection(db,'calendarEvents')).id)), { ...calendarEventScopeStamp(user.uid, member, profiles, form.person), ownerUid:user.uid, title:`❤️ ${form.title.trim()}`, person:form.person, date:Timestamp.fromDate(start), endDate:Timestamp.fromDate(new Date(start.getTime()+3600000)), allDay:false, description:[form.specialty,form.doctor,form.location].filter(Boolean).join(' · '), repeat:'none', repeatUntil:null, createdBy:user.uid, createdAt:Timestamp.now() });
       }
       setSaveStage(form.file ? 'Plik przesłany. Zapisywanie wpisu…' : 'Zapisywanie wpisu…');
       await batch.commit(); setSaveStage('✓ Wpis zapisany.'); setShowForm(false);
@@ -245,8 +252,8 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
     contactSavingRef.current = true; setSavingContact(true);
     try {
       await requireHealthWrites();
-      if (editingContact) await updateDoc(doc(db,'medicalContacts',editingContact.id), { ...contactForm, updatedAt:Timestamp.now() });
-      else await addDoc(collection(db,'medicalContacts'), { ...contactForm, createdBy:user.uid, createdAt:Timestamp.now() });
+      if (editingContact) await updateDoc(doc(db,'medicalContacts',editingContact.id), { ...contactForm, familyId: requireHouseholdFamilyId(member), updatedAt:Timestamp.now() });
+      else await addDoc(collection(db,'medicalContacts'), { ...contactForm, familyId: requireHouseholdFamilyId(member), createdBy:user.uid, createdAt:Timestamp.now() });
       setShowContactForm(false);
     }
     catch (error) { notify(errorMessage(error), 'error'); }

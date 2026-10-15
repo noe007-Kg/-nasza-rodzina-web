@@ -20,10 +20,11 @@ import { OkruszekPlan } from './school/OkruszekPlan';
 import { OKRUSZEK_PLAN_ID } from './school/okruszek-plan';
 import { schoolOwnerProfileId, schoolSourcesForProfile } from './school/profile-schools';
 import { isPeriodGrade, parseGradeMetadata, sortGradesNewest } from './school/grade-projections';
+import { calendarEventScopeStamp, householdFamilyId, HOUSEHOLD_NOT_PREPARED, requireHouseholdFamilyId } from './household-scope';
 import './school.css';
 import './school-enhancements.css';
 
-type SchoolMember = { name?: string; role?: string; personKey?: string; photoURL?: string; schoolEnabled?: boolean; active?: boolean; canLogin?: boolean };
+type SchoolMember = { familyId?: string; name?: string; role?: string; personKey?: string; photoURL?: string; schoolEnabled?: boolean; active?: boolean; canLogin?: boolean };
 type SchoolRecord = SchoolEntry & {
   id: string; calendarEventId?: string; calendarCreatedBy?: string; createdBy?: string; createdAt?: Date;
   source?: string; syncedAt?: Date; parentOnly?: boolean;
@@ -136,6 +137,7 @@ function SchoolDialog({ title, children, onClose, busy = false }: { title: strin
 }
 
 export function SchoolModule({ user, member, familyMembers }: { user: User; member: SchoolMember | null; familyMembers?: readonly FamilyMemberProfile[] }) {
+  const familyId = householdFamilyId(member);
   const schoolAccess = schoolReadAccess(member);
   const parent = schoolAccess?.scope === 'parent';
   const ownStudent = schoolAccess?.scope === 'student' ? schoolAccess.person : '';
@@ -167,14 +169,15 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState('');
   const fileVersion = useRef(0);
-  const identity = `${user.uid}:${parent ? 'parent' : ownStudent}`;
+  const identity = `${user.uid}:${familyId || 'unbound'}:${parent ? 'parent' : ownStudent}`;
   const currentIdentity = useRef(identity);
   currentIdentity.current = identity;
 
   useEffect(() => {
     setRecords([]); setLoading(true); setLoadError('');
     if (!parent && !ownStudent) { setLoading(false); setLoadError(SCHOOL_PROFILE_UNBOUND); return; }
-    const source = parent ? collection(db, 'schoolItems') : query(collection(db, 'schoolItems'), where('person', '==', ownStudent));
+    if (!familyId) { setRecords([]); setLoadError(HOUSEHOLD_NOT_PREPARED); setLoading(false); return; }
+    const source = parent ? query(collection(db, 'schoolItems'), where('familyId', '==', familyId)) : query(collection(db, 'schoolItems'), where('familyId', '==', familyId), where('person', '==', ownStudent));
     return onSnapshot(source, (snapshot) => {
       if (currentIdentity.current !== identity) return;
       const next: SchoolRecord[] = [];
@@ -187,23 +190,24 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
       }
       setRecords(next); setLoading(false); setLoadError('');
     }, (error) => { if (currentIdentity.current !== identity) return; setRecords([]); setLoadError(errorText(error)); setLoading(false); });
-  }, [parent, ownStudent, user.uid, retry]);
+  }, [parent, ownStudent, user.uid, retry, familyId]);
 
   useEffect(() => {
     setParentMessages([]); setMessageError('');
     if (!parent) return;
-    return onSnapshot(collection(db, 'schoolParentMessages'), (snapshot) => {
+    if (!familyId) return;
+    return onSnapshot(query(collection(db, 'schoolParentMessages'), where('familyId', '==', familyId)), (snapshot) => {
       const messages = snapshot.docs.map((item) => readSchoolRecord(`parent-message:${item.id}`, item.data(), true)).filter((item): item is SchoolRecord => item !== null);
       setParentMessages(messages); setMessageError('');
     }, () => setMessageError('Nie udało się odczytać wiadomości rodzica z dziennika. Sprawdź połączenie i konfigurację uprawnień Firebase.'));
-  }, [parent, user.uid, retry]);
+  }, [parent, user.uid, retry, familyId]);
 
   useEffect(() => {
     if (!parent) setSelectedPerson(ownStudent);
     setForm(null); setDetail(null); setDeleting(null); setImportOpen(false); setImportRows([]); setImportBusy(false); setBusy(false); setNotice('');
     setActionError(''); setImportError('');
     fileVersion.current += 1;
-  }, [parent, ownStudent, user.uid]);
+  }, [parent, ownStudent, user.uid, familyId]);
 
   const allRecords = useMemo(() => parent ? [...records, ...parentMessages] : records, [parent, records, parentMessages]);
   const studentProfiles = useMemo<FamilyMemberProfile[]>(() => {
@@ -312,6 +316,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
     if (!form || busy) return;
     setActionError('');
     try {
+      const familyId = requireHouseholdFamilyId(member);
       const entry = entryFromForm(form, students);
       if (!canEdit(entry) || (editing && !canEdit(editing))) throw new Error('Nie masz uprawnień do edycji tego wpisu.');
       if (form.addToCalendar && entry.type !== 'activity') throw new Error('Do kalendarza można dodać zajęcia dodatkowe.');
@@ -332,15 +337,15 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
         calendarId = calendarRef.id;
         calendarOwner = linkedEvent?.exists() && typeof linkedEvent.data().createdBy === 'string' ? linkedEvent.data().createdBy : user.uid;
         // Only the public event label and timing are shared. School notes and messages stay in schoolItems.
-        const calendarData = { title: `🎒 ${entry.title}`, person: entry.person,
+        const calendarData = { ...calendarEventScopeStamp(user.uid, member, familyMembers || [], entry.person), title: `🎒 ${entry.title}`, person: entry.person,
           date: Timestamp.fromDate(localDate(firstCalendarDate, entry.time)), endDate: Timestamp.fromDate(localDate(firstCalendarDate, entry.endTime)),
           allDay: false, description: '', repeat: entry.weekday ? 'weekly' : 'none', repeatUntil: null,
         };
         if (linkedEvent?.exists()) batch.update(calendarRef, calendarData);
-        else batch.set(calendarRef, { ...calendarData, createdBy: user.uid, createdAt: Timestamp.now() });
+        else batch.set(calendarRef, { ...calendarData, ownerUid: user.uid, createdBy: user.uid, createdAt: Timestamp.now() });
       } else if (linkedRef && linkedEvent?.exists()) batch.delete(linkedRef);
-      if (editing) batch.update(schoolRef, { ...entry, updatedAt: Timestamp.now(), calendarEventId: calendarId || deleteField(), calendarCreatedBy: calendarOwner || deleteField() });
-      else batch.set(schoolRef, { ...entry, createdBy: user.uid, createdAt: Timestamp.now(), ...(calendarId ? { calendarEventId: calendarId, calendarCreatedBy: calendarOwner } : {}) });
+      if (editing) batch.update(schoolRef, { ...entry, familyId, updatedAt: Timestamp.now(), calendarEventId: calendarId || deleteField(), calendarCreatedBy: calendarOwner || deleteField() });
+      else batch.set(schoolRef, { ...entry, familyId, createdBy: user.uid, createdAt: Timestamp.now(), ...(calendarId ? { calendarEventId: calendarId, calendarCreatedBy: calendarOwner } : {}) });
       await batch.commit();
       setForm(null); setEditing(null); setNotice(editing ? 'Wpis został zapisany.' : 'Dodano wpis szkolny.');
     } catch (error) { setActionError(errorText(error)); }
@@ -384,7 +389,12 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
     try {
       // Validate the entire file again before any write, then collapse identical rows.
       const valid = importRows.map((entry) => validateSchoolEntry(entry, students));
-      const keyed = await Promise.all(valid.map(async (entry) => ({ entry, id: await schoolImportId(entry) })));
+      const household = requireHouseholdFamilyId(member);
+      const keyed = await Promise.all(valid.map(async (entry) => {
+        const legacyId = await schoolImportId(entry);
+        const old = records.find(record => record.id === legacyId && !record.source);
+        return { entry, id: old?.id || `${household}__${legacyId}` };
+      }));
       const unique = [...new Map(keyed.map((row) => [row.id, row])).values()];
       const existing = await Promise.all(unique.map(async (row) => ({ ...row, exists: (await getDoc(doc(db, 'schoolItems', row.id))).exists() })));
       if (currentIdentity.current !== startingIdentity) throw new Error('Konto zmieniło się podczas importu. Otwórz import ponownie.');
@@ -392,7 +402,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
       if (newRows.length > MAX_SCHOOL_ROWS) throw new Error('Przekroczono limit importu.');
       if (newRows.length) {
         const batch = writeBatch(db);
-        for (const row of newRows) batch.set(doc(db, 'schoolItems', row.id), { ...row.entry, createdBy: user.uid, createdAt: Timestamp.now() });
+        for (const row of newRows) batch.set(doc(db, 'schoolItems', row.id), { ...row.entry, familyId: requireHouseholdFamilyId(member), createdBy: user.uid, createdAt: Timestamp.now() });
         await batch.commit();
       }
       const skipped = importRows.length - newRows.length;
@@ -424,7 +434,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
       setSourceSelection({ person, source }); setDetail(null); setForm(null); setDeleting(null); setImportOpen(false);
     }} />}
     {person && sourceView === 'fryderyk' && <FryderykPreparation key={`${identity}:${person}`} student={studentProfiles.find(profile => memberPersonKey(profile) === person)?.name || person} parent={parent} onBack={() => setSourceSelection({ person, source: 'sp4' })} />}
-    {person && sourceView === 'okruszek' && <OkruszekPlan key={`${identity}:${person}:${ownerProfileId}`} user={user} parent={parent} person={person} ownerProfileId={ownerProfileId} />}
+    {person && sourceView === 'okruszek' && <OkruszekPlan familyId={familyId} key={`${identity}:${person}:${ownerProfileId}`} user={user} parent={parent} person={person} ownerProfileId={ownerProfileId} />}
     {sources.includes('sp4') && <div className="school-sp4-content" data-testid="school-sp4-content" hidden={sourceView !== 'sp4'}>
     {notice && <div className="school-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Zamknij komunikat"><Icon name="close" /></button></div>}
     {loadError && <div className="school-error" role="alert"><span>{loadError}</span><SecondaryButton onClick={() => setRetry((value) => value + 1)}>Spróbuj ponownie</SecondaryButton></div>}

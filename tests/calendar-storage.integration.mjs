@@ -24,12 +24,13 @@ const services = getServerFirebase();
 const { db } = services;
 assert.equal(services.app.options.projectId, 'demo-nasza-rodzina');
 const parentUid = 'calendar-integration-parent';
+process.env.CALENDAR_GOOGLE_OWNER_UID = parentUid;
 const motherUid = 'calendar-integration-mother';
 const childUid = 'calendar-integration-child';
-const parent = { role: 'parent', active: true, canLogin: true, name: 'Sebastian', personKey: 'Sebastian' };
+const parent = { role: 'parent', active: true, canLogin: true, name: 'Sebastian', personKey: 'Sebastian', familyId: 'calendar-integration-household' };
 const context = { ...services, uid: parentUid, profile: parent };
 const identities = [[parentUid, parent], [motherUid, { ...parent, name: 'Dominika', personKey: 'Dominika' }],
-  [childUid, { role: 'child', active: true, canLogin: true, name: 'Nikodem', personKey: 'Nikodem' }]];
+  [childUid, { role: 'child', active: true, canLogin: true, name: 'Nikodem', personKey: 'Nikodem', familyId: 'calendar-integration-household' }]];
 const idTokens = new Map();
 const connectionsCreated = new Set();
 const tokenFixture = { accessToken: 'local-test-access-placeholder', refreshToken: 'local-test-refresh-placeholder', expiresAt: Date.now() + 86400000 };
@@ -46,8 +47,9 @@ const deferred = () => { let resolve; const promise = new Promise(done => { reso
 async function connectionFixture(changes = {}) {
   const id = randomUUID(), now = Date.now(); connectionsCreated.add(id);
   const envelope = encryptCalendarSecrets({ tokens: tokenFixture, syncToken: 'local-old-cursor' }, { uid: parentUid, id, purpose: 'connection' });
-  await sourceRef(id).set({ ownerUid: parentUid, provider: 'google', ownerProfileId: childUid, person: 'Nikodem', visibility: 'private', mode: 'sync',
+  await sourceRef(id).set({ ownerUid: parentUid, familyId: 'calendar-integration-household', provider: 'google', ownerProfileId: childUid, person: 'Nikodem', visibility: 'private', mode: 'sync',
     calendarId: 'integration-calendar', calendarName: 'Kalendarz testowy', timeZone: 'Europe/Warsaw', selectionConfirmed: true,
+    historyImportWindow:{from:'1900-01-01T00:00:00.000Z',to:'2201-01-01T00:00:00.000Z',futureFrom:new Date(now).toISOString()},
     status: 'connected', version: randomUUID(), leaseId: null, leaseExpiresAt: null, envelope, createdAt: Timestamp.fromMillis(now), ...changes });
   return { id, now };
 }
@@ -64,7 +66,8 @@ async function clientPrivateQuery(uid, ownerUid) {
   const response = await fetch('http://127.0.0.1:8080/v1/projects/demo-nasza-rodzina/databases/(default)/documents:runQuery', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idTokens.get(uid)}` },
     body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'privateCalendarEvents' }],
-      where: { fieldFilter: { field: { fieldPath: 'ownerUid' }, op: 'EQUAL', value: { stringValue: ownerUid } } }, limit: 100 } }),
+      where: { compositeFilter: { op:'AND', filters:[{fieldFilter:{field:{fieldPath:'ownerUid'},op:'EQUAL',value:{stringValue:ownerUid}}},
+        {fieldFilter:{field:{fieldPath:'familyId'},op:'EQUAL',value:{stringValue:parent.familyId}}}] } }, limit: 100 } }),
   });
   return { status: response.status, body: await response.json() };
 }
@@ -98,7 +101,7 @@ after(async () => {
   await deleteApp(services.app);
 });
 
-test('real imports retain one stable event ID and private ownership even when assigned to a child profile', async () => {
+test('real imports retain one stable event ID and owner-only privacy from a legacy child-selected source', async () => {
   const { id, now } = await connectionFixture();
   const first = await syncFixture(id, now);
   assert.equal(first.imported, 1);
@@ -107,7 +110,7 @@ test('real imports retain one stable event ID and private ownership even when as
   const rows = await db.collection('privateCalendarEvents').where('sourceConnectionId', '==', id).get();
   assert.equal(rows.size, 1); assert.equal(rows.docs[0].id, sourceEventRef(id).id);
   const stored = rows.docs[0].data();
-  assert.equal(stored.person, 'Nikodem'); assert.equal(stored.ownerProfileId, childUid); assert.equal(stored.ownerUid, parentUid); assert.equal(stored.private, true);
+  assert.equal(stored.person, 'Sebastian'); assert.equal(stored.ownerProfileId, parentUid); assert.equal(stored.ownerUid, parentUid); assert.equal(stored.private, true);
   assert.equal((await sourceEventRef(id, 'calendarEvents').get()).exists, false);
   assert.equal(await clientRead(parentUid, sourceEventRef(id)), 200);
   assert.equal(await clientRead(motherUid, sourceEventRef(id)), 403); assert.equal(await clientRead(childUid, sourceEventRef(id)), 403);

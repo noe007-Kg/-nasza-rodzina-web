@@ -23,7 +23,8 @@ export function assessHouseholdReadiness(input = {}) {
   add('household-confirmation', input.household?.ownerReviewed === true && input.household?.boundPlanDigest === input.planDigest
     && hash(input.planDigest), 'OWNER_HOUSEHOLD_REVIEW_REQUIRED');
   add('household-isolation', input.isolation?.fullMultiHouseholdVerified === true, 'LEGACY_HOUSEHOLD_ISOLATION_NOT_VERIFIED');
-  add('private-download-tokens', input.tokens?.scanVerified === true && input.tokens.privateTokenCount === 0, 'PRIVATE_DOWNLOAD_TOKENS_REQUIRE_REVIEW');
+  add('private-download-tokens', input.tokens?.scanVerified === true && input.tokens.privateTokenCount === 0
+    && input.tokens.productTokenCount === 0, 'PRIVATE_DOWNLOAD_TOKENS_REQUIRE_REVIEW');
   add('account-and-key-recovery', input.recovery?.authRecoveryVerified === true && input.recovery?.providerKeysRetainedVerified === true,
     'AUTH_AND_PROVIDER_KEY_RECOVERY_NOT_VERIFIED');
   add('backup-custody', input.custody?.secondCopyVerified === true && input.custody?.secondCopyArchiveDigest === archiveHash

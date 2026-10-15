@@ -4,73 +4,193 @@
       "collectionGroup": "familyMessages",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "participants", "arrayConfig": "CONTAINS" },
-        { "fieldPath": "channel", "order": "ASCENDING" }
+        {"fieldPath": "participants", "arrayConfig": "CONTAINS"},
+        {"fieldPath": "channel", "order": "ASCENDING"}
       ]
     },
     {
       "collectionGroup": "healthDocuments",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "readers", "arrayConfig": "CONTAINS" },
-        { "fieldPath": "state", "order": "ASCENDING" }
+        {"fieldPath": "readers", "arrayConfig": "CONTAINS"},
+        {"fieldPath": "state", "order": "ASCENDING"}
       ]
     },
     {
       "collectionGroup": "healthDocuments",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "state", "order": "ASCENDING" },
-        { "fieldPath": "indefinite", "order": "ASCENDING" }
+        {"fieldPath": "state", "order": "ASCENDING"},
+        {"fieldPath": "indefinite", "order": "ASCENDING"}
       ]
     },
     {
       "collectionGroup": "_taskPhotoUploads",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "state", "order": "ASCENDING" },
-        { "fieldPath": "orphanAfter", "order": "ASCENDING" }
+        {"fieldPath": "state", "order": "ASCENDING"},
+        {"fieldPath": "orphanAfter", "order": "ASCENDING"}
       ]
     },
     {
       "collectionGroup": "_taskPhotoCleanup",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "state", "order": "ASCENDING" },
-        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+        {"fieldPath": "state", "order": "ASCENDING"},
+        {"fieldPath": "nextAttemptAt", "order": "ASCENDING"}
       ]
     },
     {
       "collectionGroup": "_taskRewardImageUploads",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "state", "order": "ASCENDING" },
-        { "fieldPath": "orphanAfter", "order": "ASCENDING" }
+        {"fieldPath": "state", "order": "ASCENDING"},
+        {"fieldPath": "orphanAfter", "order": "ASCENDING"}
       ]
     },
     {
       "collectionGroup": "_taskRewardImageCleanup",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "state", "order": "ASCENDING" },
-        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+        {"fieldPath": "state", "order": "ASCENDING"},
+        {"fieldPath": "nextAttemptAt", "order": "ASCENDING"}
       ]
     },
     {
       "collectionGroup": "financeBills",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "familyId", "order": "ASCENDING" },
-        { "fieldPath": "archived", "order": "ASCENDING" }
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "archived", "order": "ASCENDING"}
       ]
     },
     {
       "collectionGroup": "financeBills",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "familyId", "order": "ASCENDING" },
-        { "fieldPath": "sharedWith", "arrayConfig": "CONTAINS" },
-        { "fieldPath": "archived", "order": "ASCENDING" }
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "sharedWith", "arrayConfig": "CONTAINS"},
+        {"fieldPath": "archived", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "calendarEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "private", "order": "ASCENDING"},
+        {"fieldPath": "visibility", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "privateCalendarEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "ownerUid", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "person", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "healthRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "privateToParents", "order": "ASCENDING"},
+        {"fieldPath": "person", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "medicalContacts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "person", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "schoolItems",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "person", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "schoolItems",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "person", "order": "ASCENDING"},
+        {"fieldPath": "schoolPlanId", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "members",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "role", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "healthDocuments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "state", "order": "ASCENDING"},
+        {"fieldPath": "readers", "arrayConfig": "CONTAINS"}
+      ]
+    },
+    {
+      "collectionGroup": "healthDocuments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "ownerProfileId", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "_taskPhotoUploads",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "state", "order": "ASCENDING"},
+        {"fieldPath": "orphanAfter", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "_taskRewardImageUploads",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "state", "order": "ASCENDING"},
+        {"fieldPath": "orphanAfter", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "_taskPhotoCleanup",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "state", "order": "ASCENDING"},
+        {"fieldPath": "nextAttemptAt", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "_taskRewardImageCleanup",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "familyId", "order": "ASCENDING"},
+        {"fieldPath": "state", "order": "ASCENDING"},
+        {"fieldPath": "nextAttemptAt", "order": "ASCENDING"}
       ]
     }
   ],

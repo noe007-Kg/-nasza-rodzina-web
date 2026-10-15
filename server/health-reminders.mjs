@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { activeHealthMember, healthExpiryDays } from './health-access.mjs';
 import { eventDocumentId, inboxEvent, wantsNotification } from './notification-events.mjs';
+import { explicitFamilyId } from './family-identity.mjs';
 
 /** Sensitive document reminders are delivered to the document ACL, never to all parents. */
 export async function runHealthDocumentReminders(context, now = new Date()) {
@@ -23,6 +24,7 @@ export async function runHealthDocumentReminders(context, now = new Date()) {
           context.db.collection('members').doc(uid), context.db.collection('userPreferences').doc(uid), inbox);
         const record = current.data();
         if (prior.exists || !activeHealthMember(member.data()) || record?.state !== 'ready'
+          || explicitFamilyId(record) === null || explicitFamilyId(member.data()) !== explicitFamilyId(record)
           || record.indefinite === true || record.expiresOn !== value.expiresOn || !record.readers?.includes(uid)
           || !wantsNotification(preferences.data()?.notifications, event)) return 0;
         transaction.create(inbox, inboxEvent(event, FieldValue.serverTimestamp()));

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canReadFinanceBill } from './finance-model.mjs';
+import { explicitFamilyId } from './family-identity.mjs';
 
 // Shared, dependency-free event semantics used by Vercel IN-APP backends.
 export const CATEGORIES = Object.freeze(['calendar', 'tasks', 'shopping', 'familyChat', 'privateChat', 'health', 'school', 'important']);
@@ -51,10 +52,12 @@ export function deriveNotificationEvent(collectionName, id, before, after) {
   return { id: `${config[0]}:${id}${before ? ':' + hash(semanticRecord(after)).slice(0, 24) : ''}`, category: config[0], module: config[1], title: config[2], body: 'Otwórz aplikację, aby zobaczyć szczegóły.', important: value.priority === 'high', collection: collectionName, recordId: id, record: value, excludeUid: clean(value.uid || value.updatedBy || value.createdBy) };
 }
 export function canReceiveNotification(member, event) {
-  if (!member || member.active !== true || member.canLogin !== true || member.archived === true || !['parent', 'adult', 'child'].includes(member.role)) return false;
+  if (!member || member.active !== true || member.canLogin !== true || member.archived === true || member.disabled === true || !['parent', 'adult', 'child'].includes(member.role)) return false;
   if (member.id === event.excludeUid) return false;
   const record = event.record || {};
   const ownPerson = member.personKey || member.name;
+  if (['calendarEvents', 'privateCalendarEvents', 'tasks', 'healthRecords', 'schoolItems', 'schoolParentMessages', 'schoolStudentMessages'].includes(event.collection)
+    && (explicitFamilyId(member) === null || explicitFamilyId(record) !== explicitFamilyId(member))) return false;
   if (event.collection === 'financeBills') return record.status === 'unpaid' && record.dueDate === event.record?.dueDate && canReadFinanceBill(member, record);
   if (event.collection === 'schoolParentMessages') return member.role === 'parent';
   if (event.collection === 'schoolStudentMessages') return member.role === 'child' && member.id === record.sourceOwnerUid && record.person === ownPerson;
@@ -64,6 +67,7 @@ export function canReceiveNotification(member, event) {
   if (event.collection === 'familyMessages') return record.channel === 'family' || Array.isArray(record.participants) && record.participants.includes(member.id);
   if (event.collection === 'privateCalendarEvents' || event.collection === 'calendarEvents' && record.private === true) return (record.ownerUid || record.createdBy) === member.id;
   if (event.collection === 'healthRecords') return member.role === 'parent' || record.privateToParents !== true && ['family', ownPerson].includes(record.person);
+  if (event.collection === 'tasks') return member.role === 'parent' || ['family', ownPerson].includes(record.person);
   return true;
 }
 export function inboxEvent(event, now) {

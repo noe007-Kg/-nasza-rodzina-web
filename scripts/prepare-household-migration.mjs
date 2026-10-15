@@ -11,6 +11,7 @@ import { getStorage } from 'firebase-admin/storage';
 import { buildHouseholdMigrationPlan, validateHouseholdConfig } from './lib/household-migration-plan.mjs';
 import { collectHouseholdInventory, sanitizeHouseholdSnapshot } from './lib/household-migration-inventory.mjs';
 import { householdStorageCheck } from './lib/household-storage-status.mjs';
+import { buildHouseholdIsolationPlan } from './lib/household-isolation-plan.mjs';
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 const fail = code => { throw Object.assign(new Error(code), { code }); };
@@ -18,7 +19,7 @@ export function parseHouseholdArguments(args) {
   const options = {};
   for (let i = 0; i < args.length; i++) {
     const argument = args[i];
-    if (['--help', '--dry-run', '--emulators'].includes(argument)) {
+    if (['--help', '--dry-run', '--emulators', '--prepare-isolation'].includes(argument)) {
       if (options[argument.slice(2)]) fail('DUPLICATE_ARGUMENT');
       options[argument.slice(2)] = true;
     } else if (['--config', '--output', '--snapshot', '--max-documents'].includes(argument)) {
@@ -97,7 +98,7 @@ function report(plan, inventory, checks) {
   const fileSources = Object.entries(plan.summary.fileSources).map(([kind, count]) => `- ${kind}: ${count}`).join('\n');
   // Paths/UIDs and candidate patches remain only in protected JSON, never in terminal output.
   return `# Przygotowanie gospodarstwa — dry-run\n\nStatus: ${plan.status}. Zapisów Firebase: 0. Tryb wykonania migracji: niedostępny.\n\nŹródło: ${inventory.source}. Propozycja familyId: ${plan.familyId}.\n\n` +
-    `Planowanych zmian wyłącznie pola familyId: ${plan.changes.length}. Blokad: ${plan.blockers.length}. Ostrzeżeń: ${plan.warnings.length}.\n\n` +
+    `${plan.migrationContract === 'household-isolation-v1' ? 'Planowanych zmian pól izolacji (familyId/widoczność/właściciel/ścieżka zdjęcia)' : 'Planowanych zmian wyłącznie pola familyId'}: ${plan.changes.length}. Blokad: ${plan.blockers.length}. Ostrzeżeń: ${plan.warnings.length}.\n\n` +
     `## Zakres odczytu\n\n${counts}\n- Zaobserwowane obiekty Storage (wyłącznie metadane): ${inventory.storage.length}\n\nStorage: ${storageMessage}\n\n` +
     `Zakres Storage: sześć znanych prefiksów aplikacji. Nie sprawdzono wszystkich bucketów projektu, lokalizacji UE ani plików poza tymi prefiksami.\n\n` +
     `## Źródła plików\n\n${fileSources}\n\nURL zewnętrznych nie pobierano. Linki sprowadzono do typu źródła oraz, dla Storage, nazwy bucketa i ścieżki; pełnych URL, parametrów i tokenów nie zapisano.\n\n` +
@@ -105,7 +106,7 @@ function report(plan, inventory, checks) {
     `Nie czytano treści medycznych, danych przelewów, sesji eduVULCAN ani tokenów OAuth. Tokenów z odwołań URL nie zapisano; nie odczytywano wartości tokenów z metadanych Storage. Nie zmieniono ACL, punktów, plików lub kalendarzy. ` +
     `Nie zweryfikowano aktywnych reguł chmurowych ani pobranych bajtów plików. Migrowanie jest osobnym etapem wymagającym zgody, kopii bezpieczeństwa, okna spójności i ponownego odczytu wersji.\n\n` +
     `## Lokalne kontrakty reguł\n\nSHA-256 firestore.rules: ${checks.firestore}\n\nSHA-256 storage.rules: ${checks.storage}\n\n` +
-    `## Pliki prywatne\n\nplan.private.json: dokładny manifest i blokady; rollback.private.json: warunki odtworzenia pola familyId; ` +
+    `## Pliki prywatne\n\nplan.private.json: dokładny manifest i blokady; rollback.private.json: warunki odtworzenia dokładnie wskazanych pól; ` +
     `inventory.private.json: ograniczona inwentaryzacja; checksums.private.json: integralność lokalnych plików. ` +
     `To NIE jest pełna kopia Firestore ani kopia binarnych dokumentów. Nie dodawać katalogu wyników do GitHub.\n`;
 }
@@ -124,7 +125,7 @@ export async function runHouseholdDryRun(options) {
         ...(!options.emulators ? { credential: applicationDefault() } : {}) }, `household-dry-run-${randomUUID()}`);
       inventory = await collectHouseholdInventory({ db: getFirestore(app), auth: getAuth(app), bucket: getStorage(app).bucket(config.bucket) }, config, { maximum: options.maximum });
     }
-    const plan = buildHouseholdMigrationPlan(config, inventory, { familyId: proposal.familyId, now: new Date() });
+    const plan = (options['prepare-isolation'] ? buildHouseholdIsolationPlan : buildHouseholdMigrationPlan)(config, inventory, { familyId: proposal.familyId, now: new Date() });
     const runDirectory = await secureDirectory(path.join(directory, `run-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`));
     const checks = { firestore: digest(await readFile(path.join(projectRoot, 'firestore.rules'))), storage: digest(await readFile(path.join(projectRoot, 'storage.rules'))) };
     const outputs = { 'plan.private.json': encode(plan), 'rollback.private.json': encode({ mode: 'instructions-only', canApply: false,
@@ -144,7 +145,7 @@ async function main() {
   try {
     const options = parseHouseholdArguments(process.argv.slice(2));
     if (options.help) {
-      console.log('node scripts/prepare-household-migration.mjs --config household.private.json --output PRIVATE_DIRECTORY [--dry-run] [--snapshot inventory.private.json | --emulators] [--max-documents 10000]');
+      console.log('node scripts/prepare-household-migration.mjs --config household.private.json --output PRIVATE_DIRECTORY [--dry-run] [--prepare-isolation] [--snapshot inventory.private.json | --emulators] [--max-documents 10000]');
       console.log('Tylko odczyt Firebase i plan lokalny. Brak --apply, --rollback, migracji, deploymentu lub włączania zapisów. Prywatne pliki: chmod 600; katalog wyników: chmod 700.');
       return;
     }

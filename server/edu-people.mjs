@@ -1,4 +1,5 @@
 import { EduServerError } from './edu-auth.mjs';
+import { explicitFamilyId } from './family-identity.mjs';
 
 const legacySchoolKeys = new Set(['Paweł', 'Nikodem', 'Layla']);
 const legacyEnabledKeys = new Set(['Paweł', 'Nikodem']);
@@ -18,13 +19,13 @@ export function schoolProfileEnabled(profile) {
   return Object.hasOwn(profile, 'schoolEnabled') ? profile.schoolEnabled === true : legacyEnabledKeys.has(schoolPersonKey(profile));
 }
 
-export async function schoolProfileRoster(db) {
-  const snapshot = await db.collection('members').where('role', '==', 'child').limit(SCHOOL_ROSTER_LIMIT + 1).get();
+export async function schoolProfileRoster(db, familyId) {
+  const snapshot = await db.collection('members').where('role', '==', 'child').where('familyId', '==', familyId).limit(SCHOOL_ROSTER_LIMIT + 1).get();
   if (snapshot.size > SCHOOL_ROSTER_LIMIT) throw new EduServerError('EDU_MEMBER_LIMIT', 409, 'Zbyt wiele profili do bezpiecznego odczytu.');
   const personProfileIds = Object.create(null);
   for (const document of snapshot.docs) {
     const profile = document.data();
-    if (!schoolProfileEnabled(profile)) continue;
+    if (!schoolProfileEnabled(profile) || explicitFamilyId(profile) !== familyId) continue;
     const key = schoolPersonKey(profile);
     if (!validMemberDocumentId(document.id) || !validSchoolPersonKey(key) || Object.hasOwn(personProfileIds, key)) {
       throw new EduServerError('EDU_STUDENT_LINK_REQUIRED', 403, 'Rodzic musi poprawić powiązanie szkolnego profilu.');
@@ -43,6 +44,7 @@ export async function assertCurrentSchoolTarget(transaction, services, scope, pe
   }
   const document = await transaction.get(services.db.collection('members').doc(id));
   if (!document.exists || !schoolProfileEnabled(document.data()) || schoolPersonKey(document.data()) !== personKey
+    || explicitFamilyId(services.profile) === null || explicitFamilyId(document.data()) !== explicitFamilyId(services.profile)
     || scope.scope === 'student' && (id !== scope.actorUid || !activeEduActor(document.data()))) {
     throw new EduServerError('EDU_STUDENT_LINK_REQUIRED', 403, 'Profil ucznia został zmieniony. Rodzic musi sprawdzić jego przypisanie.');
   }

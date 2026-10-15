@@ -12,15 +12,20 @@ let siblingDb;
 let adultDb;
 // Run sequentially after browser tests: Storage's cross-service lookup uses the CLI project.
 const projectId = 'demo-nasza-rodzina';
+// Existing households receive these reviewed fields before the stricter Rules
+// are deployed. Unscoped negative queries below intentionally remain unscoped.
+const familyId = 'security-household-test';
 const profiles = {
-  parent: { name: 'Sebastian', personKey: 'Sebastian', role: 'parent', active: true, canLogin: true },
-  child: { name: 'Paweł', personKey: 'Paweł', role: 'child', active: true, canLogin: true },
-  sibling: { name: 'Nikodem', personKey: 'Nikodem', role: 'child', active: true, canLogin: true },
-  disabled: { name: 'Dominika', personKey: 'Dominika', role: 'parent', active: false, canLogin: true },
-  adult: { name: 'Dorosły', personKey: 'member-222222222222222222222222', role: 'adult', active: true, canLogin: true },
-  passive: { name: 'Profil bez konta', personKey: 'member-abcdef0123456789abcdef01', role: 'child', active: true, canLogin: false },
-  archived: { name: 'Zarchiwizowany', personKey: 'member-111111111111111111111111', role: 'child', active: true, canLogin: true, archived: true },
+  parent: { name: 'Sebastian', personKey: 'Sebastian', role: 'parent', active: true, canLogin: true, familyId },
+  child: { name: 'Paweł', personKey: 'Paweł', role: 'child', active: true, canLogin: true, familyId },
+  sibling: { name: 'Nikodem', personKey: 'Nikodem', role: 'child', active: true, canLogin: true, familyId },
+  disabled: { name: 'Dominika', personKey: 'Dominika', role: 'parent', active: false, canLogin: true, familyId },
+  adult: { name: 'Dorosły', personKey: 'member-222222222222222222222222', role: 'adult', active: true, canLogin: true, familyId },
+  passive: { name: 'Profil bez konta', personKey: 'member-abcdef0123456789abcdef01', role: 'child', active: true, canLogin: false, familyId },
+  archived: { name: 'Zarchiwizowany', personKey: 'member-111111111111111111111111', role: 'child', active: true, canLogin: true, archived: true, familyId },
 };
+const scopedQuery = (db, name, ...constraints) => query(collection(db, name), where('familyId', '==', familyId),
+  ...(name === 'calendarEvents' ? [where('private', '==', false), where('visibility', '==', 'family')] : []), ...constraints);
 
 before(async () => {
   environment = await initializeTestEnvironment({
@@ -40,16 +45,16 @@ beforeEach(async () => {
     const db = context.firestore();
     await Promise.all(Object.entries(profiles).map(([uid, profile]) => setDoc(doc(db, 'members', uid), profile)));
     await Promise.all([
-      setDoc(doc(db, 'schoolItems', 'pawel'), { person: 'Paweł', type: 'grade', title: '5', createdBy: 'parent' }),
-      setDoc(doc(db, 'schoolItems', 'nikodem'), { person: 'Nikodem', type: 'lesson', title: 'Polski', createdBy: 'parent' }),
-      setDoc(doc(db, 'healthRecords', 'private'), { person: 'Paweł', title: 'Wynik prywatny', type: 'result', privateToParents: true, createdBy: 'parent' }),
-      setDoc(doc(db, 'healthRecords', 'own'), { person: 'Paweł', title: 'Lek', type: 'medicine', privateToParents: false, createdBy: 'parent' }),
-      setDoc(doc(db, 'healthRecords', 'sibling'), { person: 'Nikodem', title: 'Wizyta', type: 'visit', privateToParents: false, createdBy: 'parent' }),
-      setDoc(doc(db, 'healthRecords', 'family'), { person: 'family', title: 'Apteczka', type: 'history', privateToParents: false, createdBy: 'parent' }),
+      setDoc(doc(db, 'schoolItems', 'pawel'), { familyId, person: 'Paweł', type: 'grade', title: '5', createdBy: 'parent' }),
+      setDoc(doc(db, 'schoolItems', 'nikodem'), { familyId, person: 'Nikodem', type: 'lesson', title: 'Polski', createdBy: 'parent' }),
+      setDoc(doc(db, 'healthRecords', 'private'), { familyId, person: 'Paweł', title: 'Wynik prywatny', type: 'result', privateToParents: true, createdBy: 'parent' }),
+      setDoc(doc(db, 'healthRecords', 'own'), { familyId, person: 'Paweł', title: 'Lek', type: 'medicine', privateToParents: false, createdBy: 'parent' }),
+      setDoc(doc(db, 'healthRecords', 'sibling'), { familyId, person: 'Nikodem', title: 'Wizyta', type: 'visit', privateToParents: false, createdBy: 'parent' }),
+      setDoc(doc(db, 'healthRecords', 'family'), { familyId, person: 'family', title: 'Apteczka', type: 'history', privateToParents: false, createdBy: 'parent' }),
       setDoc(doc(db, 'familyMessages', 'family'), { channel: 'family', participants: [], uid: 'parent', text: 'Cześć', name: 'Sebastian', createdAt: Timestamp.now() }),
       setDoc(doc(db, 'familyMessages', 'private'), { channel: 'private:child:parent', participants: ['child', 'parent'], uid: 'child', text: 'Prywatne', name: 'Paweł', createdAt: Timestamp.now() }),
-      setDoc(doc(db, 'tasks', 'reward'), { person: 'Paweł', title: 'Pokój', done: false, points: 10, requireApproval: true, approvalStatus: 'none', createdBy: 'parent' }),
-      setDoc(doc(db, 'tasks', 'sibling'), { person: 'Nikodem', title: 'Zabawki', done: false, points: 2, requireApproval: true, approvalStatus: 'none', createdBy: 'parent' }),
+      setDoc(doc(db, 'tasks', 'reward'), { familyId, person: 'Paweł', title: 'Pokój', done: false, points: 10, requireApproval: true, approvalStatus: 'none', createdBy: 'parent' }),
+      setDoc(doc(db, 'tasks', 'sibling'), { familyId, person: 'Nikodem', title: 'Zabawki', done: false, points: 2, requireApproval: true, approvalStatus: 'none', createdBy: 'parent' }),
     ]);
   });
 });
@@ -71,14 +76,14 @@ test('child cannot grant their own account a parent role or rename it', async ()
 });
 
 test('school data is enforced by the backend and supports only the own-person child query', async () => {
-  await assertSucceeds(getDocs(query(collection(childDb, 'schoolItems'), where('person', '==', 'Paweł'))));
+  await assertSucceeds(getDocs(scopedQuery(childDb, 'schoolItems', where('person', '==', 'Paweł'))));
   await assertFails(getDocs(collection(childDb, 'schoolItems')));
   await assertFails(getDoc(doc(childDb, 'schoolItems', 'nikodem')));
-  await assertSucceeds(getDocs(collection(parentDb, 'schoolItems')));
+  await assertSucceeds(getDocs(scopedQuery(parentDb, 'schoolItems')));
 });
 
 test('child may manage homework, but cannot fabricate grades or school messages', async () => {
-  const homework = { person: 'Paweł', type: 'homework', title: 'Ćwiczenia', createdBy: 'child' };
+  const homework = { familyId, person: 'Paweł', type: 'homework', title: 'Ćwiczenia', createdBy: 'child' };
   await assertSucceeds(setDoc(doc(childDb, 'schoolItems', 'new'), homework));
   await assertFails(setDoc(doc(childDb, 'schoolItems', 'grade'), { ...homework, type: 'grade' }));
   await assertFails(setDoc(doc(childDb, 'schoolItems', 'message'), { ...homework, type: 'message' }));
@@ -87,11 +92,11 @@ test('child may manage homework, but cannot fabricate grades or school messages'
 });
 
 test('health query exposes only shared records for the own person or family', async () => {
-  await assertSucceeds(getDocs(query(collection(childDb, 'healthRecords'), where('privateToParents', '==', false), where('person', 'in', ['family', 'Paweł']))));
+  await assertSucceeds(getDocs(scopedQuery(childDb, 'healthRecords', where('privateToParents', '==', false), where('person', 'in', ['family', 'Paweł']))));
   await assertFails(getDocs(collection(childDb, 'healthRecords')));
   await assertFails(getDoc(doc(childDb, 'healthRecords', 'private')));
   await assertFails(getDoc(doc(childDb, 'healthRecords', 'sibling')));
-  await assertSucceeds(getDocs(collection(parentDb, 'healthRecords')));
+  await assertSucceeds(getDocs(scopedQuery(parentDb, 'healthRecords')));
 });
 
 test('a child confirms own medicine but cannot expose a private record', async () => {
@@ -126,7 +131,7 @@ test('task completion and approval require the server even for parents', async (
 });
 
 test('new health entries cannot contain publicly tokenized document URLs', async () => {
-  const record = { person: 'Paweł', title: 'Dokument', type: 'document', privateToParents: true, createdBy: 'parent', documentPath: 'health/parents/Paweł/parent/result.pdf', documentURL: '' };
+  const record = { familyId, person: 'Paweł', title: 'Dokument', type: 'document', privateToParents: true, createdBy: 'parent', documentPath: 'health/parents/Paweł/parent/result.pdf', documentURL: '' };
   await assertSucceeds(setDoc(doc(parentDb, 'healthRecords', 'new'), record));
   await assertFails(setDoc(doc(parentDb, 'healthRecords', 'public-url'), { ...record, documentURL: 'https://example.com/file?token=secret' }));
   await assertFails(setDoc(doc(parentDb, 'healthRecords', 'shared-path'), { ...record, documentPath: 'health/shared/Paweł/parent/result.pdf' }));
@@ -140,7 +145,7 @@ test('eduVULCAN session secrets are server-only, including for parents', async (
 });
 
 test('browser users cannot forge eduVULCAN provenance or change imported school entries', async () => {
-  const manual = { person: 'Paweł', type: 'lesson', title: 'Polski', createdBy: 'parent' };
+  const manual = { familyId, person: 'Paweł', type: 'lesson', title: 'Polski', createdBy: 'parent' };
   await assertSucceeds(setDoc(doc(parentDb, 'schoolItems', 'manual'), manual));
   await assertFails(setDoc(doc(parentDb, 'schoolItems', 'forged'), { ...manual, source: 'eduvulcan', sourceRecordId: 'provider-1' }));
   await assertFails(updateDoc(doc(parentDb, 'schoolItems', 'manual'), { provider: 'eduvulcan' }));
@@ -155,16 +160,16 @@ test('browser users cannot forge eduVULCAN provenance or change imported school 
 });
 
 test('synchronized parent messages are readable only by parents and cannot be forged by the browser', async () => {
-  const message = { person: 'Paweł', personKey: 'Paweł', type: 'message', title: 'Wiadomość wychowawcy', note: 'Tylko rodzice', source: 'eduvulcan' };
+  const message = { familyId, person: 'Paweł', personKey: 'Paweł', type: 'message', title: 'Wiadomość wychowawcy', note: 'Tylko rodzice', source: 'eduvulcan' };
   await environment.withSecurityRulesDisabled(async (context) => setDoc(doc(context.firestore(), 'schoolParentMessages', 'synced'), message));
-  await assertSucceeds(getDocs(collection(parentDb, 'schoolParentMessages')));
+  await assertSucceeds(getDocs(scopedQuery(parentDb, 'schoolParentMessages')));
   await assertFails(getDocs(collection(childDb, 'schoolParentMessages')));
   await assertFails(getDoc(doc(childDb, 'schoolParentMessages', 'synced')));
   await assertFails(setDoc(doc(parentDb, 'schoolParentMessages', 'forged'), message));
 });
 
 test('personal student messages are limited to their owner, with server-only identity bindings', async () => {
-  const message = { person: 'Paweł', type: 'message', title: 'Własna wiadomość ucznia', source: 'eduvulcan', sourceOwnerUid: 'child', sourceConnectionId: 'student_test' };
+  const message = { familyId, person: 'Paweł', type: 'message', title: 'Własna wiadomość ucznia', source: 'eduvulcan', sourceOwnerUid: 'child', sourceConnectionId: 'student_test' };
   await environment.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     await setDoc(doc(db, 'schoolStudentMessages', 'own'), message);
@@ -173,7 +178,7 @@ test('personal student messages are limited to their owner, with server-only ide
     await setDoc(doc(db, '_eduConnections', 'family'), { envelope: { ciphertext: 'encrypted' } });
   });
   await assertSucceeds(getDoc(doc(childDb, 'schoolStudentMessages', 'own')));
-  await assertSucceeds(getDocs(query(collection(childDb, 'schoolStudentMessages'), where('sourceOwnerUid', '==', 'child'), where('person', '==', 'Paweł'))));
+  await assertSucceeds(getDocs(scopedQuery(childDb, 'schoolStudentMessages', where('sourceOwnerUid', '==', 'child'), where('person', '==', 'Paweł'))));
   await assertFails(getDocs(collection(parentDb, 'schoolStudentMessages')));
   await assertFails(getDoc(doc(parentDb, 'schoolStudentMessages', 'own')));
   await assertFails(getDocs(collection(childDb, 'schoolStudentMessages')));
@@ -206,14 +211,19 @@ test('storage protects private health documents, own shared documents, file type
   await assertFails(uploadBytes(ref(childStorage, 'quick-products/parent/image.png'), file, { contentType: 'image/png' }));
 });
 
-const calendarEntry = (uid, extra = {}) => ({
+const calendarEntry = (uid, extra = {}) => {
+  const entry = {
   title: 'Prywatna konsultacja', person: 'family',
   date: Timestamp.fromDate(new Date('2026-10-05T10:00:00Z')),
   endDate: Timestamp.fromDate(new Date('2026-10-05T11:00:00Z')),
   allDay: false, description: 'Szczegóły dostępne tylko właścicielowi',
   repeat: 'none', repeatUntil: null, createdBy: uid, ownerUid: uid, private: true,
   ...extra,
-});
+  };
+  const ownerProfileId = entry.person === 'family' ? 'family'
+    : Object.entries(profiles).find(([, profile]) => profile.personKey === entry.person)?.[0] || uid;
+  return { familyId, ownerProfileId, visibility: entry.private ? 'private' : 'family', ...entry };
+};
 
 test('private calendar read, query, create, edit and delete belong to the exact owner UID', async () => {
   await environment.withSecurityRulesDisabled(async context => {
@@ -224,7 +234,7 @@ test('private calendar read, query, create, edit and delete belong to the exact 
   });
   const otherParent = environment.authenticatedContext('another-parent').firestore();
   for (const [db, uid] of [[parentDb, 'parent'], [childDb, 'child']]) {
-    await assertSucceeds(getDocs(query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', uid))));
+    await assertSucceeds(getDocs(scopedQuery(db, 'privateCalendarEvents', where('ownerUid', '==', uid))));
     await assertFails(getDocs(collection(db, 'privateCalendarEvents')));
     await assertSucceeds(setDoc(doc(db, 'privateCalendarEvents', `${uid}-new`), calendarEntry(uid, { person: uid === 'child' ? 'Paweł' : 'family' })));
     await assertSucceeds(updateDoc(doc(db, 'privateCalendarEvents', `${uid}-new`), { title: 'Zmieniona własna konsultacja' }));
@@ -247,7 +257,7 @@ test('private calendar read, query, create, edit and delete belong to the exact 
 test('private calendar data cannot be mislabeled as private in the public calendar collection', async () => {
   const event = calendarEntry('parent');
   await assertFails(setDoc(doc(parentDb, 'calendarEvents', 'private-leak'), event));
-  await assertSucceeds(setDoc(doc(parentDb, 'calendarEvents', 'public'), { ...event, private: false }));
+  await assertSucceeds(setDoc(doc(parentDb, 'calendarEvents', 'public'), { ...event, private: false, visibility: 'family' }));
   await assertFails(updateDoc(doc(parentDb, 'calendarEvents', 'public'), { private: true, description: 'Nie może udawać prywatności' }));
   await assertSucceeds(getDoc(doc(childDb, 'calendarEvents', 'public')));
 });
@@ -364,7 +374,7 @@ test('private Google imports keep exact-owner reads and deny client changes even
   for (const [db, uid, person] of [[parentDb, 'parent', 'family'], [childDb, 'child', 'Paweł']]) {
     const ref = doc(db, 'privateCalendarEvents', `${uid}-google`);
     await assertSucceeds(getDoc(ref));
-    const own = await assertSucceeds(getDocs(query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', uid))));
+    const own = await assertSucceeds(getDocs(scopedQuery(db, 'privateCalendarEvents', where('ownerUid', '==', uid))));
     assert.equal(own.size, 1);
     await assertFails(updateDoc(ref, { title: 'Własna próba edycji importu' }));
     await assertFails(updateDoc(ref, { private: false, visibilityOverride: 'family' }));
@@ -488,15 +498,15 @@ test('new dynamic member identities retain own-person health restrictions in Fir
   const key = 'member-0123456789abcdef01234567';
   const dynamicUid = 'dynamic-child';
   await environment.withSecurityRulesDisabled(async context => {
-    await setDoc(doc(context.firestore(), 'members', dynamicUid), { name: 'Nowy członek', personKey: key, role: 'child', active: true, canLogin: true });
-    await setDoc(doc(context.firestore(), 'healthRecords', 'dynamic-private'), { person: key, title: 'Prywatny wynik', type: 'result', privateToParents: true, createdBy: 'parent' });
+    await setDoc(doc(context.firestore(), 'members', dynamicUid), { familyId, name: 'Nowy członek', personKey: key, role: 'child', active: true, canLogin: true });
+    await setDoc(doc(context.firestore(), 'healthRecords', 'dynamic-private'), { familyId, person: key, title: 'Prywatny wynik', type: 'result', privateToParents: true, createdBy: 'parent' });
   });
   const dynamic = environment.authenticatedContext(dynamicUid);
   const db = dynamic.firestore();
-  const record = { person: key, title: 'Własny lek', type: 'medicine', privateToParents: false, createdBy: dynamicUid, documentURL: '' };
+  const record = { familyId, person: key, title: 'Własny lek', type: 'medicine', privateToParents: false, createdBy: dynamicUid, documentURL: '' };
   await assertSucceeds(setDoc(doc(db, 'healthRecords', 'dynamic-own'), record));
   await assertSucceeds(getDoc(doc(db, 'healthRecords', 'dynamic-own')));
-  await assertSucceeds(getDocs(query(collection(db, 'healthRecords'), where('privateToParents', '==', false), where('person', 'in', ['family', key]))));
+  await assertSucceeds(getDocs(scopedQuery(db, 'healthRecords', where('privateToParents', '==', false), where('person', 'in', ['family', key]))));
   await assertSucceeds(updateDoc(doc(db, 'healthRecords', 'dynamic-own'), { confirmedDate: '2026-10-02', updatedAt: Timestamp.now() }));
   await assertFails(getDoc(doc(db, 'healthRecords', 'dynamic-private')));
   await assertFails(getDoc(doc(db, 'healthRecords', 'own')));
@@ -521,17 +531,17 @@ test('both active parents can execute all four FamilyPage queries without seeing
     const db = context.firestore();
     await Promise.all([
       setDoc(doc(db, 'members', 'second-parent'), { ...profiles.parent, name: 'Dominika', personKey: 'Dominika' }),
-      setDoc(doc(db, 'calendarEvents', 'family-shared'), { ...calendarEntry('parent'), private: false }),
+      setDoc(doc(db, 'calendarEvents', 'family-shared'), calendarEntry('parent', { private: false })),
       setDoc(doc(db, 'privateCalendarEvents', 'parent-own'), calendarEntry('parent')),
       setDoc(doc(db, 'privateCalendarEvents', 'second-parent-own'), calendarEntry('second-parent')),
     ]);
   });
   for (const uid of ['parent', 'second-parent']) {
     const db = environment.authenticatedContext(uid).firestore();
-    const shared = await assertSucceeds(getDocs(collection(db, 'calendarEvents')));
-    const own = await assertSucceeds(getDocs(query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', uid))));
-    const tasks = await assertSucceeds(getDocs(collection(db, 'tasks')));
-    const school = await assertSucceeds(getDocs(collection(db, 'schoolItems')));
+    const shared = await assertSucceeds(getDocs(scopedQuery(db, 'calendarEvents')));
+    const own = await assertSucceeds(getDocs(scopedQuery(db, 'privateCalendarEvents', where('ownerUid', '==', uid))));
+    const tasks = await assertSucceeds(getDocs(scopedQuery(db, 'tasks')));
+    const school = await assertSucceeds(getDocs(scopedQuery(db, 'schoolItems')));
     assert.equal(shared.size, 1);
     assert.deepEqual(own.docs.map(item => item.id), [`${uid}-own`]);
     assert.equal(tasks.size, 2);
@@ -568,12 +578,12 @@ test('invalid explicit child personKey cannot gain school access through a valid
 test('legacy child without personKey retains own-name school access, while a missing identity cannot use family fallback', async () => {
   await environment.withSecurityRulesDisabled(async context => {
     const db = context.firestore();
-    await setDoc(doc(db, 'members', 'legacy-child'), { name: 'Nikodem', role: 'child', active: true, canLogin: true });
-    await setDoc(doc(db, 'members', 'unlinked-child'), { role: 'child', active: true, canLogin: true });
+    await setDoc(doc(db, 'members', 'legacy-child'), { familyId, name: 'Nikodem', role: 'child', active: true, canLogin: true });
+    await setDoc(doc(db, 'members', 'unlinked-child'), { familyId, role: 'child', active: true, canLogin: true });
   });
   const legacy = environment.authenticatedContext('legacy-child').firestore();
   const unlinked = environment.authenticatedContext('unlinked-child').firestore();
-  const rows = await assertSucceeds(getDocs(query(collection(legacy, 'schoolItems'), where('person', '==', 'Nikodem'))));
+  const rows = await assertSucceeds(getDocs(scopedQuery(legacy, 'schoolItems', where('person', '==', 'Nikodem'))));
   assert.deepEqual(rows.docs.map(item => item.id), ['nikodem']);
   await assertFails(getDocs(query(collection(legacy, 'schoolItems'), where('person', '==', 'Paweł'))));
   await assertFails(getDocs(query(collection(unlinked, 'schoolItems'), where('person', '==', 'family'))));
@@ -581,12 +591,12 @@ test('legacy child without personKey retains own-name school access, while a mis
 });
 
 test('adult membership permits general family data and own private data without parent authority', async () => {
-  await assertSucceeds(getDocs(collection(adultDb, 'members')));
-  await assertSucceeds(getDocs(collection(adultDb, 'calendarEvents')));
-  await assertSucceeds(getDocs(collection(adultDb, 'tasks')));
+  await assertSucceeds(getDocs(scopedQuery(adultDb, 'members')));
+  await assertSucceeds(getDocs(scopedQuery(adultDb, 'calendarEvents')));
+  await assertSucceeds(getDocs(scopedQuery(adultDb, 'tasks', where('person', 'in', ['family', profiles.adult.personKey]))));
   await assertSucceeds(getDocs(collection(adultDb, 'shoppingItems')));
   await assertSucceeds(getDocs(query(collection(adultDb, 'familyMessages'), where('channel', '==', 'family'))));
-  await assertSucceeds(getDocs(query(collection(adultDb, 'healthRecords'), where('privateToParents', '==', false), where('person', 'in', ['family', profiles.adult.personKey]))));
+  await assertSucceeds(getDocs(scopedQuery(adultDb, 'healthRecords', where('privateToParents', '==', false), where('person', 'in', ['family', profiles.adult.personKey]))));
   await assertFails(getDocs(collection(adultDb, 'healthRecords')));
   await assertFails(getDoc(doc(adultDb, 'healthRecords', 'private')));
   await assertFails(getDocs(collection(adultDb, 'schoolParentMessages')));
@@ -594,7 +604,7 @@ test('adult membership permits general family data and own private data without 
   await assertFails(updateDoc(doc(adultDb, 'members', 'adult'), { role: 'parent' }));
   await assertFails(deleteDoc(doc(adultDb, 'tasks', 'reward')));
   await assertFails(setDoc(doc(adultDb, 'medicalContacts', 'forged'), { person: 'family', createdBy: 'adult', name: 'Kontakt' }));
-  const ownEvent = { ...calendarEntry('adult'), person: profiles.adult.personKey };
+  const ownEvent = calendarEntry('adult', { person: profiles.adult.personKey });
   await assertSucceeds(setDoc(doc(adultDb, 'privateCalendarEvents', 'adult-own'), ownEvent));
   await assertSucceeds(getDoc(doc(adultDb, 'privateCalendarEvents', 'adult-own')));
   await assertFails(getDoc(doc(parentDb, 'privateCalendarEvents', 'adult-own')));
@@ -604,7 +614,7 @@ test('adult membership permits general family data and own private data without 
 
 test('aggregate family metadata is readable by members but only the Admin backend can write it', async () => {
   await environment.withSecurityRulesDisabled(async context => {
-    await setDoc(doc(context.firestore(), 'familySettings', 'profile'), { name: 'Cała rodzina', emoji: '👨‍👩‍👧‍👦', avatarSource: 'default' });
+    await setDoc(doc(context.firestore(), 'familySettings', 'profile'), { familyId, name: 'Cała rodzina', emoji: '👨‍👩‍👧‍👦', avatarSource: 'default' });
   });
   for (const db of [parentDb, adultDb, childDb]) {
     const target = doc(db, 'familySettings', 'profile');
@@ -702,7 +712,7 @@ test('parents may upload avatars for children and profiles without login but not
 test('parent editing of an adult or parent avatar requires an explicit canLogin false', async () => {
   for (const role of ['adult', 'parent']) {
     const uid = `missing-login-${role}`;
-    const profile = { name: `Profil ${role}`, role, active: true, canLogin: false };
+    const profile = { familyId, name: `Profil ${role}`, role, active: true, canLogin: false };
     await environment.withSecurityRulesDisabled(async context => {
       await setDoc(doc(context.firestore(), 'members', uid), profile);
     });

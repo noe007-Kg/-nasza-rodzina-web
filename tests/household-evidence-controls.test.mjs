@@ -54,7 +54,7 @@ function goodEvidence() {
     consistency: { firestore: { stable: true }, storage: { stable: true }, auth: { stable: true } },
     locations: { firestore: { verified: true, europeanUnion: true }, storage: { verified: true, europeanUnion: true } },
     isolation: { fullMultiHouseholdVerified: true }, household: { ownerReviewed: true, boundPlanDigest: hash }, externalFiles: [],
-    tokens: { scanVerified: true, privateTokenCount: 0 },
+    tokens: { scanVerified: true, privateTokenCount: 0, productTokenCount: 0 },
     recovery: { authRecoveryVerified: true, providerKeysRetainedVerified: true },
     custody: { secondCopyVerified: true, secondCopyArchiveDigest: hash, keyStoredSeparately: true } };
 }
@@ -108,7 +108,7 @@ test('private artifacts reject symlinks/world-readable keys and stay outside the
   await assert.rejects(securePrivateDirectory(process.cwd()), { code: 'OUTPUT_MUST_BE_OUTSIDE_REPOSITORY' });
 });
 test('plan binding preserves nanoseconds and distinguishes absent familyId from null or a different value', () => {
-  const plan = { projectId: 'demo-source-data', changes: [{ path: 'members/a', before: { present: false },
+  const plan = { projectId: 'demo-source-data', changes: [{ path: 'members/a', field: 'familyId', before: { present: false },
     updateTime: { seconds: String(Date.parse('2026-10-14T08:00:00Z') / 1000), nanoseconds: 123456789 } }] };
   const row = { name: 'projects/demo-source-data/databases/(default)/documents/members/a', fields: {}, updateTime: '2026-10-14T08:00:00.123456789Z' };
   assert.equal(planMatchesBackup(plan, [row]), true);

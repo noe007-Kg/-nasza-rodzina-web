@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useFamilyDirectory } from './family-directory';
 import { legacyFamilyProfiles, memberPersonKey, memberSchoolEnabled } from './family-members';
 import { schoolReadAccess } from './school/read-access';
+import { householdFamilyId } from './household-scope';
 import { createRoot } from 'react-dom/client';
 import {
   onAuthStateChanged,
@@ -80,6 +81,8 @@ export type TaskPriority = 'low' | 'normal' | 'high';
 
 export type CalendarEventData = {
   id: string;
+  familyId?: string;
+  visibility?: 'private' | 'family';
   title: string;
   person: PersonKey;
   date: Date;
@@ -209,10 +212,12 @@ export type ShoppingItem = {
 
 export type QuickProduct = {
   id: string;
+  storageId?: string;
   title: string;
   category: ShoppingCategory;
   icon?: string;
   imageURL?: string;
+  imagePath?: string;
   adultOnly?: boolean;
   defaultQuantity: string;
   defaultUnit: string;
@@ -321,8 +326,9 @@ export function ownPerson(member: Member | null | undefined) {
 
 export function schoolQuery(member: Member | null) {
   const access = schoolReadAccess(member);
-  if (!access) return null;
-  return access.scope === 'parent' ? collection(db, 'schoolItems') : query(collection(db, 'schoolItems'), where('person', '==', access.person));
+  const familyId = householdFamilyId(member);
+  if (!access || !familyId) return null;
+  return access.scope === 'parent' ? query(collection(db, 'schoolItems'), where('familyId', '==', familyId)) : query(collection(db, 'schoolItems'), where('familyId', '==', familyId), where('person', '==', access.person));
 }
 
 function normalizeProduct(value: string) {

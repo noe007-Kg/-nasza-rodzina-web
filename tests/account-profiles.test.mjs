@@ -4,9 +4,9 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { assertProfileEditAllowed, manageProfileAction, validProfileAvatarPath } from '../server/account-profiles.mjs';
 
 const key = suffix => `member-${suffix.repeat(24)}`;
-const parent = { name: 'Sebastian', personKey: 'Sebastian', role: 'parent', active: true, canLogin: true };
-const child = { name: 'Nikodem', personKey: 'Nikodem', role: 'child', active: true, canLogin: true };
-const adult = { name: 'Babcia', personKey: key('a'), role: 'adult', active: true, canLogin: true };
+const parent = { name: 'Sebastian', personKey: 'Sebastian', role: 'parent', active: true, canLogin: true, familyId: 'fixture-family' };
+const child = { name: 'Nikodem', personKey: 'Nikodem', role: 'child', active: true, canLogin: true, familyId: 'fixture-family' };
+const adult = { name: 'Babcia', personKey: key('a'), role: 'adult', active: true, canLogin: true, familyId: 'fixture-family' };
 const uuid = 'fbaa5624-4dfb-4c49-a380-0d34b432d425';
 const memberPath = (target = 'child', uploader = 'actor', ext = 'jpg') => `avatars/members/${target}/${uploader}/${uuid}.${ext}`;
 const familyPath = (uploader = 'actor') => `avatars/family/${uploader}/${uuid}.png`;
@@ -14,7 +14,7 @@ const familyPath = (uploader = 'actor') => `avatars/family/${uploader}/${uuid}.p
 function services(initial = { actor: parent, child, adult }) {
   const rows = new Map(Object.entries(initial).map(([id, profile]) => [`members/${id}`, { ...profile }]));
   const calls = [];
-  const ref = path => ({ path });
+  const ref = path => ({ path, get: async () => snapshot(path) });
   const snapshot = path => ({ exists: rows.has(path), data: () => rows.get(path) && { ...rows.get(path) } });
   const apply = (path, changes, merge) => {
     const next = merge ? { ...rows.get(path) } : {};
@@ -38,7 +38,17 @@ function services(initial = { actor: parent, child, adult }) {
       return result;
     },
   };
-  return { uid: 'actor', profile: initial.actor, db, rows, calls };
+  const fileMetadata = new Map();
+  const bucket = { file: (path, _options) => {
+    const bytes = path.endsWith('.jpg') ? Buffer.from([255, 216, 255]) : Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    if (!fileMetadata.has(path)) fileMetadata.set(path, { name:path, size:String(bytes.length),
+      contentType:path.endsWith('.jpg') ? 'image/jpeg' : 'image/png', generation:'1',metageneration:'1',
+      metadata:{firebaseStorageDownloadTokens:'SYNTHETIC_ONLY'} });
+    const metadata=fileMetadata.get(path);
+    return { getMetadata:async()=>[metadata], download:async()=>[bytes],
+      setMetadata:async data=>{assert.equal(data.metadata.firebaseStorageDownloadTokens,null);Object.assign(metadata,data);} };
+  } };
+  return { uid: 'actor', profile: initial.actor, db, rows, calls, bucket };
 }
 
 test('profile edits authorize self and parent child/offline, never another active parent or adult', () => {
@@ -161,13 +171,13 @@ test('setting and resetting avatars stores only a protected path and never chang
 test('family presentation has a dedicated metadata document and cannot become an account', async () => {
   const context = services();
   await manageProfileAction(context, { action: 'family', emoji: '👨‍👩‍👧‍👦', avatarAction: 'set', avatarPath: familyPath() });
-  assert.equal(context.rows.get('familySettings/profile').avatarPath, familyPath());
-  assert.equal(context.rows.get('familySettings/profile').avatarSource, 'custom');
+  assert.equal(context.rows.get('familySettings/fixture-family').avatarPath, familyPath());
+  assert.equal(context.rows.get('familySettings/fixture-family').avatarSource, 'custom');
   assert.equal(context.rows.has('members/family'), false);
   await manageProfileAction(context, { action: 'family', avatarAction: 'reset' });
-  assert.equal(context.rows.get('familySettings/profile').avatarSource, 'default');
-  assert.equal(context.rows.get('familySettings/profile').emoji, '👨‍👩‍👧‍👦');
-  assert.equal(Object.hasOwn(context.rows.get('familySettings/profile'), 'avatarPath'), false);
+  assert.equal(context.rows.get('familySettings/fixture-family').avatarSource, 'default');
+  assert.equal(context.rows.get('familySettings/fixture-family').emoji, '👨‍👩‍👧‍👦');
+  assert.equal(Object.hasOwn(context.rows.get('familySettings/fixture-family'), 'avatarPath'), false);
   for (const actor of [adult, child, { ...parent, canLogin: false }]) {
     const denied = services({ actor });
     await assert.rejects(manageProfileAction(denied, { action: 'family', emoji: '👪' }), { code: 'ACCOUNT_PARENT_REQUIRED' });

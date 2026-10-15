@@ -1,9 +1,11 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { EduServerError } from './edu-auth.mjs';
+import { explicitFamilyId } from './family-identity.mjs';
+import { sanitizePresentationImage } from './presentation-images.mjs';
 
 const legacyPeople = new Set(['Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla']);
 const activeMember = profile => profile?.active === true && profile?.canLogin === true
-  && profile.archived !== true && ['parent', 'adult', 'child'].includes(profile.role);
+  && profile.archived !== true && profile.disabled !== true && ['parent', 'adult', 'child'].includes(profile.role);
 const failure = (code, status, message) => { throw new EduServerError(code, status, message); };
 const validUid = value => typeof value === 'string' && value.length > 0 && value.length <= 128 && !/[\x00-\x1f/\\]/.test(value);
 const validPerson = value => typeof value === 'string' && (legacyPeople.has(value) || /^member-[a-f0-9]{24}$/.test(value));
@@ -62,6 +64,9 @@ export function validateProfileUpdate(body, uid) {
 export function assertProfileEditAllowed(actorUid, actor, targetUid, target) {
   if (!activeMember(actor)) failure('ACCOUNT_MEMBER_REQUIRED', 403, 'Konto nie ma aktywnego dostępu do Naszej Rodziny.');
   if (!target) failure('ACCOUNT_MEMBER_NOT_FOUND', 404, 'Nie znaleziono profilu.');
+  if (explicitFamilyId(actor) === null || explicitFamilyId(actor) !== explicitFamilyId(target)) {
+    failure('ACCOUNT_FAMILY_FORBIDDEN', 403, 'Możesz edytować wyłącznie profile swojego gospodarstwa.');
+  }
   if (target.active !== true || target.archived === true) failure('ACCOUNT_PROFILE_ARCHIVED', 409, 'Przywróć profil przed jego edycją.');
   if (actorUid === targetUid) return;
   if (actor.role === 'parent' && (target.role === 'child' || target.canLogin === false)) return;
@@ -71,14 +76,39 @@ export function assertProfileEditAllowed(actorUid, actor, targetUid, target) {
 /** Profile presentation only. Role, UID, login and school bindings are never client-editable here. */
 export async function manageProfileAction(context, body) {
   const definition = validateProfileUpdate(body, context.uid);
+  if (typeof definition.changes.avatarPath === 'string') {
+    // Check the real target before reading even a known Storage path. The
+    // transaction below rechecks access after generation-pinned sanitation.
+    await context.db.runTransaction(async transaction => {
+      const actor = (await transaction.get(context.db.collection('members').doc(context.uid))).data();
+      if (definition.family) {
+        if (!activeMember(actor) || actor.role !== 'parent') failure('ACCOUNT_PARENT_REQUIRED', 403, 'Profil całej rodziny edytuje aktywny rodzic.');
+        if (explicitFamilyId(actor) === null) failure('ACCOUNT_FAMILY_FORBIDDEN', 403, 'Przypisanie gospodarstwa wymaga weryfikacji przez administratora.');
+      } else {
+        const target = (await transaction.get(context.db.collection('members').doc(definition.targetUid))).data();
+        assertProfileEditAllowed(context.uid, actor, definition.targetUid, target);
+      }
+    });
+    await sanitizePresentationImage(context, definition.changes.avatarPath);
+  }
   if (definition.family) {
     await context.db.runTransaction(async transaction => {
       const actor = (await transaction.get(context.db.collection('members').doc(context.uid))).data();
       if (!activeMember(actor) || actor.role !== 'parent') {
         failure('ACCOUNT_PARENT_REQUIRED', 403, 'Profil całej rodziny edytuje aktywny rodzic.');
       }
-      transaction.set(context.db.collection('familySettings').doc('profile'), {
-        ...definition.changes, updatedBy: context.uid, updatedAt: FieldValue.serverTimestamp(),
+      const familyId = explicitFamilyId(actor);
+      if (familyId === null) failure('ACCOUNT_FAMILY_FORBIDDEN', 403, 'Przypisanie gospodarstwa wymaga weryfikacji przez administratora.');
+      const legacyRef = context.db.collection('familySettings').doc('profile');
+      const legacy = await transaction.get(legacyRef);
+      const keyedRef = context.db.collection('familySettings').doc(familyId);
+      const keyed = await transaction.get(keyedRef);
+      if (keyed.exists && explicitFamilyId(keyed.data()) !== familyId) failure('ACCOUNT_FAMILY_FORBIDDEN', 403, 'Profil gospodarstwa wymaga weryfikacji przez administratora.');
+      // Keep the migrated family's existing avatar document without making it
+      // a global singleton shared by every later household.
+      const reference = keyed.exists ? keyedRef : explicitFamilyId(legacy.data()) === familyId ? legacyRef : keyedRef;
+      transaction.set(reference, {
+        ...definition.changes, familyId, updatedBy: context.uid, updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
     });
     return { family: true };
@@ -100,6 +130,7 @@ export async function manageProfileAction(context, body) {
       if (!Object.hasOwn(target, 'personKey')) changes.personKey = previousIdentity;
       const normalizedName = changes.name.toLocaleLowerCase('pl-PL');
       const duplicate = [...profiles].some(([id, profile]) => id !== definition.targetUid
+        && explicitFamilyId(profile) === explicitFamilyId(target)
         && (String(profile.name || '').normalize('NFC').toLocaleLowerCase('pl-PL') === normalizedName
           || legacyPeople.has(changes.name) && profile.personKey === changes.name));
       if (duplicate) failure('ACCOUNT_DUPLICATE_MEMBER', 409, 'Ta osoba ma już profil. Wybierz inne imię profilu.');

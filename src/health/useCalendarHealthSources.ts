@@ -6,6 +6,7 @@ import { useFamilyDirectory } from '../family-directory';
 import { memberPersonKey } from '../family-members';
 import { validDocumentDate } from './document-model';
 import { useProtectedHealthDocuments } from './useProtectedHealthDocuments';
+import { householdFamilyId } from '../household-scope';
 
 /** A document expiry is always personal to this authorized viewer; it never enters family projections. */
 export function useCalendarHealthSources({ uid, member }: { uid: string; member: Member | null }) {
@@ -15,13 +16,15 @@ export function useCalendarHealthSources({ uid, member }: { uid: string; member:
   const [error, setError] = useState('');
   const parent = isParent(member);
   const own = ownPerson(member);
-  const scope = JSON.stringify([uid, parent, own]);
+  const familyId = householdFamilyId(member);
+  const scope = JSON.stringify([uid, parent, own, familyId]);
   const protectedDocuments = useProtectedHealthDocuments(uid);
   useEffect(() => {
     let active = true;
     setVisits({ scope, rows: [] });
-    const source = parent ? query(collection(db, 'healthRecords'), where('type', '==', 'visit'))
-      : query(collection(db, 'healthRecords'), where('privateToParents', '==', false), where('person', 'in', ['family', own]));
+    if (!familyId) { setError('Profil gospodarstwa wymaga bezpiecznego przypisania.'); return; }
+    const source = parent ? query(collection(db, 'healthRecords'), where('familyId', '==', familyId), where('type', '==', 'visit'))
+      : query(collection(db, 'healthRecords'), where('familyId', '==', familyId), where('privateToParents', '==', false), where('person', 'in', ['family', own]));
     const unsubscribe = onSnapshot(source, snapshot => {
       if (!active) return;
       const projected: CalendarEventData[] = [];
@@ -35,7 +38,7 @@ export function useCalendarHealthSources({ uid, member }: { uid: string; member:
         if (privateVisit && !parent) continue;
         const start = parseLocalDate(record.date, typeof record.time === 'string' && /^\d{2}:\d{2}$/.test(record.time) ? record.time : '12:00');
         if (!Number.isFinite(start.getTime())) continue;
-        projected.push({ id: `health-visit:${document.id}`, title: String(record.title || 'Wizyta lekarska'), person: String(record.person || 'family'),
+        projected.push({ id: `health-visit:${document.id}`, familyId, title: String(record.title || 'Wizyta lekarska'), person: String(record.person || 'family'),
           date: start, endDate: new Date(start.getTime() + 3600000), allDay: false, description: '', location: String(record.location || ''),
           createdBy: String(record.createdBy || ''), repeat: 'none', repeatUntil: null, source: 'health', sourceRecordId: document.id,
           readOnly: true, important: true, private: privateVisit, ...(privateVisit ? { ownerUid: uid } : {}),

@@ -5,6 +5,7 @@ import { isSchoolType, type Member } from './app-shared';
 import type { CalendarSchoolRecord } from './calendar-source-projections';
 import { schoolReadAccess, schoolReadAccessKey } from './school/read-access';
 import { parseOkruszekDay } from './school/okruszek-plan';
+import { householdFamilyId } from './household-scope';
 
 export type CalendarSchoolDisplayRecord = CalendarSchoolRecord & {
   createdAt?: Date;
@@ -16,16 +17,17 @@ type ScopedSchoolRecords = { scope: string; rows: CalendarSchoolDisplayRecord[];
 /** One existing schoolItems listener. Parent mailboxes and personal messages are never queried. */
 export function useCalendarSchoolSources(uid: string, member: Member | null) {
   const access = member?.archived === true ? null : schoolReadAccess(member);
-  const scope = schoolReadAccessKey(uid, access);
+  const familyId = householdFamilyId(member);
+  const scope = `${schoolReadAccessKey(uid, access)}:${familyId || 'unbound'}`;
   const currentScope = useRef(scope);
   currentScope.current = scope;
   const [state, setState] = useState<ScopedSchoolRecords>({ scope, rows: [], error: false });
   useEffect(() => {
     setState({ scope, rows: [], error: false });
-    if (!access) return;
+    if (!access || !familyId) return;
     let active = true;
-    const target = access.scope === 'parent' ? collection(db, 'schoolItems')
-      : query(collection(db, 'schoolItems'), where('person', '==', access.person));
+    const target = access.scope === 'parent' ? query(collection(db, 'schoolItems'), where('familyId', '==', familyId))
+      : query(collection(db, 'schoolItems'), where('familyId', '==', familyId), where('person', '==', access.person));
     const stop = onSnapshot(target, snapshot => {
       if (!active || currentScope.current !== scope) return;
       const rows = snapshot.docs.flatMap<CalendarSchoolDisplayRecord>(document => {

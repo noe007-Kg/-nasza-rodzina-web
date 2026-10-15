@@ -6,6 +6,7 @@ import { decryptSession, encryptSession } from './edu-secrets.mjs';
 import { persistSchoolNotificationChanges, schoolNotificationBaselineRef } from './school-notifications.mjs';
 import { schoolSyncSlotStart, schoolSyncSlotConsumed } from './edu-school-slots.mjs';
 import { activeEduActor, assertCurrentSchoolTarget, schoolPersonKey, schoolProfileEnabled, validMemberDocumentId, validSchoolPersonKey } from './edu-people.mjs';
+import { explicitFamilyId } from './family-identity.mjs';
 
 const CONNECTIONS = '_eduConnections';
 const ITEM_TYPES = new Set(['lesson', 'homework', 'test', 'grade', 'message', 'activity']);
@@ -30,7 +31,7 @@ function scopeContext(connectionId, services) {
   if (!supplied || supplied.id !== connectionId || !['family', 'student'].includes(supplied.scope)
     || supplied.accountRole !== (supplied.scope === 'family' ? 'parent' : 'student')
     || !validMemberDocumentId(supplied.actorUid) || supplied.actorUid !== services.uid
-    || !activeEduActor(services.profile) || services.profile.role !== (supplied.scope === 'family' ? 'parent' : 'child')
+    || !activeEduActor(services.profile) || !explicitFamilyId(services.profile) || services.profile.role !== (supplied.scope === 'family' ? 'parent' : 'child')
     || !Array.isArray(supplied.allowedPersonKeys) || new Set(supplied.allowedPersonKeys).size !== supplied.allowedPersonKeys.length
     || supplied.allowedPersonKeys.some((person) => !validSchoolPersonKey(person) || !Object.hasOwn(supplied.personProfileIds || {}, person)
       || !validMemberDocumentId(supplied.personProfileIds[person]))) {
@@ -57,25 +58,44 @@ function scopedStudents(students, scope) {
   return allowed;
 }
 
-function assertStoredScope(data, scope) {
+async function assertStoredScope(data, scope, services, transaction) {
   if (data.scope !== scope.scope || data.accountRole !== scope.accountRole
     || (scope.scope === 'student' && data.connectedByUid !== scope.actorUid)) {
     throw new EduServerError('EDU_CONNECTION_FORBIDDEN', 403, 'Połączenie należy do innego konta lub zakresu danych.');
+  }
+  const read = ref => transaction ? transaction.get(ref) : ref.get();
+  const actor = await read(services.db.collection('members').doc(scope.actorUid));
+  const owner = validMemberDocumentId(data.connectedByUid)
+    ? await read(services.db.collection('members').doc(data.connectedByUid)) : null;
+  const familyId = explicitFamilyId(actor.data());
+  if (!actor.exists || !activeEduActor(actor.data()) || actor.data().role !== (scope.scope === 'family' ? 'parent' : 'child')
+    || !familyId || familyId !== explicitFamilyId(services.profile)
+    || !owner?.exists || explicitFamilyId(owner.data()) !== familyId) {
+    throw new EduServerError('EDU_CONNECTION_FORBIDDEN', 403, 'Połączenie nie należy do aktywnego gospodarstwa.');
   }
 }
 
 async function assertStudentBinding(transaction, services, scope) {
   const actor = await transaction.get(services.db.collection('members').doc(scope.actorUid));
-  if (!actor.exists || !activeEduActor(actor.data()) || actor.data().role !== (scope.scope === 'family' ? 'parent' : 'child')) {
+  if (!actor.exists || !activeEduActor(actor.data()) || !explicitFamilyId(actor.data())
+    || explicitFamilyId(actor.data()) !== explicitFamilyId(services.profile) || actor.data().role !== (scope.scope === 'family' ? 'parent' : 'child')) {
     throw new EduServerError('EDU_MEMBER_REQUIRED', 403, 'Konto Naszej Rodziny nie ma aktywnego dostępu.');
   }
-  if (scope.scope !== 'student') return;
+  if (scope.scope !== 'student') return actor.data();
   await assertCurrentSchoolTarget(transaction, services, scope, scope.allowedPersonKeys[0]);
   const binding = await transaction.get(services.db.collection('_eduStudentBindings').doc(scope.allowedPersonKeys[0]));
   if (!binding.exists || !sameStudentIdentity(binding.data().identity, scope.allowedStudentIdentity)
     || !sameStudentIdentity(scope.allowedStudentIdentity, binding.data().identity)) {
     throw new EduServerError('EDU_STUDENT_ACCESS_REQUIRED', 403, 'Przypisanie ucznia zostało zmienione. Sprawdź ponownie połączenie.');
   }
+  const approverUid = binding.data().establishedByUid;
+  const approver = typeof approverUid === 'string' && approverUid && !approverUid.includes('/')
+    ? await transaction.get(services.db.collection('members').doc(approverUid)) : null;
+  if (!approver?.exists || approver.data().role !== 'parent' || explicitFamilyId(actor.data()) === null
+    || explicitFamilyId(approver.data()) !== explicitFamilyId(actor.data())) {
+    throw new EduServerError('EDU_STUDENT_ACCESS_REQUIRED', 403, 'Przypisanie ucznia nie należy do tego gospodarstwa.');
+  }
+  return actor.data();
 }
 
 function connectionRef(uid, services) {
@@ -135,7 +155,7 @@ export async function markConnectionNeedsReconnect(uid, { sessionVersion, leaseI
     const current = await transaction.get(ref);
     const data = current.exists ? current.data() : null;
     if (!data || data.sessionVersion !== sessionVersion) return false;
-    assertStoredScope(data, scope);
+    await assertStoredScope(data, scope, services, transaction);
     const expired = !Number.isFinite(timestampMillis(data.expiresAt)) || timestampMillis(data.expiresAt) <= Date.now();
     const ownsLease = leaseId && data.lease?.id === leaseId && timestampMillis(data.lease?.expiresAt) > Date.now();
     // A misconfigured Functions key must not erase a valid Vercel session.
@@ -225,7 +245,7 @@ export async function saveConnection(uid, { session, students, profiles, selecte
       }
     }
     const previous = snapshot.exists ? snapshot.data() : {};
-    if (snapshot.exists) assertStoredScope(previous, scope);
+    if (snapshot.exists) await assertStoredScope(previous, scope, services, transaction);
     const requestedSelection = selectedStudent === undefined ? previous.selectedStudent : selectedStudent;
     let selection = null;
     if (requestedSelection) {
@@ -256,7 +276,7 @@ export async function loadConnection(uid, services = getServerFirebase()) {
   if (!snapshot.exists) throw new EduServerError('EDU_NOT_CONNECTED', 409, 'Najpierw połącz konto eduVULCAN.');
   const data = snapshot.data();
   const scope = scopeContext(uid, services);
-  assertStoredScope(data, scope);
+  await assertStoredScope(data, scope, services);
   if (!Number.isFinite(timestampMillis(data.expiresAt)) || timestampMillis(data.expiresAt) <= Date.now()) {
     await removeExpiredConnection(ref, data, services);
     throw new EduServerError('EDU_SESSION_EXPIRED', 401, 'Sesja dziennika wygasła. Połącz konto ponownie.');
@@ -270,7 +290,7 @@ export async function getConnectionStatus(uid, services = getServerFirebase()) {
   if (!snapshot.exists) return { connected: false, state: 'disconnected', profiles: [], students: [], selectedStudent: null };
   const data = snapshot.data();
   const scope = scopeContext(uid, services);
-  assertStoredScope(data, scope);
+  await assertStoredScope(data, scope, services);
   if (!Number.isFinite(timestampMillis(data.expiresAt)) || timestampMillis(data.expiresAt) <= Date.now()) {
     await removeExpiredConnection(ref, data, services);
     return { connected: false, state: 'expired', expired: true, reconnectRequired: true,
@@ -287,7 +307,7 @@ export async function selectConnectionStudent(uid, selection, services = getServ
     const snapshot = await transaction.get(ref);
     if (!snapshot.exists || timestampMillis(snapshot.data().expiresAt) <= Date.now()) throw new EduServerError('EDU_NOT_CONNECTED', 409, 'Najpierw połącz konto eduVULCAN.');
     const data = snapshot.data();
-    assertStoredScope(data, scope);
+    await assertStoredScope(data, scope, services, transaction);
     await assertStudentBinding(transaction, services, scope);
     if (timestampMillis(data.lease?.expiresAt) > Date.now()) throw new EduServerError('EDU_SYNC_BUSY', 409, 'Poczekaj na zakończenie synchronizacji.');
     const students = scopedStudents(data.students, scope);
@@ -315,7 +335,7 @@ export async function disconnectConnection(uid, services = getServerFirebase()) 
   const connectRef = services.db.collection('_eduConnectLocks').doc(uid);
   await services.db.runTransaction(async (transaction) => {
     const connection = await transaction.get(ref);
-    if (connection.exists) assertStoredScope(connection.data(), scope);
+    if (connection.exists) await assertStoredScope(connection.data(), scope, services, transaction);
     const lock = await transaction.get(connectRef);
     transaction.delete(ref);
     // Preserve login counters while invalidating a login still awaiting the provider.
@@ -375,7 +395,7 @@ export async function updateConnectionSession(uid, session, { sessionVersion, le
     const leaseExpiry = timestampMillis(data?.lease?.expiresAt);
     if (!data || !Number.isFinite(oldExpiry) || oldExpiry <= now || (sessionVersion && data.sessionVersion !== sessionVersion)
       || (leaseId && (data.lease?.id !== leaseId || !Number.isFinite(leaseExpiry) || leaseExpiry <= now))) throw new EduServerError('EDU_CONNECTION_CHANGED', 409, 'Połączenie zostało zmienione. Uruchom synchronizację ponownie.');
-    assertStoredScope(data, scope);
+    await assertStoredScope(data, scope, services, transaction);
     await assertStudentBinding(transaction, services, scope);
     const selection = normalizeSelection(data.selectedStudent, scopedStudents(data.students, scope), scope);
     if (selection && scope.scope === 'family') await assertCurrentSchoolTarget(transaction, services, scope, selection.personKey);
@@ -431,7 +451,7 @@ export async function acquireSyncLease(uid, services = getServerFirebase()) {
     const snapshot = await transaction.get(ref);
     const data = snapshot.exists ? snapshot.data() : null;
     if (!data || timestampMillis(data.expiresAt) <= Date.now()) throw new EduServerError('EDU_NOT_CONNECTED', 409, 'Najpierw połącz konto eduVULCAN.');
-    assertStoredScope(data, scope);
+    await assertStoredScope(data, scope, services, transaction);
     await assertStudentBinding(transaction, services, scope);
     if (schoolSlotStart !== undefined && (schoolSlotStart > Date.now() || schoolSyncSlotStart(Date.now()) === null)) {
       throw new EduServerError('EDU_INVALID_REQUEST', 400, 'Termin dziennej synchronizacji nie należy do godzin szkolnych.');
@@ -469,7 +489,7 @@ export async function releaseSyncLease(uid, leaseId, { success = false, errorCod
   await services.db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
     if (!snapshot.exists || snapshot.data().lease?.id !== leaseId) return;
-    assertStoredScope(snapshot.data(), scope);
+    await assertStoredScope(snapshot.data(), scope, services, transaction);
     const safeWarnings = Array.isArray(warnings) ? warnings.slice(0, 10).map((warning) => text(warning, 500)) : [];
     const safeCounts = {};
     for (const key of ['lessons', 'grades', 'homework', 'tests', 'messages', 'activities', 'added', 'updated', 'total']) {
@@ -517,6 +537,7 @@ export function prepareImportedSchoolItems(uid, { personKey, person, profileId, 
       source: 'eduvulcan', provider: 'eduvulcan', sourceRecordId: externalId,
       sourceProfileId: mappedProfile, sourceOwnerUid: scope.actorUid, sourceSyncId: syncId,
       sourceConnectionId: uid, sourceConnectionScope: scope.scope,
+      ...(explicitFamilyId(services.profile) ? { familyId: explicitFamilyId(services.profile) } : {}),
     };
     const scopeId = item.providerScopeId ?? item.scopeId;
     if (scopeId != null) {
@@ -592,8 +613,10 @@ export async function upsertSchoolItems(uid, input, services = getServerFirebase
       || !input.sessionVersion || connection.data().sessionVersion !== input.sessionVersion) {
       throw new EduServerError('EDU_CONNECTION_CHANGED', 409, 'Połączenie lub wybrany uczeń został zmieniony. Dane nie zostały zapisane.');
     }
-    assertStoredScope(connection.data(), scope);
-    await assertStudentBinding(transaction, services, scope);
+    await assertStoredScope(connection.data(), scope, services, transaction);
+    const currentActor = await assertStudentBinding(transaction, services, scope);
+    const familyId = explicitFamilyId(currentActor);
+    if (!familyId || familyId !== explicitFamilyId(services.profile)) throw new EduServerError('EDU_HOUSEHOLD_REQUIRED', 403, 'Przypisanie gospodarstwa wymaga weryfikacji.');
     normalizeSelection(selected, scopedStudents(connection.data().students, scope), scope);
     if (scope.scope === 'family') await assertCurrentSchoolTarget(transaction, services, scope, selected.personKey);
     const baseline = await transaction.get(schoolNotificationBaselineRef(services.db, uid, selected.profileId, selected.personKey));
@@ -610,6 +633,7 @@ export async function upsertSchoolItems(uid, input, services = getServerFirebase
     updated = 0;
     deleted = 0;
     entries.forEach((entry, index) => {
+      entry.data.familyId = familyId;
       const prior = existing[index];
       const previous = prior.exists ? prior.data() : null;
       if (previous && (previous.source !== 'eduvulcan' || previous.sourceRecordId !== entry.data.sourceRecordId

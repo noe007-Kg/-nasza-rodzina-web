@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertMemberChangeAllowed, manageMemberAction, validateMemberCreation } from '../server/account-members.mjs';
 
-const parent = { name: 'Rodzic', personKey: 'Rodzic', role: 'parent', active: true, canLogin: true };
-const child = { name: 'Dziecko', personKey: 'Dziecko', role: 'child', active: true, canLogin: true };
+const parent = { name: 'Rodzic', personKey: 'Rodzic', role: 'parent', active: true, canLogin: true, familyId: 'fixture-family' };
+const child = { name: 'Dziecko', personKey: 'Dziecko', role: 'child', active: true, canLogin: true, familyId: 'fixture-family' };
 const definition = { action: 'create', name: 'Nowa osoba', role: 'child', canLogin: false, schoolEnabled: false };
 
 function services(initial = { actor: parent, sibling: child }, existingAccount = null) {
@@ -389,14 +389,13 @@ test('new login profiles use the freshly read household if trusted provisioning 
   assert.equal(context.rows.get(result.memberUid).canLogin, true);
 });
 
-test('genuinely unassigned legacy households retain member administration without assigning finance access', async () => {
+test('unassigned legacy profiles require the reviewed household migration before member administration', async () => {
   for (const familyId of [undefined, null, '']) {
     const context = services({ actor: { ...parent, familyId }, sibling: child });
-    const result = await manageMemberAction(context, definition);
-    assert.equal(Object.hasOwn(context.rows.get(result.memberUid), 'familyId'), false);
-    await manageMemberAction(context, updateMember('sibling'));
-    await manageMemberAction(context, { action: 'archive', uid: 'sibling', confirmed: true });
-    assert.equal(context.rows.get('sibling').archived, true);
+    await assert.rejects(manageMemberAction(context, definition), { code: 'ACCOUNT_FAMILY_FORBIDDEN' });
+    await assert.rejects(manageMemberAction(context, updateMember('sibling')), { code: 'ACCOUNT_FAMILY_FORBIDDEN' });
+    await assert.rejects(manageMemberAction(context, { action: 'archive', uid: 'sibling', confirmed: true }), { code: 'ACCOUNT_FAMILY_FORBIDDEN' });
+    assert.equal(context.calls.length, 0);
     assert.equal(context.rows.get('actor').familyId, familyId);
   }
 });
@@ -411,8 +410,10 @@ test('parents retain same-household management but may never change a member hou
   assert.equal(context.calls.length, 0);
 });
 
-test('member creation retains global duplicate identity protection rather than reusing legacy person keys', async () => {
+test('different households can use the same display name without reassigning a foreign UID', async () => {
   const context = services({ actor: { ...parent, familyId: 'household-a' }, sibling: { ...child, familyId: 'household-b' } });
-  await assert.rejects(manageMemberAction(context, { ...definition, name: child.name }), { code: 'ACCOUNT_DUPLICATE_MEMBER' });
-  assert.equal(context.calls.length, 0);
+  const result = await manageMemberAction(context, { ...definition, name: child.name });
+  assert.equal(context.rows.get(result.memberUid).familyId, 'household-a');
+  assert.equal(context.rows.get('sibling').familyId, 'household-b');
+  assert.equal(context.calls.some(([kind]) => kind.startsWith('auth-')), false);
 });

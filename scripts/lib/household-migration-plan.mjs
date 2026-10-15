@@ -17,7 +17,7 @@ const REQUIRED_COLLECTIONS = Object.freeze(['members', 'familySettings', 'quickP
   'schoolItems', 'schoolParentMessages', 'schoolStudentMessages', 'schoolPlans', 'financeBills', 'financeBillAudit']);
 const UID_FIELDS = Object.freeze(['createdBy', 'ownerUid', 'ownerProfileId', 'uid', 'actorUid', 'submittedBy', 'approvedBy',
   'completedBy', 'decidedBy', 'sourceOwnerUid', 'establishedByUid']);
-const KNOWN_COLLECTION = value => REQUIRED_COLLECTIONS.includes(value) || /^notificationInbox\/[A-Za-z0-9_-]{1,128}\/items$/.test(value);
+const KNOWN_COLLECTION = value => REQUIRED_COLLECTIONS.includes(value) || value === 'medicalContacts' || /^notificationInbox\/[A-Za-z0-9_-]{1,128}\/items$/.test(value);
 const versionValid = value => object(value) && typeof value.seconds === 'string' && /^\d+$/.test(value.seconds)
   && Number.isInteger(value.nanoseconds) && value.nanoseconds >= 0 && value.nanoseconds < 1e9;
 const reservedLegacy = value => value === undefined || value === null || value === '' || value === '__legacy__';
@@ -47,7 +47,7 @@ export function validateHouseholdConfig(input) {
   if (input.familyId !== undefined && explicitFamilyId(input) === null) error('CONFIG_FAMILY_ID_INVALID');
   const paths = input.reviewedRecordPaths || [];
   if (!Array.isArray(paths) || paths.length > 5000 || paths.some(path => typeof path !== 'string'
-    || !/^finance(?:Bills|BillAudit)\/[^/]+$/.test(path) || !safeId(path.split('/')[1]))
+    || !/^(?:financeBills|financeBillAudit|quickProducts|familySettings|medicalContacts)\/[^/]+$/.test(path) || !safeId(path.split('/')[1]))
     || new Set(paths).size !== paths.length) error('CONFIG_REVIEWED_PATHS_INVALID');
   return { schemaVersion: 1, projectId: input.projectId, bucket: input.bucket, householdConfirmed: true,
     members, ...(input.familyId !== undefined ? { familyId: input.familyId } : {}), reviewedRecordPaths: [...paths].sort() };
@@ -196,16 +196,19 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
     if (!legacyCandidate(row)) continue;
     const linked = [...list('tasks'), ...list('taskPointLedger'), ...list('taskCompletions')].some(other => proven.has(other.path)
       && (other.data.person === row.data.person || other.data.completedPerson === row.data.person));
-    if (persons.has(row.data.person) && row.id === `person-${sha(row.data.person)}` && linked && checkRefs(row)) prove(row);
+    const validBalanceId = row.id === `person-${sha(row.data.person)}`
+      || row.data.familyId === familyId && row.id === `family-${sha(`${familyId}:${row.data.person}`)}`;
+    if (persons.has(row.data.person) && validBalanceId && linked && checkRefs(row)) prove(row);
     else block('POINT_BALANCE_NOT_VERIFIED', row.path);
   }
   for (const row of list('_taskRewardPending')) {
     const linked = get('taskRewardRequests', row.data.requestId);
     if (foreignFamily(row) && !targetLink(row)) continue;
     if (!linked || !proven.has(linked.path) || linked.data.rewardId !== row.data.rewardId || linked.data.person !== row.data.person
-      || row.id !== sha(`${row.data.person}:${row.data.rewardId}`)) block('REWARD_PENDING_LINK_NOT_VERIFIED', row.path);
+      || !(row.id === sha(`${row.data.person}:${row.data.rewardId}`)
+        || row.data.familyId === familyId && row.id === sha(`${familyId}:${row.data.person}:${row.data.rewardId}`))) block('REWARD_PENDING_LINK_NOT_VERIFIED', row.path);
     else proven.add(row.path);
-    // This server pointer has no familyId-dependent authorization; preserve it.
+    // The isolation extension stamps verified pointers; the legacy planner preserves them.
   }
   const files = new Map();
   for (const file of inventory.storage) {
@@ -373,7 +376,7 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
   // but never automatically adopt or rewrite their ownership or familyId.
   for (const row of list('familySettings')) if (row.data.avatarPath) {
     const parts = typeof row.data.avatarPath === 'string' ? row.data.avatarPath.split('/') : [];
-    if (row.id !== 'profile' || parts.length !== 4 || parts[0] !== 'avatars' || parts[1] !== 'family'
+    if (!(row.id === 'profile' || row.id === familyId && row.data.familyId === familyId) || parts.length !== 4 || parts[0] !== 'avatars' || parts[1] !== 'family'
       || !parentUids.has(parts[2]) || !parentUids.has(row.data.updatedBy) || !avatarFilename.test(parts[3])) {
       block('FAMILY_AVATAR_OWNER_NOT_VERIFIED', row.path); continue;
     }
@@ -407,7 +410,7 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
         }
       } else if (collection === 'familySettings') {
         const parts = source.path.split('/');
-        if (row.id !== 'profile' || parts.length !== 4 || parts[0] !== 'avatars' || parts[1] !== 'family'
+        if (!(row.id === 'profile' || row.id === familyId && row.data.familyId === familyId) || parts.length !== 4 || parts[0] !== 'avatars' || parts[1] !== 'family'
           || !parentUids.has(parts[2]) || !parentUids.has(row.data.updatedBy) || !avatarFilename.test(parts[3])) {
           block('FAMILY_AVATAR_OWNER_NOT_VERIFIED', row.path); continue;
         }

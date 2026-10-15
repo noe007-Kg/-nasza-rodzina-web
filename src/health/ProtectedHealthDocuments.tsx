@@ -14,6 +14,7 @@ import { healthDocumentAction, prepareHealthDocument } from './health-api';
 import { HealthDocumentViewer } from './HealthDocumentViewer';
 import { familyV2WritesAllowed } from '../family-v2-client';
 import { useProtectedHealthDocuments } from './useProtectedHealthDocuments';
+import { householdFamilyId } from '../household-scope';
 import './health-documents.css';
 
 export function ProtectedHealthDocuments({ user, member, person }: { user: User; member: Member | null; person: PersonKey }) {
@@ -42,15 +43,16 @@ export function ProtectedHealthDocuments({ user, member, person }: { user: User;
   const [showConsent, setShowConsent] = useState(false);
   const [grantee, setGrantee] = useState('');
   const [grantUIDs, setGrantUIDs] = useState<string[]>([]);
+  const familyId = householdFamilyId(member);
   const writeState = { uid: user.uid, enabled: documentState.writesEnabled, configured: documentState.configured };
   const writesEnabled = documentState.writesEnabled && familyV2WritesAllowed();
   const consentRecipients = profiles.filter(profile => profile.id !== user.uid && profile.canLogin === true && ['parent', 'adult'].includes(profile.role || ''));
   useEffect(() => {
-    if (!showConsent) return;
-    return onSnapshot(query(collection(db, 'healthDocumentGrants'), where('ownerUid', '==', user.uid)), snapshot => {
+    if (!showConsent || !familyId) return;
+    return onSnapshot(query(collection(db, 'healthDocumentGrants'), where('familyId', '==', familyId), where('ownerUid', '==', user.uid)), snapshot => {
       setGrantUIDs(snapshot.docs.flatMap(document => (document.data().authorizedUids || []) as string[]));
     }, () => setError('Nie udało się odczytać zgód. Nowe funkcje wymagają przygotowania Firebase.'));
-  }, [showConsent, user.uid]);
+  }, [showConsent, user.uid, familyId]);
 
   const visible = documents.filter(document => person === 'family' || document.ownerPersonKey === person);
   const owner = profiles.find(profile => profile.id === ownerProfileId);

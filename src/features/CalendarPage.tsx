@@ -2,6 +2,7 @@ import { auth, addDays, addMonths, capitalize, collection, db, DetailRow, doc, d
 import { exportCalendarIcs, importCalendarIcs } from '../calendar-ics';
 import { planSeriesDelete, planSeriesUpdate, seriesScopeLabel, type SeriesScope } from '../calendar-series';
 import { commitCalendarPlan, subscribeCalendar } from '../calendar-store';
+import { calendarEventScopeStamp, householdReadScope } from '../household-scope';
 import { describeRecurrence, type RecurrenceUnit } from '../calendar-utils';
 import { useFamilyDirectory } from '../family-directory';
 import { memberPersonKey } from '../family-members';
@@ -26,12 +27,13 @@ import { CalendarGoogleExportControls, CalendarGoogleBulkSharing, CalendarGoogle
 
 export function CalendarPage({ user, member, goTo, requestedSelection }: { user: User; member: Member | null; goTo: (page:Page)=>void; requestedSelection?: { person: PersonKey; requestId: number } }) {
   const familyDirectory = useFamilyDirectory();
+  const householdScope = householdReadScope(user.uid, member);
   const activeProfiles = useMemo(() => familyDirectory.filter(profile => profile.active !== false && !profile.archived && !profile.disabled), [familyDirectory]);
   const personOptions = ['family', ...new Set(activeProfiles.map(memberPersonKey).filter(Boolean))];
   const [view, setView] = useState<CalendarView>('day');
   const [focusDate, setFocusDate] = useState(() => new Date());
-  const [calendarState, setCalendarState] = useState<{ uid: string; events: CalendarEventData[] }>({ uid: user.uid, events: [] });
-  const events = calendarState.uid === user.uid ? calendarState.events : [];
+  const [calendarState, setCalendarState] = useState<{ uid: string; events: CalendarEventData[] }>({ uid: householdScope, events: [] });
+  const events = calendarState.uid === householdScope ? calendarState.events : [];
   const currentCalendarUid = useRef(user.uid);
   currentCalendarUid.current = user.uid;
   const schoolSources = useCalendarSchoolSources(user.uid, member);
@@ -83,16 +85,16 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
   useEffect(() => {
     let active = true;
     const uid = user.uid;
-    const stop = subscribeCalendar(uid, (loaded) => {
+    const stop = subscribeCalendar(uid, member, (loaded) => {
       if (!active || currentCalendarUid.current !== uid) return;
-      setCalendarState({ uid, events: loaded });
+      setCalendarState({ uid: householdScope, events: loaded });
       setSelectedEvent((current) => current ? loaded.find((item) => item.id === current.id) || current : null);
     }, (error) => {
       if (!active || currentCalendarUid.current !== uid) return;
       console.error('Błąd kalendarza:', error); notify('Nie udało się odczytać kalendarza.', 'error');
     });
     return () => { active = false; stop(); };
-  }, [user.uid]);
+  }, [householdScope]);
 
   const schoolSelection = selectedSchoolScope !== null;
   const currentSchoolSelection = schoolSelection && selectedSchoolScope === projectionScope
@@ -200,7 +202,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
     const interval = fields.recurrenceInterval || 1;
     if (fields.repeat === 'custom' && (!Number.isInteger(interval) || interval < 1 || interval > 1000)) { notify('Interwał musi wynosić od 1 do 1000.', 'error'); return null; }
     if (fields.repeat === 'custom' && fields.recurrenceUnit === 'week' && !fields.recurrenceWeekdays?.length) { notify('Wybierz przynajmniej jeden dzień tygodnia.', 'error'); return null; }
-    return { id: original?.id || doc(collection(db, fields.private ? 'privateCalendarEvents' : 'calendarEvents')).id, title: fields.title.trim(), person: fields.person, date: dates.start, endDate: dates.end, allDay: fields.allDay, description: fields.description.trim(), important: fields.important === true, location: (fields.location || '').trim(), createdBy: original?.createdBy || user.uid, ownerUid: original?.ownerUid || original?.createdBy || user.uid, private: fields.private === true, repeat: fields.repeat, repeatUntil: fields.repeat !== 'none' && fields.repeatEnd === 'date' && fields.repeatUntil ? endOfDay(parseLocalDate(fields.repeatUntil, '12:00')) : null, repeatCount: fields.repeat !== 'none' && fields.repeatEnd === 'count' ? fields.repeatCount : null, ...(fields.repeat === 'custom' ? { recurrence: { interval, unit: fields.recurrenceUnit || 'day', ...(fields.recurrenceUnit === 'week' ? { weekdays: fields.recurrenceWeekdays || [] } : {}) } } : {}), recurrenceExceptions: original?.recurrenceExceptions || [], recurrenceOverrides: original?.recurrenceOverrides || {}, repeatBefore: original?.repeatBefore || null, seriesId: original?.seriesId || original?.id, timeZone: original?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone };
+    return { id: original?.id || doc(collection(db, fields.private ? 'privateCalendarEvents' : 'calendarEvents')).id, title: fields.title.trim(), person: fields.person, date: dates.start, endDate: dates.end, allDay: fields.allDay, description: fields.description.trim(), important: fields.important === true, location: (fields.location || '').trim(), ...calendarEventScopeStamp(user.uid, member, activeProfiles, fields.person, fields.private === true), createdBy: original?.createdBy || user.uid, ownerUid: original?.ownerUid || original?.createdBy || user.uid, private: fields.private === true, repeat: fields.repeat, repeatUntil: fields.repeat !== 'none' && fields.repeatEnd === 'date' && fields.repeatUntil ? endOfDay(parseLocalDate(fields.repeatUntil, '12:00')) : null, repeatCount: fields.repeat !== 'none' && fields.repeatEnd === 'count' ? fields.repeatCount : null, ...(fields.repeat === 'custom' ? { recurrence: { interval, unit: fields.recurrenceUnit || 'day', ...(fields.recurrenceUnit === 'week' ? { weekdays: fields.recurrenceWeekdays || [] } : {}) } } : {}), recurrenceExceptions: original?.recurrenceExceptions || [], recurrenceOverrides: original?.recurrenceOverrides || {}, repeatBefore: original?.repeatBefore || null, seriesId: original?.seriesId || original?.id, timeZone: original?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone };
   }
 
   function changeEditScope(scope: SeriesScope) {
@@ -215,7 +217,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
     e.preventDefault(); if (saving) return;
     const event = eventFromForm(form); if (!event) return;
     setSaving(true);
-    try { await commitCalendarPlan({ upserts: [event], deletes: [] }, events, user.uid); setFocusDate(event.date); setShowForm(false); }
+    try { await commitCalendarPlan({ upserts: [event], deletes: [] }, events, user.uid, member, activeProfiles); setFocusDate(event.date); setShowForm(false); }
     catch (error) { notify(errorMessage(error), 'error'); }
     finally { setSaving(false); }
   }
@@ -227,7 +229,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
     try {
       const { id: _id, createdBy: _createdBy, seriesId: _seriesId, ...patch } = event;
       const plan = planSeriesUpdate(events, selectedEvent, selectedOccurrenceDate || selectedEvent.date, editScope, patch);
-      await commitCalendarPlan(plan, events, user.uid);
+      await commitCalendarPlan(plan, events, user.uid, member, activeProfiles);
       setEditing(false);
       const savedRecord = editScope === 'future' || (editScope === 'one' && !!event.private !== !!selectedEvent.private)
         ? plan.upserts[1] || plan.upserts[0] : plan.upserts.find((item) => item.id === selectedEvent.id) || plan.upserts[0];
@@ -246,7 +248,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
     const scope = selectedEvent.repeat === 'none' ? 'all' : deleteScope;
     if (!window.confirm(`Czy na pewno chcesz usunąć „${selectedEvent.title}”?${selectedEvent.repeat !== 'none' ? '\nZakres: ' + seriesScopeLabel(scope, true) : ''}`)) return;
     setDeleting(true);
-    try { await commitCalendarPlan(planSeriesDelete(events, selectedEvent, selectedOccurrenceDate || selectedEvent.date, scope), events, user.uid); setSelectedEvent(null); }
+    try { await commitCalendarPlan(planSeriesDelete(events, selectedEvent, selectedOccurrenceDate || selectedEvent.date, scope), events, user.uid, member, activeProfiles); setSelectedEvent(null); }
     catch (error) { notify(errorMessage(error), 'error'); }
     finally { setDeleting(false); }
   }
@@ -291,7 +293,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
       if (file.size > 2 * 1024 * 1024) throw new Error('Plik ICS może mieć maksymalnie 2 MB.');
       const parsed = importCalendarIcs(await file.text(), { uid: user.uid, person: transferPerson, private: importPrivate });
       const existing = new Set(events.map((item) => item.id)), fresh = parsed.events.filter((item) => !existing.has(item.id));
-      for (let index = 0; index < fresh.length; index += 200) await commitCalendarPlan({ upserts: fresh.slice(index, index + 200), deletes: [] }, events, user.uid);
+      for (let index = 0; index < fresh.length; index += 200) await commitCalendarPlan({ upserts: fresh.slice(index, index + 200), deletes: [] }, events, user.uid, member, activeProfiles);
       setTransferNote(`Zaimportowano: ${fresh.length}. Pominięto istniejące: ${parsed.events.length - fresh.length}.${parsed.warnings.length ? ' Uwagi: ' + parsed.warnings.join(' ') : ''}`);
       if (fresh[0]) setFocusDate(fresh[0].date);
     } catch (error) { setTransferNote(errorMessage(error)); }

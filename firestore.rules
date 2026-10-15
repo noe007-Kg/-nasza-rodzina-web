@@ -12,6 +12,43 @@ service cloud.firestore {
         && profile().get('role', '') in ['parent', 'adult', 'child'];
     }
     function parent() { return member() && profile().role == 'parent'; }
+    // Household membership is issued by trusted Admin operations. Missing IDs
+    // and the former shared legacy sentinel never form a household.
+    function validFamilyId(value) {
+      return value is string && value != '__legacy__'
+        && value.matches('[A-Za-z0-9][A-Za-z0-9_-]{0,127}');
+    }
+    function householdMember() {
+      return member() && profile().get('disabled', false) == false
+        && validFamilyId(profile().get('familyId', null));
+    }
+    function sameHousehold(data) {
+      return householdMember() && data.get('familyId', null) == profile().familyId;
+    }
+    function householdProfile(uid) {
+      return uid is string && exists(/databases/$(database)/documents/members/$(uid))
+        && get(/databases/$(database)/documents/members/$(uid)).data.get('familyId', null) == profile().get('familyId', null)
+        && validFamilyId(profile().get('familyId', null));
+    }
+    function calendarOwner(data) {
+      let target = data.get('ownerProfileId', '');
+      return householdProfile(data.get('ownerUid', ''))
+        && (target == 'family' && data.person == 'family'
+          || householdProfile(target)
+            && get(/databases/$(database)/documents/members/$(target)).data.get('active', false) == true
+            && get(/databases/$(database)/documents/members/$(target)).data.get('archived', false) == false
+            && get(/databases/$(database)/documents/members/$(target)).data.get('disabled', false) == false
+            && get(/databases/$(database)/documents/members/$(target)).data.get('personKey',
+              get(/databases/$(database)/documents/members/$(target)).data.get('name', '')) == data.person);
+    }
+    function sharedCalendar(data) {
+      return sameHousehold(data) && data.get('private', false) == false
+        && data.get('visibility', 'family') == 'family';
+    }
+    function preserveCalendarOwner() {
+      return request.resource.data.get('familyId', null) == resource.data.get('familyId', null)
+        && request.resource.data.get('ownerUid', '') == resource.data.get('ownerUid', '');
+    }
     function ownPerson() { return profile().get('personKey', profile().get('name', '')); }
     function person(value) {
       return value is string && (value in ['family', 'Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla']
@@ -28,7 +65,7 @@ service cloud.firestore {
         && data.get('source', 'manual') in ['manual', 'ics']
         && (!data.keys().hasAny(['important']) || data.important is bool)
         && !data.keys().hasAny(['provider', 'readOnly', 'cancelled', 'sourceConnectionId', 'sourceOwnerUid',
-          'externalCalendarId', 'externalEventId', 'externalSeriesId', 'ownerProfileId', 'visibilityOverride',
+          'externalCalendarId', 'externalEventId', 'externalSeriesId', 'visibilityOverride',
           'sourceStartDate', 'sourceEndDateExclusive', 'sourceImportWindow']);
     }
     function validHealth(data) {
@@ -74,42 +111,58 @@ service cloud.firestore {
     }
 
     match /members/{uid} {
-      allow get: if signedIn() && (uid == request.auth.uid || member());
-      allow list: if member();
+      allow get: if signedIn() && (uid == request.auth.uid || sameHousehold(resource.data));
+      allow list: if sameHousehold(resource.data);
       allow write: if false;
     }
     // The aggregate family profile is metadata, never a login identity.
     // Changes go through the authorized Admin endpoint.
     match /familySettings/profile {
-      allow read: if member();
+      allow read: if sameHousehold(resource.data);
+      allow write: if false;
+    }
+    match /familySettings/{familyId} {
+      allow read: if familyId != 'profile' && householdMember()
+        && familyId == profile().familyId && sameHousehold(resource.data);
       allow write: if false;
     }
     match /calendarEvents/{id} {
-      allow read: if member();
-      allow create: if member() && creator(request.resource.data) && clientCalendar(id, request.resource.data)
-        && request.resource.data.get('private', false) == false
+      allow read: if sharedCalendar(resource.data);
+      allow create: if sharedCalendar(request.resource.data) && creator(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid && calendarOwner(request.resource.data)
+        && clientCalendar(id, request.resource.data)
         && title(request.resource.data.title) && person(request.resource.data.person)
         && (parent() || ownOrFamily(request.resource.data.person));
-      allow update: if member() && preserveCreator() && clientCalendar(id, resource.data) && clientCalendar(id, request.resource.data)
-        && request.resource.data.get('private', false) == false
+      allow update: if sharedCalendar(resource.data) && sharedCalendar(request.resource.data)
+        && preserveCreator() && preserveCalendarOwner() && calendarOwner(request.resource.data)
+        && clientCalendar(id, resource.data) && clientCalendar(id, request.resource.data)
         && title(request.resource.data.title) && person(request.resource.data.person)
         && (parent() || (resource.data.createdBy == request.auth.uid
           && ownOrFamily(resource.data.person) && ownOrFamily(request.resource.data.person)));
-      allow delete: if clientCalendar(id, resource.data)
+      allow delete: if sharedCalendar(resource.data) && clientCalendar(id, resource.data)
         && (parent() || (member() && resource.data.createdBy == request.auth.uid && ownOrFamily(resource.data.person)));
     }
     match /privateCalendarEvents/{id} {
-      allow read: if member() && resource.data.ownerUid == request.auth.uid;
-      allow create: if member() && creator(request.resource.data) && clientCalendar(id, request.resource.data)
+      // Existing UID-owned private data stays available to that UID only;
+      // newly written/updated records require an explicit household identity.
+      allow read: if householdMember() && resource.data.ownerUid == request.auth.uid
+        && (!resource.data.keys().hasAny(['familyId']) || sameHousehold(resource.data));
+      allow create: if sameHousehold(request.resource.data) && calendarOwner(request.resource.data)
+        && creator(request.resource.data) && clientCalendar(id, request.resource.data)
         && request.resource.data.ownerUid == request.auth.uid && request.resource.data.private == true
+        && request.resource.data.get('visibility', 'private') == 'private'
         && title(request.resource.data.title) && person(request.resource.data.person)
         && (parent() || ownOrFamily(request.resource.data.person));
-      allow update: if member() && resource.data.ownerUid == request.auth.uid && preserveCreator()
+      allow update: if sameHousehold(resource.data) && sameHousehold(request.resource.data)
+        && resource.data.ownerUid == request.auth.uid && preserveCreator() && preserveCalendarOwner()
+        && calendarOwner(request.resource.data)
         && clientCalendar(id, resource.data) && clientCalendar(id, request.resource.data)
         && request.resource.data.ownerUid == resource.data.ownerUid && request.resource.data.private == true
+        && request.resource.data.get('visibility', 'private') == 'private'
         && title(request.resource.data.title) && person(request.resource.data.person)
         && (parent() || ownOrFamily(request.resource.data.person));
-      allow delete: if member() && resource.data.ownerUid == request.auth.uid && clientCalendar(id, resource.data);
+      allow delete: if householdMember() && resource.data.ownerUid == request.auth.uid && clientCalendar(id, resource.data)
+        && (!resource.data.keys().hasAny(['familyId']) || sameHousehold(resource.data));
     }
 
     function notificationPreferences(value) {
@@ -150,9 +203,10 @@ service cloud.firestore {
     match /_notificationOutbox/{id} { allow read, write: if false; }
     match /_notificationBaselines/{id} { allow read, write: if false; }
     // All completion, approval and accounting transitions share the Admin transaction.
-    // Legacy tasks stay readable; no browser (including a parent) can mint points.
+    // Legacy records must be assigned by the reviewed migration before Rules
+    // deployment. A browser, including a parent, cannot mint points.
     match /tasks/{id} {
-      allow read: if member();
+      allow read: if sameHousehold(resource.data) && (parent() || ownOrFamily(resource.data.person));
       allow write: if false;
     }
     match /taskPointBalances/{id} { allow read, write: if false; }
@@ -218,9 +272,11 @@ service cloud.firestore {
         && request.resource.data.done is bool && shoppingShops(request.resource.data);
     }
     match /quickProducts/{id} {
-      allow read: if member();
-      allow create, update: if member() && title(request.resource.data.get('title', id));
-      allow delete: if member();
+      allow read: if sameHousehold(resource.data);
+      allow create: if sameHousehold(request.resource.data) && title(request.resource.data.get('title', id));
+      allow update: if sameHousehold(resource.data) && sameHousehold(request.resource.data)
+        && request.resource.data.familyId == resource.data.familyId && title(request.resource.data.get('title', id));
+      allow delete: if sameHousehold(resource.data);
     }
     match /familyMessages/{id} {
       allow read: if member() && (privateParticipant(resource.data) || resource.data.get('channel', '') == 'family');
@@ -264,8 +320,7 @@ service cloud.firestore {
     // New medical documents have explicit server-issued UID ACLs. The parent role
     // grants no automatic access to an adult's document or to its authorization.
     function healthDocumentFamily(data) {
-      return data.get('attachmentKind', '') != 'health-record'
-        || data.get('familyId', null) == profile().get('familyId', null);
+      return sameHousehold(data);
     }
     function linkedHealthEditor(id, data) {
       let document = get(/databases/$(database)/documents/healthDocuments/$(data.attachmentDocumentId)).data;
@@ -289,51 +344,59 @@ service cloud.firestore {
       allow write: if false;
     }
     match /healthDocumentGrants/{ownerProfileId} {
-      allow get: if member() && (ownerProfileId == request.auth.uid
-        || resource.data.ownerUid == request.auth.uid || request.auth.uid in resource.data.authorizedUids);
-      allow list: if member() && (resource.data.ownerUid == request.auth.uid || request.auth.uid in resource.data.authorizedUids);
+      allow get: if householdMember() && ((!exists(/databases/$(database)/documents/healthDocumentGrants/$(ownerProfileId))
+          && ownerProfileId == request.auth.uid) || sameHousehold(resource.data) && (ownerProfileId == request.auth.uid
+        || resource.data.ownerUid == request.auth.uid || request.auth.uid in resource.data.authorizedUids));
+      allow list: if sameHousehold(resource.data) && (resource.data.ownerUid == request.auth.uid || request.auth.uid in resource.data.authorizedUids);
       allow write: if false;
     }
     match /_healthDocumentCleanup/{id} { allow read, write: if false; }
     match /_healthDocumentReminderEvents/{id} { allow read, write: if false; }
     match /healthRecords/{id} {
-      allow read: if member() && healthVisible(resource.data);
-      allow create: if member() && creator(request.resource.data) && validHealth(request.resource.data)
+      allow read: if sameHousehold(resource.data) && healthVisible(resource.data);
+      allow create: if sameHousehold(request.resource.data) && creator(request.resource.data) && validHealth(request.resource.data)
         && !request.resource.data.keys().hasAny(['attachmentDocumentId'])
         && (parent() || (request.resource.data.person == ownPerson() && request.resource.data.privateToParents == false));
-      allow update: if member() && preserveCreator() && validHealth(request.resource.data)
+      allow update: if sameHousehold(resource.data) && sameHousehold(request.resource.data)
+        && request.resource.data.familyId == resource.data.familyId && preserveCreator() && validHealth(request.resource.data)
         && healthLinkPreserved(id)
         && (parent() || (resource.data.person == ownPerson() && resource.data.get('privateToParents', false) == false
           && resource.data.type == 'medicine'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmedDate', 'updatedAt'])
           && request.resource.data.confirmedDate is string && request.resource.data.confirmedDate.size() == 10));
-      allow delete: if parent() && (!resource.data.keys().hasAny(['attachmentDocumentId']) || linkedHealthEditor(id, resource.data));
+      allow delete: if sameHousehold(resource.data) && parent()
+        && (!resource.data.keys().hasAny(['attachmentDocumentId']) || linkedHealthEditor(id, resource.data));
     }
     match /medicalContacts/{id} {
-      allow read: if member() && (parent() || ownOrFamily(resource.data.person));
-      allow create: if parent() && creator(request.resource.data) && person(request.resource.data.person);
-      allow update: if parent() && preserveCreator() && person(request.resource.data.person);
-      allow delete: if parent();
+      allow read: if sameHousehold(resource.data) && (parent() || ownOrFamily(resource.data.person));
+      allow create: if sameHousehold(request.resource.data) && parent()
+        && creator(request.resource.data) && person(request.resource.data.person);
+      allow update: if sameHousehold(resource.data) && sameHousehold(request.resource.data)
+        && request.resource.data.familyId == resource.data.familyId && parent()
+        && preserveCreator() && person(request.resource.data.person);
+      allow delete: if sameHousehold(resource.data) && parent();
     }
     match /schoolItems/{id} {
-      allow read: if member() && (parent() || resource.data.person == ownPerson());
-      allow create: if member() && creator(request.resource.data) && validSchool(request.resource.data) && manualSchool(request.resource.data)
+      allow read: if sameHousehold(resource.data) && (parent() || resource.data.person == ownPerson());
+      allow create: if sameHousehold(request.resource.data) && creator(request.resource.data) && validSchool(request.resource.data) && manualSchool(request.resource.data)
         && (parent() || (request.resource.data.person == ownPerson()
           && request.resource.data.type in ['lesson', 'homework', 'test', 'activity']));
-      allow update: if member() && preserveCreator() && validSchool(request.resource.data) && manualSchool(request.resource.data)
+      allow update: if sameHousehold(resource.data) && sameHousehold(request.resource.data)
+        && request.resource.data.familyId == resource.data.familyId
+        && preserveCreator() && validSchool(request.resource.data) && manualSchool(request.resource.data)
         && resource.data.get('source', '') != 'eduvulcan'
         && (parent() || (resource.data.person == ownPerson() && request.resource.data.person == ownPerson()
           && resource.data.type in ['lesson', 'homework', 'test', 'activity']
           && request.resource.data.type in ['lesson', 'homework', 'test', 'activity']));
-      allow delete: if resource.data.get('source', '') != 'eduvulcan' && (parent() || (member() && resource.data.person == ownPerson()
+      allow delete: if sameHousehold(resource.data) && resource.data.get('source', '') != 'eduvulcan' && (parent() || (member() && resource.data.person == ownPerson()
         && resource.data.type in ['lesson', 'homework', 'test', 'activity']));
     }
     match /schoolParentMessages/{id} {
-      allow read: if parent();
+      allow read: if sameHousehold(resource.data) && parent();
       allow write: if false;
     }
     match /schoolStudentMessages/{id} {
-      allow read: if member() && profile().role == 'child' && resource.data.sourceOwnerUid == request.auth.uid
+      allow read: if sameHousehold(resource.data) && profile().role == 'child' && resource.data.sourceOwnerUid == request.auth.uid
         && resource.data.person == ownPerson();
       allow write: if false;
     }

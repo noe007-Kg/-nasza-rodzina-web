@@ -2,13 +2,14 @@ import { useEffect } from 'react';
 import type { User } from 'firebase/auth';
 import { collection, onSnapshot, query, where, type Query, type QuerySnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase';
+import { householdFamilyId, tasksHouseholdQuery } from '../household-scope';
 
 export type InAppRefreshReason = 'launch' | 'foreground' | 'changes';
 export type InAppRefreshResult = {
   mode: 'in-app'; created: number; checked: number; baselines?: number;
   rateLimited: boolean; retryAfterMs: number; skippedSources: string[];
 };
-type RefreshMember = { name?: string; personKey?: string; role?: string } | null;
+type RefreshMember = { name?: string; personKey?: string; role?: string; familyId?: string } | null;
 
 /** Only the activation reason travels from the browser. Notification text,
  * recipients and permission decisions are reconstructed on the server. */
@@ -42,7 +43,9 @@ function fingerprint(snapshot: QuerySnapshot): string {
  * cache/listen targets. There is no interval and no background polling. */
 export function useInAppNotificationRefresh(user: User, member: RefreshMember = null): void {
   useEffect(() => {
-    if (!member || !['parent', 'adult', 'child'].includes(member.role || '')) return;
+    const familyId = householdFamilyId(member);
+    const tasks = tasksHouseholdQuery(db, member);
+    if (!member || !familyId || !tasks || !['parent', 'adult', 'child'].includes(member.role || '')) return;
     let alive = true;
     let active = false;
     let pending: InAppRefreshReason | null = null;
@@ -52,14 +55,14 @@ export function useInAppNotificationRefresh(user: User, member: RefreshMember = 
     const ownPerson = member.personKey || member.name || '';
     const visible = () => document.visibilityState === 'visible';
     const sources: Query[] = [
-      query(collection(db, 'calendarEvents')),
-      query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', user.uid)),
-      query(collection(db, 'tasks')),
+      query(collection(db, 'calendarEvents'), where('familyId', '==', familyId), where('private', '==', false), where('visibility', '==', 'family')),
+      query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', user.uid), where('familyId', '==', familyId)),
+      tasks,
       query(collection(db, 'shoppingItems')),
       query(collection(db, 'familyMessages'), where('channel', '==', 'family')),
       query(collection(db, 'familyMessages'), where('participants', 'array-contains', user.uid)),
-      member.role === 'parent' ? query(collection(db, 'healthRecords'))
-        : query(collection(db, 'healthRecords'), where('privateToParents', '==', false), where('person', 'in', ['family', ownPerson])),
+      member.role === 'parent' ? query(collection(db, 'healthRecords'), where('familyId', '==', familyId))
+        : query(collection(db, 'healthRecords'), where('familyId', '==', familyId), where('privateToParents', '==', false), where('person', 'in', ['family', ownPerson])),
     ];
 
     const run = async (reason: InAppRefreshReason, canRetry = true) => {
@@ -122,5 +125,5 @@ export function useInAppNotificationRefresh(user: User, member: RefreshMember = 
       document.removeEventListener('visibilitychange', activate);
       window.removeEventListener('pageshow', activate);
     };
-  }, [user.uid, member?.name, member?.personKey, member?.role]);
+  }, [user.uid, member?.name, member?.personKey, member?.role, member?.familyId]);
 }

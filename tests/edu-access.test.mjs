@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { requireMember, requireParent } from '../server/edu-auth.mjs';
 import { FAMILY_CONNECTION_ID, requireEduConnection, resolveConnectionAccess, studentConnectionId } from '../server/edu-access.mjs';
 
-const active = { active: true, canLogin: true };
+const active = { familyId: 'source-test-family', active: true, canLogin: true };
 const parent = { ...active, role: 'parent', name: 'Rodzic z pełnym nazwiskiem' };
 const student = { ...active, role: 'child', name: 'Nikodem', personKey: 'Nikodem', schoolEnabled: true };
 const identity = { studentName: 'Uczeń testowy', schoolName: 'Testowa szkoła podstawowa', schoolSymbol: 'SP4' };
@@ -17,7 +17,8 @@ const defaultChildren = {
 function services(uid, profile, bindings = {}, roster) {
   const reads = [];
   const checks = [];
-  const members = { ...(roster ?? (profile?.role === 'child' ? {} : defaultChildren)), [uid]: profile };
+  bindings = Object.fromEntries(Object.entries(bindings).map(([key, value]) => [key, value && { establishedByUid: 'approving-parent', ...value }]));
+  const members = { 'approving-parent': parent, ...(roster ?? (profile?.role === 'child' ? {} : defaultChildren)), [uid]: profile };
   return {
     reads, checks, members,
     auth: { verifyIdToken: async (token, checkRevoked) => {
@@ -33,16 +34,16 @@ function services(uid, profile, bindings = {}, roster) {
       } }),
       where: (field, operator, value) => {
         assert.equal(collection, 'members'); assert.equal(field, 'role'); assert.equal(operator, '=='); assert.equal(value, 'child');
-        return { limit: limit => {
+        const target = { where: (field, op, family) => { assert.deepEqual([field, op, family], ['familyId', '==', 'source-test-family']); return target; }, limit: limit => {
           assert.equal(limit, 65);
           return { get: async () => {
             reads.push('members?role=child&limit=65');
-            const docs = Object.entries(members).filter(([, member]) => member?.role === value)
+            const docs = Object.entries(members).filter(([, member]) => member?.role === value && member.familyId === 'source-test-family')
               .sort(([first], [second]) => first.localeCompare(second)).slice(0, limit)
               .map(([id, data]) => ({ id, exists: true, data: () => data }));
             return { docs, size: docs.length };
           } };
-        } };
+        } }; return target;
       },
     }) },
   };
@@ -96,7 +97,7 @@ test('a future student scope is bound to its verified UID and parent-approved sc
     id: studentConnectionId('nikodem-user'), scope: 'student', accountRole: 'student', actorUid: 'nikodem-user',
     allowedPersonKeys: ['Nikodem'], personProfileIds: { Nikodem: 'nikodem-user' }, allowedStudentIdentity: identity,
   });
-  assert.deepEqual(context.reads, ['members/nikodem-user', '_eduStudentBindings/Nikodem']);
+  assert.deepEqual(context.reads, ['members/nikodem-user', '_eduStudentBindings/Nikodem', 'members/approving-parent']);
   assert.doesNotMatch(JSON.stringify(authorized.connection), /synthetic-private-binding-value|sibling-user/);
   assert.notEqual(authorized.connection.id, FAMILY_CONNECTION_ID);
   assert.notEqual(authorized.connection.id, studentConnectionId('sibling-user'));
@@ -109,7 +110,7 @@ test('siblings get separate own scopes even if a request supplies another child 
   const authorized = await requireEduConnection(request('student', { body: { personKey: 'Nikodem', connectionId: FAMILY_CONNECTION_ID } }), context);
   assert.deepEqual(authorized.connection.allowedPersonKeys, ['Paweł']);
   assert.equal(authorized.connection.allowedStudentIdentity.studentName, 'Drugi uczeń testowy');
-  assert.deepEqual(context.reads, ['members/pawel-user', '_eduStudentBindings/Paweł']);
+  assert.deepEqual(context.reads, ['members/pawel-user', '_eduStudentBindings/Paweł', 'members/approving-parent']);
 });
 
 test('future student access requires a canonical family child and a complete approved identity', async () => {
@@ -142,7 +143,7 @@ test('family access uses the actual dynamic school roster, including children wi
   const result = await requireEduConnection(request('family', { body: { personKey: 'Nikodem', uid: 'someone-else' } }), context);
   assert.deepEqual(result.connection.allowedPersonKeys, [dynamicPerson]);
   assert.deepEqual({ ...result.connection.personProfileIds }, { [dynamicPerson]: 'profile-new-child' });
-  assert.deepEqual(context.reads, ['members/parent-user', 'members?role=child&limit=65']);
+  assert.deepEqual(context.reads, ['members/parent-user', '_eduConnections/family', 'members?role=child&limit=65']);
 });
 
 test('a family without eligible school profiles has an empty scope instead of implicit legacy grants', async () => {
@@ -218,7 +219,7 @@ test('a dynamic student scope remains tied to its own UID and approved identity,
   assert.deepEqual(result.connection.personProfileIds, { [dynamicPerson]: 'profile-new-child' });
   assert.deepEqual(result.connection.allowedStudentIdentity, identity);
   assert.equal(result.connection.id, studentConnectionId('profile-new-child'));
-  assert.deepEqual(context.reads, ['members/profile-new-child', `_eduStudentBindings/${dynamicPerson}`]);
+  assert.deepEqual(context.reads, ['members/profile-new-child', `_eduStudentBindings/${dynamicPerson}`, 'members/approving-parent']);
   await assert.rejects(requireEduConnection(request('student'), services('profile-new-child', dynamicStudent, { Nikodem: { identity } })), { code: 'EDU_STUDENT_LINK_REQUIRED', status: 403 });
 });
 

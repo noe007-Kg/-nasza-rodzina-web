@@ -11,6 +11,7 @@ import {
 import type { OkruszekDay, OkruszekLessonTiming, OkruszekLessonRow } from './okruszek-plan';
 import { memberPersonKey, type FamilyMemberProfile } from '../family-members';
 import { schoolSourcesForProfile } from './profile-schools';
+import { householdFamilyId, HOUSEHOLD_NOT_PREPARED } from '../household-scope';
 import './okruszek-plan.css';
 
 function todayInWarsaw(): string {
@@ -37,7 +38,7 @@ function userMessage(error: unknown): string {
 class PlanIssue extends Error {}
 
 /** A manual weekly school plan; it never calls a provider or writes calendar events. */
-export function OkruszekPlan({ user, parent, person, ownerProfileId }: { user: FirebaseUser; parent: boolean; person: string; ownerProfileId: string | null }) {
+export function OkruszekPlan({ user, parent, person, ownerProfileId, familyId }: { familyId: string | null; user: FirebaseUser; parent: boolean; person: string; ownerProfileId: string | null }) {
   const [saved, setSaved] = useState<OkruszekDay[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -48,14 +49,15 @@ export function OkruszekPlan({ user, parent, person, ownerProfileId }: { user: F
   const [extraDaysOff, setExtraDaysOff] = useState('');
   const [selectedDate, setSelectedDate] = useState(todayInWarsaw);
   const baseline = useRef<OkruszekDay[]>([]);
-  const identity = `${user.uid}:${person}:${ownerProfileId}:${parent ? 'parent' : 'student'}`;
+  const identity = `${user.uid}:${familyId}:${person}:${ownerProfileId}:${parent ? 'parent' : 'student'}`;
   const currentIdentity = useRef(identity);
   currentIdentity.current = identity;
 
   useEffect(() => {
     setSaved([]); setLoaded(false); setLoadError(''); setBusy(false);
     setEditing(null); setActionError(''); setNotice(''); baseline.current = [];
-    const rows = query(collection(db, 'schoolItems'), where('person', '==', person), where('schoolPlanId', '==', OKRUSZEK_PLAN_ID));
+    if (!householdFamilyId({ familyId: familyId || undefined })) { setLoaded(true); setLoadError(HOUSEHOLD_NOT_PREPARED); return; }
+    const rows = query(collection(db, 'schoolItems'), where('familyId', '==', familyId), where('person', '==', person), where('schoolPlanId', '==', OKRUSZEK_PLAN_ID));
     return onSnapshot(rows, { includeMetadataChanges: true }, snapshot => {
       if (currentIdentity.current !== identity) return;
       const days = snapshot.docs.map(item => parseOkruszekDay(item.id, item.data()));
@@ -72,6 +74,7 @@ export function OkruszekPlan({ user, parent, person, ownerProfileId }: { user: F
   }, [identity, person, ownerProfileId]);
 
   function assertIdentity() {
+    if (!householdFamilyId({ familyId: familyId || undefined })) throw new PlanIssue(HOUSEHOLD_NOT_PREPARED);
     if (!ownerProfileId || ownerProfileId.startsWith('legacy:')) throw new PlanIssue('Poczekaj na wczytanie rzeczywistego profilu ucznia. Plan nie zostanie przypisany do konta rodzica.');
     if (!parent || currentIdentity.current !== identity || auth.currentUser?.uid !== user.uid) {
       throw new PlanIssue('Konto zmieniło się w trakcie operacji. Zaloguj się ponownie i sprawdź plan.');
@@ -104,7 +107,7 @@ export function OkruszekPlan({ user, parent, person, ownerProfileId }: { user: F
         assertIdentity();
         const profileSnapshot = await transaction.get(doc(db, 'members', ownerProfileId));
         const profile: FamilyMemberProfile | null = profileSnapshot.exists() ? { ...profileSnapshot.data(), id: profileSnapshot.id } : null;
-        if (!profile || memberPersonKey(profile) !== person || !schoolSourcesForProfile(profile).includes('okruszek')) {
+        if (!profile || profile.familyId !== familyId || memberPersonKey(profile) !== person || !schoolSourcesForProfile(profile).includes('okruszek')) {
           throw new PlanIssue('Nie udało się potwierdzić profilu ucznia i przypisania Okruszka. Nie zapisano planu.');
         }
         const previous = await Promise.all(refs.map(ref => transaction.get(ref)));
@@ -117,7 +120,7 @@ export function OkruszekPlan({ user, parent, person, ownerProfileId }: { user: F
           }
           const data = item.data();
           const parsed = parseOkruszekDay(item.id, data);
-          if (!parsed || parsed.person !== person || parsed.weekday !== checked[index].weekday
+          if (data.familyId !== familyId || !parsed || parsed.person !== person || parsed.weekday !== checked[index].weekday
             || parsed.ownerProfileId && parsed.ownerProfileId !== ownerProfileId
             || data.schoolPlanId !== OKRUSZEK_PLAN_ID || typeof data.createdBy !== 'string'
             || data.source !== undefined || data.provider !== undefined) {
@@ -135,13 +138,13 @@ export function OkruszekPlan({ user, parent, person, ownerProfileId }: { user: F
           const item = previous[index];
           if (mode === 'import' && item.exists()) {
             if (!item.data().ownerProfileId) {
-              transaction.update(refs[index], { ownerProfileId, updatedAt: serverTimestamp() });
+              transaction.update(refs[index], { familyId, ownerProfileId, updatedAt: serverTimestamp() });
               bound++;
             }
             continue;
           }
           const day = { ...checked[index], ownerProfileId, revision: mode === 'edit' ? baseline.current[index].revision + 1 : checked[index].revision };
-          const entry = okruszekDayEntry(day);
+          const entry = { ...okruszekDayEntry(day), familyId };
           if (item.exists()) transaction.update(refs[index], { ...entry, updatedAt: serverTimestamp() });
           else { transaction.set(refs[index], { ...entry, createdBy: user.uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }); created++; }
         }

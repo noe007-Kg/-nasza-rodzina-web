@@ -35,7 +35,7 @@ export function schoolNotificationChanges(changes, initializedTypes, previousTim
     ...event,
     // The durable retry queue only needs authorization/routing data. Keeping
     // full teacher messages/grades here would duplicate sensitive school data.
-    record: { person: event.record.person, sourceConnectionScope: event.record.sourceConnectionScope || 'family',
+    record: { person: event.record.person, familyId: event.record.familyId || null, sourceConnectionScope: event.record.sourceConnectionScope || 'family',
       sourceOwnerUid: event.record.sourceOwnerUid || '' },
   }));
 }

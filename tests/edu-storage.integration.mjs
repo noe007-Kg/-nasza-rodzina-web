@@ -87,7 +87,7 @@ before(async () => {
     await services.auth.deleteUser(uid).catch(() => {});
     const email = `${uid}@example.test`;
     await services.auth.createUser({ uid, email, password: 'StorageTest!2026' });
-    await db.collection('members').doc(uid).set({ ...member, active: true, canLogin: true });
+    await db.collection('members').doc(uid).set({ ...member, familyId: 'edu-integration-family', active: true, canLogin: true });
     const signedIn = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=emulator-test-key', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: 'StorageTest!2026', returnSecureToken: true }),
     });
@@ -149,6 +149,15 @@ test('one encrypted family connection shares selection, sync lock, cooldown, cac
   assert.throws(() => decryptSession(stored.envelope, { uid: studentConnectionId(childUid) }), { code: 'EDU_SESSION_INVALID' });
   assert.equal((await db.collection('_eduConnections').doc(parentUid).get()).exists, false);
   assert.equal((await db.collection('_eduConnections').doc(motherUid).get()).exists, false);
+  // A parent context cached before a role change cannot retain the family session.
+  await db.collection('members').doc(parentUid).update({role:'child'});
+  try {
+    for (const operation of [getConnectionStatus, loadConnection, disconnectConnection]) {
+      await assert.rejects(operation(id, father), {code:'EDU_CONNECTION_FORBIDDEN'});
+    }
+    assert.deepEqual((await db.collection('_eduConnections').doc(id).get()).data(),stored);
+    assert.equal((await getConnectionStatus(id,mother)).state,'needs_profile');
+  } finally {await db.collection('members').doc(parentUid).update({role:'parent'});}
   for (const context of [father, mother]) {
     const status = (await statusAction(context)).status;
     assert.equal(status.state, 'needs_profile');
@@ -223,7 +232,7 @@ test('future student scope filters profiles and refuses parent mailbox imports; 
   // imports: no student provider account role has been assumed or bypassed.
   const futureMessage = db.collection('schoolStudentMessages').doc('edu-integration-future-own-message');
   rowsCreated.add(futureMessage.path);
-  await futureMessage.set({ person: 'Nikodem', type: 'message', title: 'Własna wiadomość testowa',
+  await futureMessage.set({ familyId:'edu-integration-family', person: 'Nikodem', type: 'message', title: 'Własna wiadomość testowa',
     source: 'eduvulcan', sourceOwnerUid: childUid, sourceConnectionId: id, sourceProfileId: profile.id });
   assert.equal((await clientRead(childUid, futureMessage)).status, 200);
   for (const uid of [siblingUid, parentUid, motherUid]) assert.equal((await clientRead(uid, futureMessage)).status, 403);
@@ -375,7 +384,7 @@ test('a real dynamic student login requires the exact parent binding and keeps s
     await services.auth.createUser({ uid, email, password: 'StorageTest!2026' });
     createdAuth = true;
     touched.add(memberRef.path);
-    await memberRef.set({ name: 'Dynamiczny uczeń', personKey, role: 'child', active: true, canLogin: true,
+    await memberRef.set({ name: 'Dynamiczny uczeń', personKey, role: 'child', familyId: 'edu-integration-family', active: true, canLogin: true,
       schoolEnabled: true, archived: false, disabled: false });
     const signedIn = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=emulator-test-key', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: 'StorageTest!2026', returnSecureToken: true }),

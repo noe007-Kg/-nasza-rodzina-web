@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import { activeCalendarMember, failCalendar } from './calendar-config.mjs';
 import { encryptCalendarSecrets } from './calendar-secrets.mjs';
+import { explicitFamilyId } from './family-identity.mjs';
 
 export const CALENDAR_LEASE_MS = 120000;
 export const CALENDAR_SYNC_COOLDOWN_MS = 60000;
@@ -12,12 +13,18 @@ export const connectionRef = (context, id) => {
 };
 export function assertCalendarActor(context, actor) {
   if (!activeCalendarMember(actor)) failCalendar('CALENDAR_MEMBER_REQUIRED', 403, 'Konto wymaga aktywnego dostępu do Naszej Rodziny.');
+  const familyId = explicitFamilyId(actor);
+  // Each transaction checks the current member document. A cached HTTP or
+  // scheduler actor cannot authorize writes after a household change.
+  if (!familyId || context.profile && explicitFamilyId(context.profile) !== familyId) failCalendar('CALENDAR_FAMILY_REQUIRED', 403, 'Konto wymaga zweryfikowanego przypisania do gospodarstwa rodzinnego.');
+  return familyId;
 }
 export async function assertCalendarSelection(transaction, context, actor, selection) {
-  assertCalendarActor(context, actor);
+  const familyId = assertCalendarActor(context, actor);
   if (selection.ownerProfileId === 'family') return 'family';
   const target = await transaction.get(context.db.collection('members').doc(selection.ownerProfileId));
   if (!target.exists || target.data().active !== true || target.data().archived === true || target.data().disabled === true) failCalendar('CALENDAR_PROFILE_UNAVAILABLE', 403, 'Wybrany profil nie jest aktywnym członkiem rodziny.');
+  if (explicitFamilyId(target.data()) !== familyId) failCalendar('CALENDAR_PROFILE_FORBIDDEN', 403, 'Wybrany profil nie należy do Twojego gospodarstwa rodzinnego.');
   if (actor.role !== 'parent' && selection.ownerProfileId !== context.uid) failCalendar('CALENDAR_PROFILE_FORBIDDEN', 403, 'Możesz przypisać kalendarz do siebie albo całej rodziny.');
   const member = target.data();
   const person = Object.hasOwn(member, 'personKey') ? member.personKey : member.name;
@@ -29,8 +36,19 @@ export async function assertCalendarSelection(transaction, context, actor, selec
   if (!['Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla'].includes(person) && !/^member-[a-f0-9]{24}$/.test(person)) failCalendar('CALENDAR_PROFILE_UNAVAILABLE', 409, 'Profil wymaga weryfikacji tożsamości przed przypisaniem kalendarza.');
   return person;
 }
-export function assertOwnedConnection(context, data) {
+export function assertOwnedConnection(context, data, actor = context.profile) {
   if (!data || data.ownerUid !== context.uid || data.provider !== 'google') failCalendar('CALENDAR_CONNECTION_FORBIDDEN', 403, 'Nie masz dostępu do tego połączenia kalendarza.');
+  const familyId = assertCalendarActor(context, actor);
+  // Old private OAuth sources are bound to an authenticated UID, not to a
+  // shared legacy family. Only an absent field is eligible for this narrow
+  // compatibility path; invalid or foreign explicit values always fail.
+  if (Object.hasOwn(data, 'familyId') && explicitFamilyId(data) !== familyId) failCalendar('CALENDAR_CONNECTION_FORBIDDEN', 403, 'Nie masz dostępu do tego połączenia kalendarza.');
+  return familyId;
+}
+export function assertCalendarEventFamily(context, event, actor = context.profile) {
+  const familyId = assertCalendarActor(context, actor);
+  if (!event || explicitFamilyId(event) !== familyId) failCalendar('CALENDAR_EVENT_FORBIDDEN', 403, 'Nie masz dostępu do tego wydarzenia.');
+  return familyId;
 }
 export function assertCalendarNotRemoving(data, now) {
   if (data?.removingEvents === true && (!Number.isFinite(timestampMillis(data.removalExpiresAt)) || timestampMillis(data.removalExpiresAt) > now)) {
@@ -42,12 +60,19 @@ export function assertCalendarLease(data, lease, now) {
     failCalendar('CALENDAR_SYNC_STALE', 409, 'Połączenie zmieniło się podczas odświeżania. Sprawdź jego aktualny stan.');
   }
 }
+export async function readOwnedCalendarConnection(context, id) {
+  return context.db.runTransaction(async transaction => {
+    const [snapshot, actorSnapshot] = await Promise.all([transaction.get(connectionRef(context, id)), transaction.get(context.db.collection('members').doc(context.uid))]);
+    assertOwnedConnection(context, snapshot.data(), actorSnapshot.data());
+    return snapshot.data();
+  }, { readOnly: true });
+}
 export async function acquireCalendarLease(context, id, { now = Date.now(), syncing = false } = {}) {
   const ref = connectionRef(context, id);
   return context.db.runTransaction(async transaction => {
     const [snapshot, actorSnapshot] = await Promise.all([transaction.get(ref), transaction.get(context.db.collection('members').doc(context.uid))]);
     const actor = actorSnapshot.data(), data = snapshot.data();
-    assertCalendarActor(context, actor); assertOwnedConnection(context, data);
+    const familyId = assertOwnedConnection(context, data, actor);
     assertCalendarNotRemoving(data, now);
     await assertCalendarSelection(transaction, context, actor, data);
     if (data.status !== 'connected' || !data.envelope) failCalendar('CALENDAR_RECONNECT_REQUIRED', 401, 'Połącz kalendarz ponownie.');
@@ -68,24 +93,29 @@ export async function acquireCalendarLease(context, id, { now = Date.now(), sync
       failCalendar('CALENDAR_RATE_LIMITED', 429, 'Kalendarz został odświeżony przed chwilą. Spróbuj ponownie za minutę.');
     }
     const lease = { id: randomUUID(), version: data.version };
-    transaction.update(ref, { leaseId: lease.id, leaseExpiresAt: Timestamp.fromMillis(now + CALENDAR_LEASE_MS),
+    transaction.update(ref, { familyId, leaseId: lease.id, leaseExpiresAt: Timestamp.fromMillis(now + CALENDAR_LEASE_MS),
       ...(syncing ? { lastAttemptAt: Timestamp.fromMillis(now) } : {}), ...(scheduled ? { lastScheduledSyncSlotAt: Timestamp.fromMillis(scheduledSlot) } : {}) });
-    return { lease, data: { ...data, id }, ref };
+    return { lease, data: { ...data, familyId, id }, ref };
   });
 }
 export async function updateCalendarLease(context, ref, lease, updates, now = Date.now(), clock = Date.now) {
   return context.db.runTransaction(async transaction => {
     const [snapshot, actorSnapshot] = await Promise.all([transaction.get(ref), transaction.get(context.db.collection('members').doc(context.uid))]);
-    const actor = actorSnapshot.data(), data = snapshot.data(); assertCalendarActor(context, actor); assertOwnedConnection(context, data);
+    const actor = actorSnapshot.data(), data = snapshot.data(); const familyId = assertOwnedConnection(context, data, actor);
     await assertCalendarSelection(transaction, context, actor, data);
     assertCalendarLease(data, lease, Math.max(now, clock()));
-    transaction.update(ref, updates);
+    transaction.update(ref, { ...updates, familyId });
   });
 }
 export async function releaseCalendarLease(context, ref, lease, { now = Date.now(), errorCode } = {}) {
   return context.db.runTransaction(async transaction => {
-    const snapshot = await transaction.get(ref), data = snapshot.data();
+    const [snapshot, actorSnapshot] = await Promise.all([transaction.get(ref), transaction.get(context.db.collection('members').doc(context.uid))]);
+    const data = snapshot.data();
     if (!data || data.ownerUid !== context.uid || data.version !== lease.version || data.leaseId !== lease.id) return false;
+    // Releasing this already-held capability may clean up an inactive owner,
+    // but a moved owner must not mutate another household's connection.
+    const familyId = explicitFamilyId(actorSnapshot.data());
+    if (!familyId || explicitFamilyId(data) !== familyId || context.profile && explicitFamilyId(context.profile) !== familyId) return false;
     const updates = { leaseId: null, leaseExpiresAt: null };
     if (errorCode) updates.lastErrorCode = errorCode;
     if (errorCode === 'CALENDAR_RECONNECT_REQUIRED') { updates.envelope = null; updates.status = 'needs-reconnect'; updates.version = randomUUID(); }
@@ -95,6 +125,7 @@ export async function releaseCalendarLease(context, ref, lease, { now = Date.now
 export const googleEventDocumentId = (uid, connectionId, calendarId, externalEventId) => `google-${createHash('sha256').update(JSON.stringify([uid, connectionId, calendarId, externalEventId])).digest('hex')}`;
 const sameSource = (event, connection, externalEventId) => event.source === 'google' && event.sourceConnectionId === connection.id
   && event.sourceOwnerUid === connection.ownerUid && event.ownerUid === connection.ownerUid && event.createdBy === connection.ownerUid
+  && explicitFamilyId(event) === explicitFamilyId(connection)
   && event.externalCalendarId === connection.calendarId && event.externalEventId === externalEventId;
 export const calendarEventFingerprint = event => createHash('sha256').update(JSON.stringify({ title: event.title, description: event.description || '', location: event.location || '',
   start: timestampMillis(event.date), end: timestampMillis(event.endDate), allDay: event.allDay === true, timeZone: event.timeZone || '',
@@ -112,7 +143,8 @@ export async function upsertGoogleEvents(context, connection, lease, events, { n
     const chunk = rows.slice(offset, offset + 100);
     const counts = await context.db.runTransaction(async transaction => {
       const ref = connectionRef(context, connection.id), snapshot = await transaction.get(ref), actorSnapshot = await transaction.get(context.db.collection('members').doc(context.uid));
-      const data = snapshot.data(), actor = actorSnapshot.data(); assertCalendarActor(context, actor); assertOwnedConnection(context, data);
+      const data = snapshot.data(), actor = actorSnapshot.data(); const familyId = assertOwnedConnection(context, data, actor);
+      if (connection.familyId !== familyId || connection.ownerUid !== data.ownerUid || connection.calendarId !== data.calendarId || connection.ownerProfileId !== data.ownerProfileId) failCalendar('CALENDAR_SYNC_STALE', 409, 'Przypisanie źródła zmieniło się podczas synchronizacji.');
       await assertCalendarSelection(transaction, context, actor, data); assertCalendarLease(data, lease, clock());
       const pairs = await Promise.all(chunk.map(async incoming => {
         const id = googleEventDocumentId(context.uid, connection.id, connection.calendarId, incoming.externalEventId);
@@ -153,7 +185,7 @@ export async function upsertGoogleEvents(context, connection, lease, events, { n
           ...(incoming.providerEtag ? { providerEtag: incoming.providerEtag } : {}),
         };
         if (existing && calendarEventFingerprint(existing) === calendarEventFingerprint(event) && existing.providerEtag === event.providerEtag) { counts.unchanged++; continue; }
-        transaction.set(target, { ...event, updatedAt: Timestamp.fromMillis(now), updatedBy: context.uid });
+        transaction.set(target, { ...event, familyId, visibility: isPrivate ? 'private' : 'family', updatedAt: Timestamp.fromMillis(now), updatedBy: context.uid });
         if (!existing) counts.imported++;
         else if (incoming.cancelled && existing.cancelled !== true) counts.cancelled++;
         else counts.changed++;
@@ -169,11 +201,13 @@ export async function upsertGoogleEvents(context, connection, lease, events, { n
 export async function sourceCalendarDocuments(context, id) {
   // One snapshot prevents a concurrent private↔family move from disappearing between two independent reads.
   return context.db.runTransaction(async transaction => {
+    const [actorSnapshot, sourceSnapshot] = await Promise.all([transaction.get(context.db.collection('members').doc(context.uid)), transaction.get(connectionRef(context, id))]);
+    const familyId = assertOwnedConnection(context, sourceSnapshot.data(), actorSnapshot.data());
     const [shared, privateSnapshot] = await Promise.all(['calendarEvents', 'privateCalendarEvents'].map(name =>
       transaction.get(context.db.collection(name).where('sourceConnectionId', '==', id).limit(5001))));
     const rows = [...shared.docs, ...privateSnapshot.docs];
     if (rows.length > 5000) failCalendar('CALENDAR_PROVIDER_LIMIT', 409, 'Źródło ma zbyt wiele wydarzeń, aby zmienić je w jednym kroku.');
-    if (rows.some(row => row.data().source !== 'google' || row.data().sourceOwnerUid !== context.uid || row.data().ownerUid !== context.uid || row.data().createdBy !== context.uid)) failCalendar('CALENDAR_EVENT_CONFLICT', 409, 'Źródło kalendarza wymaga sprawdzenia właściciela.');
+    if (rows.some(row => explicitFamilyId(row.data()) !== familyId || row.data().source !== 'google' || row.data().sourceOwnerUid !== context.uid || row.data().ownerUid !== context.uid || row.data().createdBy !== context.uid || row.data().externalCalendarId !== sourceSnapshot.data().calendarId)) failCalendar('CALENDAR_EVENT_CONFLICT', 409, 'Źródło kalendarza wymaga sprawdzenia właściciela i gospodarstwa.');
     return rows;
   }, { readOnly: true });
 }

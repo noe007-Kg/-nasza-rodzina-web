@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { refreshInAppNotifications, planRefreshSource, refreshSources, validateRefreshBody, MAX_REFRESH_RECORDS, MIN_REFRESH_INTERVAL_MS } from '../server/notification-refresh.mjs';
 import { enqueueInAppEvents } from '../server/notification-inbox.mjs';
 
-const parent = { role: 'parent', name: 'Sebastian', active: true, canLogin: true };
-const child = { role: 'child', name: 'Nikodem', personKey: 'Nikodem', active: true, canLogin: true };
-const task = { title: 'Rodzinne zadanie', person: 'family', done: false, createdBy: 'other' };
+const parent = { familyId: 'source-test-family', role: 'parent', name: 'Sebastian', active: true, canLogin: true };
+const child = { familyId: 'source-test-family', role: 'child', name: 'Nikodem', personKey: 'Nikodem', active: true, canLogin: true };
+const task = { familyId: 'source-test-family', title: 'Rodzinne zadanie', person: 'family', done: false, createdBy: 'other' };
 const message = { text: 'Prywatna treść nie może trafić do inbox', uid: 'other', name: 'Dominika', channel: 'family', participants: [], createdAt: 100 };
 const row = (id, data) => ({ id, data });
 function database(seed = {}, uid = 'own', profile = parent) {
@@ -92,11 +92,11 @@ test('family/private chat alerts only the permitted recipient and use generic te
 test('health and private calendar queries enforce existing child/owner visibility before notification generation', async () => {
   const data = database({}, 'own', child);
   await refresh(data, 10000);
-  data.values.set('healthRecords/own', { title: 'Lek', person: 'Nikodem', privateToParents: false, createdBy: 'parent' });
-  data.values.set('healthRecords/parents', { title: 'Wynik rodzica', person: 'Nikodem', privateToParents: true, createdBy: 'parent' });
-  data.values.set('healthRecords/other', { title: 'Inne dziecko', person: 'Paweł', privateToParents: false, createdBy: 'parent' });
-  data.values.set('privateCalendarEvents/other', { title: 'Sekret', ownerUid: 'other', createdBy: 'other', private: true });
-  data.values.set('privateCalendarEvents/own', { title: 'Mój wpis', ownerUid: 'own', createdBy: 'parent', private: true });
+  data.values.set('healthRecords/own', { familyId: 'source-test-family', title: 'Lek', person: 'Nikodem', privateToParents: false, createdBy: 'parent' });
+  data.values.set('healthRecords/parents', { familyId: 'source-test-family', title: 'Wynik rodzica', person: 'Nikodem', privateToParents: true, createdBy: 'parent' });
+  data.values.set('healthRecords/other', { familyId: 'source-test-family', title: 'Inne dziecko', person: 'Paweł', privateToParents: false, createdBy: 'parent' });
+  data.values.set('privateCalendarEvents/other', { familyId: 'source-test-family', title: 'Sekret', ownerUid: 'other', createdBy: 'other', private: true });
+  data.values.set('privateCalendarEvents/own', { familyId: 'source-test-family', title: 'Mój wpis', ownerUid: 'own', createdBy: 'parent', private: true });
   assert.equal((await refresh(data, 12000)).created, 2);
   assert.deepEqual(data.inbox().map(value => value.recordId).sort(), ['own', 'own']);
   const healthReads = data.reads.filter(value => value.path === 'healthRecords');
@@ -121,9 +121,9 @@ test('a failure after a successful inbox commit retries the stable ID without a 
 });
 test('retry rechecks real current privacy instead of trusting a previously public pending event', async () => {
   const data = database({}, 'own', child); await refresh(data, 10000);
-  data.values.set('healthRecords/h', { title: 'Wynik', person: 'Nikodem', privateToParents: false, createdBy: 'parent' });
+  data.values.set('healthRecords/h', { familyId: 'source-test-family', title: 'Wynik', person: 'Nikodem', privateToParents: false, createdBy: 'parent' });
   await assert.rejects(refresh(data, 12000, { enqueue: async () => { throw new Error('network'); } }));
-  data.values.set('healthRecords/h', { ...data.values.get('healthRecords/h'), privateToParents: true });
+  data.values.set('healthRecords/h', { familyId: 'source-test-family', ...data.values.get('healthRecords/h'), privateToParents: true });
   assert.equal((await refresh(data, 14000)).created, 0); assert.equal(data.inbox().length, 0);
 });
 test('explicit notification OFF is preserved; switching ON does not replay suppressed history', async () => {
@@ -178,11 +178,11 @@ test('oversized baseline byte budgets are skipped atomically without losing the 
 });
 test('health becoming parent-private between the source query and inbox transaction creates no child alert', async () => {
   const data = database({}, 'own', child); await refresh(data, 10000);
-  data.values.set('healthRecords/h', { title: 'Wynik', person: 'Nikodem', privateToParents: false, createdBy: 'parent' });
+  data.values.set('healthRecords/h', { familyId: 'source-test-family', title: 'Wynik', person: 'Nikodem', privateToParents: false, createdBy: 'parent' });
   const result = await refresh(data, 12000, { enqueue: async (context, events, options) => {
     assert.deepEqual(options, { recipientUid: 'own', revalidateSource: true });
     assert.equal(events.length, 1);
-    data.values.set('healthRecords/h', { ...data.values.get('healthRecords/h'), privateToParents: true });
+    data.values.set('healthRecords/h', { familyId: 'source-test-family', ...data.values.get('healthRecords/h'), privateToParents: true });
     return enqueueInAppEvents(context, events, options);
   } });
   assert.equal(result.created, 0); assert.equal(data.inbox().length, 0);
@@ -207,18 +207,18 @@ test('a private chat participant removed after the query gets no alert from the 
 });
 
 test('adult refresh retains own/private membership boundaries and creates general family notifications', async () => {
-  const adult = { role: 'adult', name: 'Dorosły', personKey: 'member-0123456789abcdef01234567', active: true, canLogin: true };
+  const adult = { familyId: 'source-test-family', role: 'adult', name: 'Dorosły', personKey: 'member-0123456789abcdef01234567', active: true, canLogin: true };
   const data = database({}, 'own', adult);
   assert.equal((await refresh(data, 10000)).baselines, 6);
   data.values.set('tasks/new', task);
   data.values.set('familyMessages/family', { ...message, createdAt: 11000 });
   data.values.set('familyMessages/own-private', { ...message, createdAt: 11001, channel: 'private:own:other', participants: ['own', 'other'] });
   data.values.set('familyMessages/parent-private', { ...message, createdAt: 11002, channel: 'private:a:b', participants: ['a', 'b'] });
-  data.values.set('healthRecords/own', { title: 'Własny lek', person: adult.personKey, privateToParents: false, createdBy: 'other' });
-  data.values.set('healthRecords/parents', { title: 'Tylko rodzice', person: adult.personKey, privateToParents: true, createdBy: 'other' });
-  data.values.set('healthRecords/child', { title: 'Zdrowie dziecka', person: 'Nikodem', privateToParents: false, createdBy: 'other' });
-  data.values.set('privateCalendarEvents/own', { title: 'Własny wpis', ownerUid: 'own', createdBy: 'other', private: true });
-  data.values.set('privateCalendarEvents/other', { title: 'Cudzy wpis', ownerUid: 'other', createdBy: 'other', private: true });
+  data.values.set('healthRecords/own', { familyId: 'source-test-family', title: 'Własny lek', person: adult.personKey, privateToParents: false, createdBy: 'other' });
+  data.values.set('healthRecords/parents', { familyId: 'source-test-family', title: 'Tylko rodzice', person: adult.personKey, privateToParents: true, createdBy: 'other' });
+  data.values.set('healthRecords/child', { familyId: 'source-test-family', title: 'Zdrowie dziecka', person: 'Nikodem', privateToParents: false, createdBy: 'other' });
+  data.values.set('privateCalendarEvents/own', { familyId: 'source-test-family', title: 'Własny wpis', ownerUid: 'own', createdBy: 'other', private: true });
+  data.values.set('privateCalendarEvents/other', { familyId: 'source-test-family', title: 'Cudzy wpis', ownerUid: 'other', createdBy: 'other', private: true });
   data.values.set('schoolParentMessages/school', { title: 'Skrzynka rodziców', person: adult.personKey });
   data.values.set('schoolStudentMessages/school', { title: 'Skrzynka ucznia', sourceOwnerUid: 'own', person: adult.personKey });
   assert.equal((await refresh(data, 12000)).created, 5);

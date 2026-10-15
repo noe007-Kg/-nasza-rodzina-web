@@ -1,5 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { canReceiveNotification, eventDocumentId, inboxEvent, wantsNotification } from './notification-events.mjs';
+import { explicitFamilyId } from './family-identity.mjs';
 
 const REVALIDATED_SOURCES = new Set(['calendarEvents', 'privateCalendarEvents', 'tasks', 'shoppingItems', 'familyMessages', 'healthRecords', 'financeBills']);
 
@@ -18,8 +19,15 @@ export async function enqueueInAppEvents(context, events, { recipientUid, revali
     || ['.', '..'].includes(event.recordId) || Buffer.byteLength(event.recordId) > 1500)) throw new Error('Invalid notification source.');
   if (recipientUid !== undefined && (typeof recipientUid !== 'string' || !recipientUid || recipientUid.includes('/') || recipientUid.length > 128)) throw new Error('Invalid notification recipient.');
   const ownMember = recipientUid ? await db.collection('members').doc(recipientUid).get() : null;
-  const members = recipientUid ? { size: ownMember.exists ? 1 : 0, docs: ownMember.exists ? [ownMember] : [] }
-    : await db.collection('members').limit(201).get();
+  const scoped = unique.every(event => ['calendarEvents', 'privateCalendarEvents', 'tasks', 'healthRecords', 'schoolItems', 'schoolParentMessages', 'schoolStudentMessages'].includes(event.collection));
+  let members;
+  if (recipientUid) members = { size: ownMember.exists ? 1 : 0, docs: ownMember.exists ? [ownMember] : [] };
+  else if (scoped) {
+    const families = [...new Set(unique.map(event => explicitFamilyId(event.record)).filter(Boolean))];
+    const queries = await Promise.all(families.map(familyId => db.collection('members').where('familyId', '==', familyId).limit(201).get()));
+    const docs = [...new Map(queries.flatMap(snapshot => snapshot.docs).map(row => [row.id, row])).values()];
+    members = { size: docs.length, docs };
+  } else members = await db.collection('members').limit(201).get();
   if (members.size > 200) throw new Error('Notification recipient limit exceeded.');
   let created = 0;
   let checked = 0;
