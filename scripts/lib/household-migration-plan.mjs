@@ -28,7 +28,7 @@ function nonemptyText(value, maximum = 128) { return typeof value === 'string' &
   && value.length <= maximum && !/[\u0000-\u001f]/.test(value); }
 
 export function validateHouseholdConfig(input) {
-  exactKeys(input, ['schemaVersion', 'projectId', 'bucket', 'householdConfirmed', 'members', 'familyId', 'reviewedRecordPaths'], 'CONFIG_FIELDS_INVALID');
+  exactKeys(input, ['schemaVersion', 'projectId', 'bucket', 'householdConfirmed', 'members', 'familyId', 'reviewedRecordPaths', 'reviewedRecordVersions'], 'CONFIG_FIELDS_INVALID');
   if (input.schemaVersion !== 1 || !/^[a-z][a-z0-9-]{3,61}[a-z0-9]$/.test(input.projectId || '')
     || !/^[a-z0-9][a-z0-9._-]{2,221}[a-z0-9]$/.test(input.bucket || '')) error('CONFIG_PROJECT_INVALID');
   if (input.householdConfirmed !== true) error('HOUSEHOLD_ATTESTATION_REQUIRED');
@@ -49,8 +49,21 @@ export function validateHouseholdConfig(input) {
   if (!Array.isArray(paths) || paths.length > 5000 || paths.some(path => typeof path !== 'string'
     || !/^(?:financeBills|financeBillAudit|quickProducts|familySettings|medicalContacts)\/[^/]+$/.test(path) || !safeId(path.split('/')[1]))
     || new Set(paths).size !== paths.length) error('CONFIG_REVIEWED_PATHS_INVALID');
+  let versions;
+  if (Object.hasOwn(input, 'reviewedRecordVersions')) {
+    if (!Array.isArray(input.reviewedRecordVersions) || input.reviewedRecordVersions.length > 5000) error('CONFIG_REVIEWED_VERSIONS_INVALID');
+    const versionPaths = new Set();
+    versions = input.reviewedRecordVersions.map(entry => {
+      exactKeys(entry, ['path', 'updateTime'], 'CONFIG_REVIEWED_VERSIONS_INVALID');
+      exactKeys(entry.updateTime, ['seconds', 'nanoseconds'], 'CONFIG_REVIEWED_VERSIONS_INVALID');
+      if (!paths.includes(entry.path) || versionPaths.has(entry.path) || !versionValid(entry.updateTime)) error('CONFIG_REVIEWED_VERSIONS_INVALID');
+      versionPaths.add(entry.path);
+      return { path: entry.path, updateTime: { seconds: entry.updateTime.seconds, nanoseconds: entry.updateTime.nanoseconds } };
+    }).sort((a, b) => a.path.localeCompare(b.path));
+  }
   return { schemaVersion: 1, projectId: input.projectId, bucket: input.bucket, householdConfirmed: true,
-    members, ...(input.familyId !== undefined ? { familyId: input.familyId } : {}), reviewedRecordPaths: [...paths].sort() };
+    members, ...(input.familyId !== undefined ? { familyId: input.familyId } : {}), reviewedRecordPaths: [...paths].sort(),
+    ...(versions !== undefined ? { reviewedRecordVersions: versions } : {}) };
 }
 
 export function buildHouseholdMigrationPlan(input, inventory, { familyId = input?.familyId, now = new Date() } = {}) {
@@ -71,6 +84,7 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
   const warn = (code, path, ids) => issue(warnings, code, path, ids);
   const uids = new Set(config.members.map(member => member.uid));
   const reviewed = new Set(config.reviewedRecordPaths);
+  const staleReviewed = new Set();
   const coverage = inventory.coverage;
   const storageCheck = householdStorageCheck(coverage);
   if (!storageCheck.verified) block(storageCheck.code, 'storage');
@@ -102,6 +116,13 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
   const list = name => byCollection.get(name) || [];
   const get = (name, id) => safeId(id) ? rows.get(`${name}/${id}`) : undefined;
   for (const path of reviewed) if (!rows.has(path)) block('REVIEWED_RECORD_MISSING', path);
+  for (const receipt of config.reviewedRecordVersions || []) {
+    const actual = rows.get(receipt.path)?.updateTime;
+    if (!versionValid(actual) || actual.seconds !== receipt.updateTime.seconds || actual.nanoseconds !== receipt.updateTime.nanoseconds) {
+      block('REVIEWED_RECORD_VERSION_CHANGED', receipt.path);
+      staleReviewed.add(receipt.path); reviewed.delete(receipt.path);
+    }
+  }
   const members = new Map(list('members').map(row => [row.id, row]));
   const persons = new Map();
   const parentUids = new Set(config.members.filter(member => member.expectedRole === 'parent').map(member => member.uid));
@@ -122,6 +143,7 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
     return ok;
   };
   const assign = row => {
+    if (staleReviewed.has(row.path)) return;
     if (row.data.familyId === familyId) return;
     if (!reservedLegacy(row.data.familyId)) { block('EXISTING_FAMILY_CONFLICT', row.path); return; }
     if (!versionValid(row.updateTime)) { block('DOCUMENT_VERSION_NOT_VERIFIED', row.path); return; }
@@ -156,7 +178,7 @@ export function buildHouseholdMigrationPlan(input, inventory, { familyId = input
     }
   }
   const proven = new Set(config.members.map(member => `members/${member.uid}`));
-  const prove = row => { proven.add(row.path); assign(row); };
+  const prove = row => { if (!staleReviewed.has(row.path)) { proven.add(row.path); assign(row); } };
   const legacyCandidate = row => {
     if (foreignFamily(row)) { if (targetLink(row)) block('EXISTING_FAMILY_CONFLICT', row.path); return false; }
     if (!reservedLegacy(row.data.familyId) && row.data.familyId !== familyId) { block('INVALID_RECORD_FAMILY_ID', row.path); return false; }
