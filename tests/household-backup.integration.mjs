@@ -8,6 +8,8 @@ import { gzipSync } from 'node:zlib';
 import { sealHouseholdBackup, backupDigest } from '../scripts/lib/household-backup-archive.mjs';
 import { writePrivateFile } from '../scripts/lib/household-private-files.mjs';
 import { runAutomaticRestore } from '../scripts/household-preflight.mjs';
+import {assessHouseholdReadiness} from '../scripts/lib/household-readiness-policy.mjs';
+import {preflightRestoreVerified} from '../scripts/lib/household-diagnostic-evidence.mjs';
 
 test('encrypted synthetic backup restores exact data and atomically rehearses multi-field isolation rollback in fresh demo emulators', async t => {
   const directory = await mkdtemp(path.join(tmpdir(), 'household-backup-integration-'));
@@ -59,6 +61,11 @@ test('encrypted synthetic backup restores exact data and atomically rehearses mu
   assert.equal(proof.rollback.verified, true); assert.equal(proof.rollback.concurrentChangeRejected, true);
   assert.equal(proof.rollback.changeCount, 2, 'Six field patches are grouped into two atomic document writes');
   assert.equal(proof.rollback.postApplyReceiptIsDemoOnly, true);
+  const backup={complete:true,manifestHashesVerified:true,archiveDigestSha256:proof.archiveDigestSha256};
+  const readiness=assessHouseholdReadiness({plan:{...payload.plan,projectId:source},backup,restore:proof});
+  assert.equal(readiness.checks.find(row=>row.id==='restore').status,'verified');
+  assert.equal(readiness.checks.find(row=>row.id==='rollback-rehearsal').status,'verified');
+  assert.equal(preflightRestoreVerified({...readiness,sourceProjectId:source,backup,restore:proof}),true);
   assert.equal(Object.hasOwn(calendarFields, 'familyId'), false);
   assert.equal(Object.hasOwn(calendarFields, 'ownerUid'), false);
   assert.equal(Object.hasOwn(calendarFields, 'ownerProfileId'), false);

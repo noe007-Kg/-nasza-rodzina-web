@@ -6,11 +6,13 @@ export function assessHouseholdReadiness(input = {}) {
   const archiveHash = input.backup?.archiveDigestSha256;
   add('migration-plan', input.plan?.canApply === false && input.plan?.blockers?.length === 0 && input.plan?.writesPerformed === 0, 'PLAN_NOT_VERIFIED');
   add('complete-backup', input.backup?.complete === true && input.backup?.manifestHashesVerified === true && hash(archiveHash), 'FULL_BACKUP_NOT_VERIFIED');
-  add('restore', input.restore?.verified === true && input.restore?.safetyVerified === true
+  const restoreVerified = input.backup?.complete === true && input.backup?.manifestHashesVerified === true
+    && input.restore?.verified === true && input.restore?.safetyVerified === true
     && /^demo-household-restore-/.test(input.restore?.targetProjectId || '')
     && input.restore?.sourceProjectId === input.plan?.projectId && input.restore?.archiveDigestSha256 === archiveHash
-    && input.restore?.emulatorExitCode === 0 && hash(archiveHash), 'RESTORE_NOT_VERIFIED');
-  add('rollback-rehearsal', input.restore?.rollback?.verified === true && input.restore.rollback.concurrentChangeRejected === true
+    && input.restore?.emulatorExitCode === 0 && hash(archiveHash);
+  add('restore', restoreVerified, 'RESTORE_NOT_VERIFIED');
+  add('rollback-rehearsal', restoreVerified && input.restore?.rollback?.verified === true && input.restore.rollback.concurrentChangeRejected === true
     && input.restore.rollback.postApplyReceiptIsDemoOnly === true, 'ROLLBACK_REHEARSAL_NOT_VERIFIED');
   for (const service of ['firestore', 'storage']) add(`production-rules-${service}`,
     input.rules?.[service]?.verified === true && input.rules[service].status === 'matched'

@@ -16,6 +16,7 @@ import { assertHouseholdEnvironment, prepareLocalProposal } from './prepare-hous
 import { captureHouseholdEvidence } from './lib/household-evidence-capture.mjs';
 import { sealHouseholdBackup, openHouseholdBackup, canonicalJson, backupDigest } from './lib/household-backup-archive.mjs';
 import { assessHouseholdReadiness } from './lib/household-readiness-policy.mjs';
+import { projectHouseholdDiagnosticEvidence, preflightRestoreVerified } from './lib/household-diagnostic-evidence.mjs';
 import { readPrivateJson, readPrivateBytes, securePrivateDirectory, writePrivateFile, safeControlError, controlFailure as fail } from './lib/household-private-files.mjs';
 
 const repository = fileURLToPath(new URL('../', import.meta.url));
@@ -80,7 +81,8 @@ export async function runAutomaticRestore(directory, archiveFile, keyFile, paylo
   try { return { ...(await readPrivateJson(resultFile)), emulatorExitCode: exit }; }
   catch { return { verified: false, code: lastControlCode || 'RESTORE_EMULATOR_RUN_FAILED', emulatorExitCode: exit }; }
 }
-export async function runHouseholdPreflight(options) {
+export async function runHouseholdPreflight(options, { onEvidence } = {}) {
+  if (onEvidence !== undefined && typeof onEvidence !== 'function') fail('PREFLIGHT_EVIDENCE_CALLBACK_INVALID');
   const config = validateHouseholdConfig(await readPrivateJson(options.config));
   assertHouseholdEnvironment(config, {});
   const directory = await securePrivateDirectory(options.output);
@@ -90,7 +92,7 @@ export async function runHouseholdPreflight(options) {
   if (key.length !== 32) fail('BACKUP_KEY_INVALID');
   const keyFile = options['key-file'] ? path.resolve(options['key-file']) : path.join(run, 'backup.key');
   if (!options['key-file']) await writePrivateFile(keyFile, key);
-  let app, proof;
+  let app, proof, diagnosticEvidence = null;
   try {
     const authClient = await new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] }).getClient();
     const request = requestOptions => authClient.request({ ...requestOptions, maxContentLength: 64 * 1024 * 1024, maxRedirects: 0, timeout: 30000 });
@@ -114,7 +116,8 @@ export async function runHouseholdPreflight(options) {
         capturedAt: capture.payload.createdAt, scope: 'full-default-firestore-and-current-selected-bucket-plus-captured-external-files' };
       await writePrivateFile(path.join(run, 'attestation-template.private.json'), JSON.stringify({ ownerReviewed: false, boundPlanDigest: capture.planDigest,
         projectId: config.projectId, profiles: config.members, statement: 'Potwierdź rzeczywiste istniejące UID, role i jedno gospodarstwo. Nie zaznaczaj na podstawie samych imion.' }, null, 2));
-      restore = await runAutomaticRestore(run, file, keyFile, capture.payload);
+      try { restore = await runAutomaticRestore(run, file, keyFile, capture.payload); }
+      catch (error) { restore = { verified: false, code: safeControlError(error, 'RESTORE_EXECUTION_NOT_VERIFIED') }; }
     }
     proof = { ...assessHouseholdReadiness({ ...capture, backup, restore, planDigest: capture.planDigest,
       isolation: restore.isolation, household: { ownerReviewed: false }, tokens: capture.payload?.evidence.tokens }),
@@ -122,14 +125,16 @@ export async function runHouseholdPreflight(options) {
     ruleChecks: Object.fromEntries(Object.entries(capture.rules || {}).map(([service, item]) => [service, { verified: item.verified, status: item.status, sha256: item.sha256, localSha256: item.localSha256, code: item.code }])),
     externalCapturedCount: (capture.externalFiles || []).filter(row => row.status === 'captured').length,
     externalUnverifiedCount: (capture.externalFiles || []).filter(row => row.status !== 'captured').length };
-  } catch (error) { proof = { status: 'blocked', code: safeControlError(error), canApply: false, migrationExecutable: false,
+    if (onEvidence) diagnosticEvidence = projectHouseholdDiagnosticEvidence(capture, backup, restore);
+  } catch (error) { diagnosticEvidence = null; proof = { status: 'blocked', code: safeControlError(error), canApply: false, migrationExecutable: false,
     productionWritesPerformed: 0, backup: { complete: false }, restore: { verified: false } }; }
   finally { if (app) await deleteApp(app); key.fill(0); }
   await writePrivateFile(path.join(run, 'control-proof.private.json'), JSON.stringify(proof, null, 2));
   await writePrivateFile(path.join(run, 'report.md'), `# Kontrola przed migracją\n\nStatus: ${proof.status}. Zapisów produkcyjnych: 0. Migracja: niedostępna.\n\n` +
-    `Kompletna kopia danych: ${proof.backup?.complete === true ? 'TAK, w zadeklarowanym zakresie' : 'NIE ZWERYFIKOWANO'}. Test odtworzenia: ${proof.restore?.verified === true ? 'PASS, lokalny projekt demo' : 'NIE ZWERYFIKOWANO'}.\n\n` +
+    `Kompletna kopia danych: ${proof.backup?.complete === true ? 'TAK, w zadeklarowanym zakresie' : 'NIE ZWERYFIKOWANO'}. Test odtworzenia: ${preflightRestoreVerified(proof) ? 'PASS, lokalny projekt demo' : 'NIE ZWERYFIKOWANO'}.\n\n` +
     `Blokady: ${(proof.blockers || [proof.code]).filter(Boolean).join(', ')}.\n\n` +
     'Nie skopiowano haseł Auth, sekretów Secret Manager ani niedostępnej historii dostawców. Zgodność bieżących odczytów nie jest atomową migawką między usługami. Pełna izolacja backendu i powiadomień nie jest potwierdzona przez sam test reguł. Kopię i klucz należy przechowywać oddzielnie oraz zachować drugą zweryfikowaną kopię poza środowiskiem tymczasowym.\n');
+  if (onEvidence) await onEvidence(diagnosticEvidence, proof);
   return proof;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -138,7 +143,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (options.help) console.log('node scripts/household-preflight.mjs --config PRIVATE_CONFIG --output PRIVATE_DIRECTORY [--key-file PRIVATE_KEY] [--external-domains-file PRIVATE_DOMAINS] [--app-origin HTTPS_ORIGIN]. Tylko odczyt produkcji; odtworzenie i rollback wyłącznie lokalnie w demo. Brak apply/deploy/delete.');
     else {
       const proof = await runHouseholdPreflight(options);
-      console.log(`Kontrola: ${proof.status}; kopia kompletna: ${proof.backup?.complete === true ? 'tak' : 'niezweryfikowana'}; odtworzenie: ${proof.restore?.verified === true ? 'PASS' : 'niezweryfikowane'}. Zapisów produkcyjnych: 0.`);
+      console.log(`Kontrola: ${proof.status}; kopia kompletna: ${proof.backup?.complete === true ? 'tak' : 'niezweryfikowana'}; odtworzenie: ${preflightRestoreVerified(proof) ? 'PASS' : 'niezweryfikowane'}. Zapisów produkcyjnych: 0.`);
       console.log('Wyniki i zaszyfrowana kopia znajdują się wyłącznie w prywatnym katalogu --output. Migracji nie wykonano.');
       if (proof.status === 'blocked') process.exitCode = 2;
     }

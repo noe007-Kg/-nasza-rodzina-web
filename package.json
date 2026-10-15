@@ -17,6 +17,7 @@
     "household:migration:dry-run": "node scripts/prepare-household-migration.mjs",
     "household:preflight": "node scripts/household-preflight.mjs",
     "household:review": "node scripts/review-household-migration.mjs",
+    "household:diagnose": "node scripts/diagnose-household-migration.mjs",
     "test:server": "node --test tests/edu-*.test.mjs tests/account-*.test.mjs tests/notification-*.test.mjs tests/calendar-*.test.mjs",
     "functions:prepare": "node scripts/prepare-functions.mjs",
     "pretest:server": "npm run functions:prepare",

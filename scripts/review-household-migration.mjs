@@ -58,7 +58,7 @@ export async function readOwnerReviewTokens(bucket) {
 }
 
 /** Only the existing metadata allowlist is read. No document bodies or session envelopes are requested. */
-export async function readOwnerReviewSource(config) {
+export async function readOwnerReviewSource(config,{allowPartial=false}={}) {
   assertHouseholdEnvironment(config,{});
   const [{applicationDefault,initializeApp,deleteApp},{getFirestore},{getAuth},{getStorage},{GoogleAuth},{collectHouseholdInventory}]=await Promise.all([
     import('firebase-admin/app'),import('firebase-admin/firestore'),import('firebase-admin/auth'),import('firebase-admin/storage'),
@@ -75,8 +75,8 @@ export async function readOwnerReviewSource(config) {
       readProductionLocations({request,projectId:config.projectId,bucket:config.bucket}),
       readOwnerReviewTokens(getStorage(app).bucket(config.bucket)),
     ]);
-    if(results[0].status!=='fulfilled')fail('OWNER_REVIEW_SOURCE_NOT_VERIFIED');
-    return {inventory:results[0].value,rules:results[1].status==='fulfilled'?results[1].value:{},
+    if(results[0].status!=='fulfilled'&&!allowPartial)fail('OWNER_REVIEW_SOURCE_NOT_VERIFIED');
+    return {inventory:results[0].status==='fulfilled'?results[0].value:null,rules:results[1].status==='fulfilled'?results[1].value:{},
       locations:results[2].status==='fulfilled'?results[2].value:{},
       tokens:results[3].status==='fulfilled'?results[3].value:{scanVerified:false}};
   } finally {await deleteApp(app);}
@@ -133,6 +133,7 @@ export function classifyOwnerWarnings(summary,readiness) {
     NO_SECRET_SESSION_OR_PROVIDER_CONTENT_INSPECTED:['account-and-key-recovery'],
     STORAGE_DOWNLOAD_TOKEN_REVOCATION_NOT_PERFORMED:['private-download-tokens'],
     STORAGE_BEARER_URL_PRESENT:['private-download-tokens'],
+    STORAGE_BEARER_DOWNLOAD_TOKEN_PRESENT:['private-download-tokens'],
     METADATA_SNAPSHOT_NOT_ATOMIC:['capture-consistency'],
     DEPLOYED_RULES_NOT_VERIFIED:['production-rules-firestore','production-rules-storage'],
     FULL_DOCUMENT_AND_BINARY_BACKUP_NOT_CAPTURED:['complete-backup','restore'],
@@ -197,7 +198,7 @@ export async function runOwnerReview(options,deps={}) {
     })() : null);
     if(!ask)fail('OWNER_REVIEW_INTERACTIVE_TTY_REQUIRED');
     try {
-      console.log(`Przygotowano mapę ${review.summary.profiles.length} profili. Przed decyzją sprawdź lokalnie owner-review.md oraz decisions-template.private.json w ${output}. Nie przesyłaj tych plików do rozmowy ani GitHub.`);
+      (deps.notify||console.log)(`Przygotowano mapę ${review.summary.profiles.length} profili. Przed decyzją sprawdź lokalnie owner-review.md oraz decisions-template.private.json w ${output}. Nie przesyłaj tych plików do rozmowy ani GitHub.`);
       const decisions=await askOwnerReview(review.request,review.summary,ask);
       await writePrivateFile(path.join(output,'owner-decisions.private.json'),encode(decisions));
       review=prepareHouseholdOwnerReview(config,sourcePlan,source.inventory,decisions);
