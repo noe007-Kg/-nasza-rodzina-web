@@ -70,10 +70,10 @@ export function createFamilyRouter({ services = getServerFirebase, memberGuard =
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new EduServerError('FAMILY_INVALID_REQUEST', 400, 'Nieprawidłowe dane żądania.');
       if (body.operation && body.action && body.operation !== body.action) throw new EduServerError('FAMILY_INVALID_REQUEST', 400, 'Nieprawidłowa operacja.');
       const operation = body.operation || body.action;
-      if (!['state', 'status'].includes(operation)) assertFamilyV2WriteAllowed(context, env);
+      if (!['state', 'status'].includes(operation)) assertFamilyV2WriteAllowed(context, env, domain);
       const result = await ({ tasks: tasksAction, health: healthAction, finance: financeAction })[domain](context, body);
       response.statusCode = 200;
-      response.end(JSON.stringify({ ok: true, ...result, writesEnabled: familyV2WritesAllowed(context, env) }));
+      response.end(JSON.stringify({ ok: true, ...result, writesEnabled: familyV2WritesAllowed(context, env, domain) }));
     } catch (error) {
       const known = error instanceof EduServerError;
       response.statusCode = known ? error.status : 500;

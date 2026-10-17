@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { EduServerError } from './edu-auth.mjs';
 import { canReceiveNotification, deriveNotificationEvent, semanticRecord } from './notification-events.mjs';
 import { enqueueInAppEvents } from './notification-inbox.mjs';
+import { explicitFamilyId } from './family-identity.mjs';
 
 // All requests and reads are bounded. A collection over this limit is skipped
 // rather than treating an incomplete snapshot as a new notification baseline.
@@ -26,10 +27,13 @@ export function validateRefreshBody(body) {
 export function refreshSources(db, uid, profile) {
   const ownPerson = profile.personKey || profile.name;
   const bounded = query => query.limit(MAX_REFRESH_RECORDS + 1);
+  const familyId = explicitFamilyId(profile);
+  const tasks = familyId && profile.disabled !== true ? db.collection('tasks').where('familyId', '==', familyId) : null;
   return [
     { scope: 'calendar', collection: 'calendarEvents', query: bounded(db.collection('calendarEvents')) },
     { scope: 'private-calendar', collection: 'privateCalendarEvents', query: bounded(db.collection('privateCalendarEvents').where('ownerUid', '==', uid)) },
-    { scope: 'tasks', collection: 'tasks', query: bounded(db.collection('tasks')) },
+    ...(tasks ? [{ scope: 'tasks', collection: 'tasks', query: bounded(profile.role === 'parent'
+      ? tasks : tasks.where('person', 'in', [...new Set(['family', ownPerson].filter(value => typeof value === 'string' && value !== ''))])) }] : []),
     { scope: 'shopping', collection: 'shoppingItems', query: bounded(db.collection('shoppingItems')) },
     // Admin can read one recent window and authorize every candidate before
     // enqueueing. This single-field query needs no new composite index and
@@ -42,7 +46,7 @@ export function refreshSources(db, uid, profile) {
   ];
 }
 
-const privacyFields = ['person', 'private', 'privateToParents', 'ownerUid', 'createdBy', 'uid', 'channel', 'participants', 'updatedBy'];
+const privacyFields = ['familyId', 'person', 'private', 'privateToParents', 'ownerUid', 'createdBy', 'uid', 'channel', 'participants', 'updatedBy'];
 function pendingEvent(event) {
   // The baseline stores fingerprints and routing only, never chat/health text.
   const record = Object.fromEntries(privacyFields.filter(key => event.record[key] !== undefined).map(key => {

@@ -2,13 +2,15 @@ import { useEffect } from 'react';
 import type { User } from 'firebase/auth';
 import { collection, onSnapshot, query, where, type Query, type QuerySnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase';
+import { tasksHouseholdQuery, tasksReadScope } from '../task-scope';
+import type { Member } from '../app-shared';
 
 export type InAppRefreshReason = 'launch' | 'foreground' | 'changes';
 export type InAppRefreshResult = {
   mode: 'in-app'; created: number; checked: number; baselines?: number;
   rateLimited: boolean; retryAfterMs: number; skippedSources: string[];
 };
-type RefreshMember = { name?: string; personKey?: string; role?: string } | null;
+type RefreshMember = Member | null;
 
 /** Only the activation reason travels from the browser. Notification text,
  * recipients and permission decisions are reconstructed on the server. */
@@ -41,6 +43,7 @@ function fingerprint(snapshot: QuerySnapshot): string {
  * selected module. Firestore's identical existing queries share its local
  * cache/listen targets. There is no interval and no background polling. */
 export function useInAppNotificationRefresh(user: User, member: RefreshMember = null): void {
+  const taskScope = tasksReadScope(user.uid, member);
   useEffect(() => {
     if (!member || !['parent', 'adult', 'child'].includes(member.role || '')) return;
     let alive = true;
@@ -50,11 +53,12 @@ export function useInAppNotificationRefresh(user: User, member: RefreshMember = 
     let retry: ReturnType<typeof setTimeout> | undefined;
     let controller: AbortController | undefined;
     const ownPerson = member.personKey || member.name || '';
+    const taskSource = tasksHouseholdQuery(db, member);
     const visible = () => document.visibilityState === 'visible';
     const sources: Query[] = [
       query(collection(db, 'calendarEvents')),
       query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', user.uid)),
-      query(collection(db, 'tasks')),
+      ...(taskSource ? [taskSource] : []),
       query(collection(db, 'shoppingItems')),
       query(collection(db, 'familyMessages'), where('channel', '==', 'family')),
       query(collection(db, 'familyMessages'), where('participants', 'array-contains', user.uid)),
@@ -122,5 +126,5 @@ export function useInAppNotificationRefresh(user: User, member: RefreshMember = 
       document.removeEventListener('visibilitychange', activate);
       window.removeEventListener('pageshow', activate);
     };
-  }, [user.uid, member?.name, member?.personKey, member?.role]);
+  }, [user.uid, member?.name, member?.personKey, member?.role, taskScope]);
 }

@@ -59,6 +59,21 @@ test('v2 maintenance remains separate from SP4 and health expiry never deletes f
   }
 });
 
+test('task cleanup stays inert when its independent switch is off, even with the global V2 switch on', async () => {
+  const names = ['FAMILY_TASKS_WRITES_ENABLED', 'FAMILY_V2_WRITES_ENABLED', 'FIREBASE_STORAGE_BUCKET'];
+  const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  try {
+    process.env.FAMILY_TASKS_WRITES_ENABLED = 'false';
+    process.env.FAMILY_V2_WRITES_ENABLED = 'true';
+    process.env.FIREBASE_STORAGE_BUCKET = 'demo-no-storage-request.appspot.com';
+    // Without the task-only gate this would reach Storage/Firestore and fail:
+    // this runtime-contract test never starts an emulator or accesses the cloud.
+    await functions.taskPhotoCleanup.run({});
+  } finally {
+    for (const name of names) if (previous[name] === undefined) delete process.env[name]; else process.env[name] = previous[name];
+  }
+});
+
 test('finance reminders use one independent Warsaw daily job without any secret or Storage dependency', () => {
   const endpoint = functions.financeReminders.__endpoint;
   assert.equal(endpoint.platform, 'gcfv2');

@@ -98,9 +98,9 @@ test('cancellation of a restored lesson with changed details gets a distinct sta
 });
 
 test('adult receives general and own private notifications without receiving parental or student school mailboxes', () => {
-  const adult = { id: 'adult-uid', role: 'adult', personKey: 'member-0123456789abcdef01234567', name: 'Dorosły', active: true, canLogin: true };
+  const adult = { id: 'adult-uid', role: 'adult', personKey: 'member-0123456789abcdef01234567', name: 'Dorosły', active: true, canLogin: true, familyId: 'household-a' };
   for (const collection of ['tasks', 'shoppingItems', 'calendarEvents']) {
-    const event = deriveNotificationEvent(collection, 'general', null, { title: 'Wpis rodzinny', person: 'family', createdBy: 'other' });
+    const event = deriveNotificationEvent(collection, 'general', null, { title: 'Wpis rodzinny', person: 'family', createdBy: 'other', familyId: 'household-a' });
     assert.equal(canReceiveNotification(adult, event), true);
   }
   const family = deriveNotificationEvent('familyMessages', 'family', null, { channel: 'family', participants: [], uid: 'other', text: 'Cześć' });

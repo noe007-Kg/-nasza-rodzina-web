@@ -130,3 +130,38 @@ test('finance reuses the authenticated family route and Preview never enables it
   }
   assert.equal(financeCalls, 1);
 });
+
+test('Tasks has a separate server switch and never unlocks Health or Finance', async () => {
+  const production = { VERCEL: '1', VERCEL_ENV: 'production', FAMILY_V2_SITE_ORIGIN: `https://${host}`,
+    FAMILY_TASKS_WRITES_ENABLED: 'true', FAMILY_V2_WRITES_ENABLED: 'false' };
+  const scoped = { ...context, profile: { ...context.profile, familyId: 'test-household' } };
+  let actions = 0;
+  const { router } = mocked({ env: production, memberGuard: async () => scoped,
+    financeAction: async () => ({}),
+    tasksAction: async () => { actions++; return {}; } });
+  const state = response(); await router(request(), state);
+  assert.equal(state.body.writesEnabled, true);
+  const save = response(); await router(request('save-task'), save);
+  assert.equal(save.statusCode, 200); assert.equal(actions, 2);
+  for (const domain of ['health', 'finance']) {
+    const read = response(); await router(request('state', { url: `/api/family/${domain}` }), read);
+    assert.equal(read.body.writesEnabled, false);
+    const write = response(); await router(request('save', { url: `/api/family/${domain}` }), write);
+    assert.equal(write.statusCode, 503);
+  }
+  for (const familyId of [undefined, '', '__legacy__', 'unsafe/id']) {
+    const unavailable = mocked({ env: production, memberGuard: async () => ({ ...scoped, profile: { ...scoped.profile, familyId } }) });
+    const res = response(); await unavailable.router(request('save-task'), res);
+    assert.equal(res.statusCode, 503); assert.equal(unavailable.calls.tasks, 0);
+  }
+});
+
+test('global V2 flag alone cannot enable Tasks and its own flag cannot override Preview', async () => {
+  const scoped = { ...context, profile: { ...context.profile, familyId: 'test-household' } };
+  for (const env of [{ VERCEL_ENV: 'production', FAMILY_V2_SITE_ORIGIN: `https://${host}`, FAMILY_V2_WRITES_ENABLED: 'true' },
+    { ...preview, FAMILY_TASKS_WRITES_ENABLED: 'true' }]) {
+    const { router, calls } = mocked({ env, memberGuard: async () => scoped });
+    const res = response(); await router(request('save-task', { body: { action: 'save-task', FAMILY_TASKS_WRITES_ENABLED: 'true' } }), res);
+    assert.equal(res.statusCode, 503); assert.equal(calls.tasks, 0);
+  }
+});

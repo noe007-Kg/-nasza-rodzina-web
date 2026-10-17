@@ -58,6 +58,17 @@ service firebase.storage {
         && request.resource.size <= 10 * 1024 * 1024 && medicalFile();
       allow delete: if parent();
     }
+    function taskFamilyId(value) {
+      return value is string && value != '__legacy__' && value.matches('[A-Za-z0-9][A-Za-z0-9_-]{0,127}');
+    }
+    function taskMember() {
+      return member() && profile().get('disabled', false) == false
+        && taskFamilyId(profile().get('familyId', null));
+    }
+    function taskPerson() {
+      let personKey = profile().get('personKey', '');
+      return personKey is string && personKey.size() > 0 ? personKey : profile().get('name', '');
+    }
     function taskUpload(filename) {
       return firestore.get(/databases/(default)/documents/_taskPhotoUploads/$(filename.split('[.]')[0])).data;
     }
@@ -68,14 +79,14 @@ service firebase.storage {
     // the current member and this Admin-issued, atomically revoked upload ticket.
     function proofTicketAccess(taskId, uid, filename) {
       let ticket = taskUpload(filename);
-      return ticket.get('familyId', null) == profile().get('familyId', null)
+      return taskFamilyId(ticket.get('familyId', null)) && ticket.familyId == profile().familyId
         && ticket.taskId == taskId && ticket.uid == uid
         && ticket.path == 'taskProof/' + taskId + '/' + uid + '/' + filename
         && ticket.state in ['open', 'submitted']
-        && (parent() || (uid == request.auth.uid && (ticket.person == ownPerson() || ticket.person == 'family')));
+        && (parent() || (uid == request.auth.uid && (ticket.person == taskPerson() || ticket.person == 'family')));
     }
     function proofAccess(taskId, uid, filename) {
-      return member() && proofFilename(filename) && proofTicketAccess(taskId, uid, filename);
+      return taskMember() && proofFilename(filename) && proofTicketAccess(taskId, uid, filename);
     }
     match /taskProof/{taskId}/{uid}/{filename} {
       allow read: if proofAccess(taskId, uid, filename);
@@ -92,9 +103,8 @@ service firebase.storage {
     }
     function rewardImageAccess(rewardId, uid, filename) {
       let ticket = rewardImageTicket(filename);
-      let personKey = profile().get('personKey', '');
-      let rewardPerson = personKey is string && personKey.size() > 0 ? personKey : profile().get('name', '');
-      return ticket.get('familyId', null) == profile().get('familyId', null)
+      let rewardPerson = taskPerson();
+      return taskFamilyId(ticket.get('familyId', null)) && ticket.familyId == profile().familyId
         && ticket.rewardId == rewardId && ticket.uid == uid
         && ticket.path == 'taskRewardImages/' + rewardId + '/' + uid + '/' + filename
         && (ticket.state == 'open' && parent() && uid == request.auth.uid
@@ -102,8 +112,8 @@ service firebase.storage {
             || (ticket.active == true && (ticket.people.size() == 0 || rewardPerson in ticket.people))));
     }
     match /taskRewardImages/{rewardId}/{uid}/{filename} {
-      allow read: if member() && proofFilename(filename) && rewardImageAccess(rewardId, uid, filename);
-      allow create: if resource == null && member() && parent() && uid == request.auth.uid
+      allow read: if taskMember() && proofFilename(filename) && rewardImageAccess(rewardId, uid, filename);
+      allow create: if resource == null && taskMember() && parent() && uid == request.auth.uid
         && proofFilename(filename) && rewardImageAccess(rewardId, uid, filename)
         && rewardImageTicket(filename).state == 'open' && rewardImageTicket(filename).expiresAt > request.time
         && request.resource.size > 0 && request.resource.size <= 8 * 1024 * 1024

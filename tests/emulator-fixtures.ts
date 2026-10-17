@@ -43,6 +43,7 @@ export async function seedEmulators() {
     await auth.updateUser(account.uid, { password, disabled: false });
     const active = account.uid !== accounts.inactive.uid;
     await db.doc(`members/${account.uid}`).set({
+      familyId: 'browser-test-household',
       name: account.name, personKey: account.name, role: account.role,
       // Layla is a visible, passive family profile, without application access.
       active: true, canLogin: active, adult: account.adult,
@@ -54,11 +55,13 @@ export async function seedEmulators() {
   const weekday = new Date(`${day}T12:00:00`).getDay() || 7;
   const batch = db.batch();
   batch.set(db.doc('tasks/child-approval'), {
+    familyId: 'browser-test-household',
     title: 'Wynieść śmieci — test zatwierdzania', person: 'Nikodem', dueDate: day,
     done: false, priority: 'normal', note: '', points: 10, requireApproval: true,
     approvalStatus: 'none', repeat: 'none', createdBy: accounts.parent.uid, createdAt,
   });
   batch.set(db.doc('tasks/sibling-approval'), {
+    familyId: 'browser-test-household',
     title: 'Zadanie Pawła', person: 'Paweł', dueDate: day, done: false,
     priority: 'normal', note: '', points: 5, requireApproval: true,
     approvalStatus: 'none', repeat: 'none', createdBy: accounts.parent.uid, createdAt,

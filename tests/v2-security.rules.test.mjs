@@ -41,10 +41,10 @@ beforeEach(async () => {
   await environment.withSecurityRulesDisabled(async context => {
     const db = context.firestore();
     await Promise.all(Object.entries(people).map(([uid, profile]) => setDoc(doc(db, 'members', uid), {
-      ...profile, active: true, canLogin: true, archived: false,
+      ...profile, active: true, canLogin: true, archived: false, familyId: 'v2-fixture-family',
     })));
     await Promise.all([
-      setDoc(doc(db, 'tasks', 'assigned'), { person: childPerson, title: 'Zadanie testowe', points: 20,
+      setDoc(doc(db, 'tasks', 'assigned'), { person: childPerson, title: 'Zadanie testowe', points: 20, familyId: 'v2-fixture-family',
         done: false, requireApproval: true, approvalStatus: 'none', verificationMode: 'photo', createdBy: 'parent-a' }),
       setDoc(doc(db, 'familyMessages', 'family-test'), { channel: 'family', participants: [], text: 'Wiadomość testowa', uid: 'parent-a', name: 'Rodzic testowy A', createdAt: now() }),
       setDoc(doc(db, 'familyMessages', 'parents-test'), { channel: 'private:parent-a:parent-b', participants: ['parent-a', 'parent-b'], text: 'Prywatna wiadomość testowa', uid: 'parent-a', name: 'Rodzic testowy A', createdAt: now() }),
@@ -57,7 +57,7 @@ after(async () => { await environment?.cleanup(); });
 async function seedProof(overrides = {}) {
   const id = randomUUID();
   const path = `taskProof/assigned/child-a/${id}.png`;
-  const data = { taskId: 'assigned', uid: 'child-a', person: childPerson, path, state: 'open', expiresAt: future(),
+  const data = { taskId: 'assigned', uid: 'child-a', person: childPerson, path, state: 'open', expiresAt: future(), familyId: 'v2-fixture-family',
     orphanAfter: Timestamp.fromMillis(Date.now() + 24 * 60 * 60_000), size: png.length, contentType: 'image/png', ...overrides };
   await environment.withSecurityRulesDisabled(context => setDoc(doc(context.firestore(), '_taskPhotoUploads', id), data));
   return { id, path, data };

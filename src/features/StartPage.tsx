@@ -7,6 +7,7 @@ import { db } from '../firebase';
 import { onSnapshot } from '../feedback';
 import { AppIcon, capitalize, formatShortDate, formatTime, isAdultMember, isParent, isPersonKey, ownPerson, personLabel, type CalendarEventData, type Member, type Page, type TaskItem, type QuickProduct, Modal, DetailRow } from '../app-shared';
 import { subscribeCalendar } from '../calendar-store';
+import { tasksHouseholdQuery, tasksReadScope } from '../task-scope';
 import { Icon } from '../ui';
 import { useDashboardOrder } from './useDashboardOrder';
 import { reorderDashboardCards, type StartCardId } from './start-layout';
@@ -75,7 +76,9 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const directory = useFamilyDirectory();
   const profiles = useMemo(() => orderedFamilyProfiles(directory, user.uid), [directory, user.uid]);
   const { items: notifications } = useNotifications();
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const taskScope = tasksReadScope(user.uid, member);
+  const [taskData, setTaskData] = useState<{ scope: string; rows: TaskItem[] }>({ scope: '', rows: [] });
+  const tasks = taskData.scope === taskScope ? taskData.rows : [];
   const [calendarData, setCalendarData] = useState<{ uid: string; rows: CalendarEventData[] }>({ uid: user.uid, rows: [] });
   const events = calendarData.uid === user.uid ? calendarData.rows : [];
   const [calendarDetail, setCalendarDetail] = useState<{ uid: string; key: string } | null>(null);
@@ -99,8 +102,10 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
     useSensor(TouchSensor, { activationConstraint: { delay: 550, tolerance: 8 } }),
     useSensor(KeyboardSensor),
   );
-  useEffect(() => onSnapshot(collection(db, 'tasks'), snap => {
-    setTasks(snap.docs.map(d => {
+  useEffect(() => { const target = tasksHouseholdQuery(db, member);
+    setTaskData({ scope: taskScope, rows: [] }); if (!target) return;
+    return onSnapshot(target, snap => {
+    setTaskData({ scope: taskScope, rows: snap.docs.map(d => {
       const x = d.data();
       return { id: d.id, title: String(x.title || ''), person: isPersonKey(x.person) ? x.person : 'family', done: x.done === true,
         dueDate: typeof x.dueDate === 'string' ? x.dueDate : '', priority: x.priority === 'low' || x.priority === 'high' ? x.priority : 'normal',
@@ -108,8 +113,8 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
         approvalStatus: x.approvalStatus === 'pending' || x.approvalStatus === 'approved' ? x.approvalStatus : 'none',
         repeat: x.repeat === 'daily' || x.repeat === 'weekly' || x.repeat === 'monthly' ? x.repeat : 'none',
         createdAt: timestampDate(x.createdAt), completedAt: timestampDate(x.completedAt) };
-    }));
-  }), [user.uid]);
+    }) });
+  }); }, [taskScope]);
   useEffect(() => onSnapshot(collection(db, 'shoppingItems'), snap => setShopping(snap.docs.map(d => {
     const x = d.data(); const title = String(x.title || ''); return { id: d.id, title, done: x.done === true, category: isShoppingCategory(x.category) ? x.category : categorizeProduct(title), quantity: typeof x.quantity === 'string' ? x.quantity : '', unit: typeof x.unit === 'string' ? x.unit : '', createdAt: timestampDate(x.createdAt) };
   }))), [user.uid]);

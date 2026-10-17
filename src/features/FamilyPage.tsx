@@ -2,6 +2,7 @@ import { addDays, ageFromBirthDate, type CalendarEventData, collection, db, endO
 import { onSnapshot } from 'firebase/firestore';
 
 import { subscribeCalendar } from '../calendar-store';
+import { tasksHouseholdQuery, tasksReadScope } from '../task-scope';
 import { useFamilyDirectory } from '../family-directory';
 import { memberPersonKey, memberSchoolEnabled } from '../family-members';
 import { familyAccessDiagnostic, familyAccessErrorMessage, type FamilyQuerySource } from '../family-access-diagnostics';
@@ -14,7 +15,9 @@ import { ownPerson } from '../app-shared';
 export function FamilyPage({ user, member, goTo, selected, onSelect }: { user: User; member: Member | null; goTo: (page: Page) => void; selected: PersonKey; onSelect: (person: PersonKey) => void }) {
   const members = useFamilyDirectory().filter(profile => profile.active !== false && !profile.archived && !profile.disabled);
   const [events, setEvents] = useState<CalendarEventData[]>([]);
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const taskScope = tasksReadScope(user.uid, member);
+  const [taskData, setTaskData] = useState<{ scope: string; rows: TaskItem[] }>({ scope: '', rows: [] });
+  const tasks = taskData.scope === taskScope ? taskData.rows : [];
   const schoolAccess = schoolReadAccess(member);
   const schoolScope = schoolReadAccessKey(user.uid, schoolAccess);
   const [schoolData, setSchoolData] = useState<{ scope: string; rows: SchoolRecord[] }>({ scope: '', rows: [] });
@@ -38,12 +41,14 @@ export function FamilyPage({ user, member, goTo, selected, onSelect }: { user: U
   }, [user.uid]);
 
   useEffect(() => {
-    const stop = onSnapshot(collection(db,'tasks'), (snap) => {
+    const target = tasksHouseholdQuery(db, member);
+    setTaskData({ scope: taskScope, rows: [] }); if (!target) return;
+    const stop = onSnapshot(target, (snap) => {
     clearNotice('family.tasks');
-    setTasks(snap.docs.map((d): TaskItem => { const x=d.data(); return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', done:x.done === true, dueDate:typeof x.dueDate === 'string' ? x.dueDate : '', priority:x.priority === 'low' || x.priority === 'high' ? x.priority : 'normal', note:typeof x.note === 'string' ? x.note : '', points:Number(x.points || 0), requireApproval:x.requireApproval === true, approvalStatus:x.approvalStatus === 'pending' || x.approvalStatus === 'approved' ? x.approvalStatus : 'none', repeat:x.repeat === 'daily' || x.repeat === 'weekly' || x.repeat === 'monthly' ? x.repeat : 'none' }; }));
-    }, error => { setTasks([]); reportQueryError('family.tasks', error); });
+    setTaskData({ scope: taskScope, rows: snap.docs.map((d): TaskItem => { const x=d.data(); return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', done:x.done === true, dueDate:typeof x.dueDate === 'string' ? x.dueDate : '', priority:x.priority === 'low' || x.priority === 'high' ? x.priority : 'normal', note:typeof x.note === 'string' ? x.note : '', points:Number(x.points || 0), requireApproval:x.requireApproval === true, approvalStatus:x.approvalStatus === 'pending' || x.approvalStatus === 'approved' ? x.approvalStatus : 'none', repeat:x.repeat === 'daily' || x.repeat === 'weekly' || x.repeat === 'monthly' ? x.repeat : 'none' }; }) });
+    }, error => { setTaskData({ scope: taskScope, rows: [] }); reportQueryError('family.tasks', error); });
     return () => { stop(); clearNotice('family.tasks'); };
-  }, [user.uid]);
+  }, [taskScope]);
 
   useEffect(() => {
     setSchoolData({ scope: schoolScope, rows: [] });

@@ -158,8 +158,10 @@ test('orphan cleanup deletes abandoned uploads but preserves submitted photos aw
   const orphanId = '00112233-4455-6677-8899-aabbccddeeff';
   const orphanPath = `taskProof/orphan-task/child/${orphanId}.png`;
   context.rows.set(`_taskPhotoUploads/${orphanId}`, { taskId: 'orphan-task', uid: 'child', path: orphanPath, state: 'open',
+    familyId: 'fixture-family', contentType: 'image/png', size: png.length, person: 'child-person',
     orphanAfter: Timestamp.fromMillis(familyTestNow.getTime() - 1) });
-  context.bucket.objects.set(orphanPath, { bytes: png, metadata: { size: png.length, contentType: 'image/png' } });
+  context.bucket.objects.set(orphanPath, { bytes: png, metadata: { size: png.length, contentType: 'image/png',
+    metadata: { taskId: 'orphan-task', uploadId: orphanId, uploaderUid: 'child' } } });
   const result = await runTaskPhotoCleanup(context, { now: familyTestNow });
   assert.equal(result.abandoned, 1);
   assert.equal(context.bucket.objects.has(orphanPath), false);

@@ -28,6 +28,7 @@ test('parent reward form requires description and preserves the uploaded image a
       const uploadId = randomUUID(); const rewardId = String(body.rewardId);
       ticket = { uploadId, rewardId, path: `taskRewardImages/${rewardId}/${accounts.parent.uid}/${uploadId}.png` };
       await fixtureDatabase().doc(`_taskRewardImageUploads/${uploadId}`).set({ rewardId, uid: accounts.parent.uid, path: ticket.path,
+        familyId: 'browser-test-household',
         state: 'open', contentType: body.contentType, size: body.size, people: [], active: false,
         expiresAt: Timestamp.fromMillis(Date.now() + 30 * 60_000), orphanAfter: Timestamp.fromMillis(Date.now() + 86_400_000) });
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, ...ticket }) }); return;

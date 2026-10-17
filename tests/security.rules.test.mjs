@@ -38,7 +38,7 @@ beforeEach(async () => {
   await environment.clearFirestore();
   await environment.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
-    await Promise.all(Object.entries(profiles).map(([uid, profile]) => setDoc(doc(db, 'members', uid), profile)));
+    await Promise.all(Object.entries(profiles).map(([uid, profile]) => setDoc(doc(db, 'members', uid), { ...profile, familyId: 'rules-fixture-family' })));
     await Promise.all([
       setDoc(doc(db, 'schoolItems', 'pawel'), { person: 'Paweł', type: 'grade', title: '5', createdBy: 'parent' }),
       setDoc(doc(db, 'schoolItems', 'nikodem'), { person: 'Nikodem', type: 'lesson', title: 'Polski', createdBy: 'parent' }),
@@ -48,8 +48,8 @@ beforeEach(async () => {
       setDoc(doc(db, 'healthRecords', 'family'), { person: 'family', title: 'Apteczka', type: 'history', privateToParents: false, createdBy: 'parent' }),
       setDoc(doc(db, 'familyMessages', 'family'), { channel: 'family', participants: [], uid: 'parent', text: 'Cześć', name: 'Sebastian', createdAt: Timestamp.now() }),
       setDoc(doc(db, 'familyMessages', 'private'), { channel: 'private:child:parent', participants: ['child', 'parent'], uid: 'child', text: 'Prywatne', name: 'Paweł', createdAt: Timestamp.now() }),
-      setDoc(doc(db, 'tasks', 'reward'), { person: 'Paweł', title: 'Pokój', done: false, points: 10, requireApproval: true, approvalStatus: 'none', createdBy: 'parent' }),
-      setDoc(doc(db, 'tasks', 'sibling'), { person: 'Nikodem', title: 'Zabawki', done: false, points: 2, requireApproval: true, approvalStatus: 'none', createdBy: 'parent' }),
+      setDoc(doc(db, 'tasks', 'reward'), { familyId: 'rules-fixture-family', person: 'Paweł', title: 'Pokój', done: false, points: 10, requireApproval: true, approvalStatus: 'none', createdBy: 'parent' }),
+      setDoc(doc(db, 'tasks', 'sibling'), { familyId: 'rules-fixture-family', person: 'Nikodem', title: 'Zabawki', done: false, points: 2, requireApproval: true, approvalStatus: 'none', createdBy: 'parent' }),
     ]);
   });
 });
@@ -520,7 +520,7 @@ test('both active parents can execute all four FamilyPage queries without seeing
   await environment.withSecurityRulesDisabled(async context => {
     const db = context.firestore();
     await Promise.all([
-      setDoc(doc(db, 'members', 'second-parent'), { ...profiles.parent, name: 'Dominika', personKey: 'Dominika' }),
+      setDoc(doc(db, 'members', 'second-parent'), { ...profiles.parent, familyId: 'rules-fixture-family', name: 'Dominika', personKey: 'Dominika' }),
       setDoc(doc(db, 'calendarEvents', 'family-shared'), { ...calendarEntry('parent'), private: false }),
       setDoc(doc(db, 'privateCalendarEvents', 'parent-own'), calendarEntry('parent')),
       setDoc(doc(db, 'privateCalendarEvents', 'second-parent-own'), calendarEntry('second-parent')),
@@ -530,7 +530,7 @@ test('both active parents can execute all four FamilyPage queries without seeing
     const db = environment.authenticatedContext(uid).firestore();
     const shared = await assertSucceeds(getDocs(collection(db, 'calendarEvents')));
     const own = await assertSucceeds(getDocs(query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', uid))));
-    const tasks = await assertSucceeds(getDocs(collection(db, 'tasks')));
+    const tasks = await assertSucceeds(getDocs(query(collection(db, 'tasks'), where('familyId', '==', 'rules-fixture-family'))));
     const school = await assertSucceeds(getDocs(collection(db, 'schoolItems')));
     assert.equal(shared.size, 1);
     assert.deepEqual(own.docs.map(item => item.id), [`${uid}-own`]);
@@ -583,7 +583,7 @@ test('legacy child without personKey retains own-name school access, while a mis
 test('adult membership permits general family data and own private data without parent authority', async () => {
   await assertSucceeds(getDocs(collection(adultDb, 'members')));
   await assertSucceeds(getDocs(collection(adultDb, 'calendarEvents')));
-  await assertSucceeds(getDocs(collection(adultDb, 'tasks')));
+  await assertSucceeds(getDocs(query(collection(adultDb, 'tasks'), where('familyId', '==', 'rules-fixture-family'), where('person', 'in', ['family', profiles.adult.personKey]))));
   await assertSucceeds(getDocs(collection(adultDb, 'shoppingItems')));
   await assertSucceeds(getDocs(query(collection(adultDb, 'familyMessages'), where('channel', '==', 'family'))));
   await assertSucceeds(getDocs(query(collection(adultDb, 'healthRecords'), where('privateToParents', '==', false), where('person', 'in', ['family', profiles.adult.personKey]))));

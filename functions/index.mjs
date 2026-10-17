@@ -34,6 +34,7 @@ const calendarSiteOrigin = defineString('CALENDAR_SITE_ORIGIN', { default: '' })
 const calendarEncryptionKeyId = defineString('CALENDAR_ENCRYPTION_KEY_ID', { default: 'v1' });
 const googleCalendarOwnerUid = defineString('CALENDAR_GOOGLE_OWNER_UID', { default: '' });
 const familyV2WritesEnabled = defineString('FAMILY_V2_WRITES_ENABLED', { default: 'false' });
+const familyTasksWritesEnabled = defineString('FAMILY_TASKS_WRITES_ENABLED', { default: 'false' });
 const familyStorageBucket = defineString('FIREBASE_STORAGE_BUCKET', { default: '' });
 
 const notificationDependencies = {
@@ -139,12 +140,12 @@ export const medicineReminders = onSchedule({ schedule: 'every 5 minutes', timeZ
 // They do not modify the existing SP4 schedules, sessions or medicine reminders.
 const familyJobOptions = { timeZone: 'Europe/Warsaw', region, retryCount: 0,
   minInstances: 0, maxInstances: 1, concurrency: 1, memory: '256MiB', timeoutSeconds: 300 };
-function familyJobContext() {
-  if (familyV2WritesEnabled.value() !== 'true' || !familyStorageBucket.value()) return null;
+function familyJobContext(enabled = familyV2WritesEnabled.value()) {
+  if (enabled !== 'true' || !familyStorageBucket.value()) return null;
   return { app, db, bucket: getStorage(app).bucket(familyStorageBucket.value()) };
 }
 export const taskPhotoCleanup = onSchedule({ ...familyJobOptions, schedule: '0 * * * *' }, async () => {
-  const context = familyJobContext();
+  const context = familyJobContext(familyTasksWritesEnabled.value());
   if (!context) return;
   const result = await runTaskPhotoCleanup(context);
   info('Task photograph cleanup', result); // Aggregate counts only.

@@ -2,6 +2,7 @@ import { collection, db, EmptyState, errorMessage, formatDateInput, formatShortD
 import { uploadBytesResumable } from 'firebase/storage';
 import { familyAction, familyV2WritesAllowed } from '../family-v2-client';
 import { useFamilyDirectory } from '../family-directory';
+import { taskFamilyId, tasksHouseholdQuery, tasksReadScope } from '../task-scope';
 import { memberPersonKey } from '../family-members';
 import { TASK_PHOTO_LIMIT, uploadTaskPhoto, validateTaskPhoto, type TaskUploadProgress } from './tasks-upload';
 import './tasks-v2.css';
@@ -39,9 +40,14 @@ function RewardImage({ path, uid, title }: { path: string; uid: string; title: s
 }
 
 export function TasksPage({ user, member }: { user: User; member: Member | null }) {
+  const taskScope = tasksReadScope(user.uid, member);
+  const liveScope = useRef(taskScope);
+  liveScope.current = taskScope;
   const directory = useFamilyDirectory();
-  const profiles = directory.filter(profile => profile.active !== false && !profile.archived && !profile.disabled);
-  const [items, setItems] = useState<ManagedTask[]>([]);
+  const profiles = directory.filter(profile => taskFamilyId(member) !== null && taskFamilyId(profile) === taskFamilyId(member)
+    && profile.active !== false && !profile.archived && !profile.disabled);
+  const [taskData, setTaskData] = useState<{ scope: string; rows: ManagedTask[] }>({ scope: '', rows: [] });
+  const items = taskData.scope === taskScope ? taskData.rows : [];
   const [pointsState, setPointsState] = useState<PointsState>(emptyPoints);
   const [pointsOwner, setPointsOwner] = useState('');
   const [backendMessage, setBackendMessage] = useState('');
@@ -71,21 +77,24 @@ export function TasksPage({ user, member }: { user: User; member: Member | null 
   const parent = isParent(member);
   const own = ownPerson(member);
   const today = formatDateInput(new Date());
-  const backend = pointsOwner === user.uid ? pointsState : emptyPoints;
+  const backend = pointsOwner === taskScope ? pointsState : emptyPoints;
   const writesAllowed = familyV2WritesAllowed() && backend.writesEnabled === true;
   const profileName = (person: string) => profiles.find(profile => memberPersonKey(profile) === person)?.name || personLabel(person);
 
   async function reloadPoints() {
     try {
       const state = await familyAction<PointsState>('tasks', { action: 'state' });
-      if (alive.current) { setPointsState(state); setPointsOwner(user.uid); setBackendMessage(''); }
+      if (alive.current && liveScope.current === taskScope) { setPointsState(state); setPointsOwner(taskScope); setBackendMessage(''); }
     } catch (error) {
-      if (alive.current) { setPointsState(emptyPoints); setPointsOwner(user.uid); setBackendMessage(error instanceof Error ? error.message : 'Punkty i nagrody wymagają konfiguracji backendu.'); }
+      if (alive.current && liveScope.current === taskScope) { setPointsState(emptyPoints); setPointsOwner(taskScope); setBackendMessage(error instanceof Error ? error.message : 'Punkty i nagrody wymagają konfiguracji backendu.'); }
     }
   }
   useEffect(() => {
     alive.current = true; void reloadPoints();
-    const stop = onSnapshot(collection(db, 'tasks'), snap => {
+    setTaskData({ scope: taskScope, rows: [] });
+    const target = tasksHouseholdQuery(db, member);
+    if (!target) return () => { alive.current = false; };
+    const stop = onSnapshot(target, snap => {
       const next = snap.docs.map((record): ManagedTask => {
         const raw = record.data();
         return { id: record.id, title: String(raw.title || ''), person: isPersonKey(raw.person) ? raw.person : 'family', done: raw.done === true,
@@ -99,10 +108,10 @@ export function TasksPage({ user, member }: { user: User; member: Member | null 
           proofPath: typeof raw.proofPath === 'string' ? raw.proofPath : undefined, reworkComment: typeof raw.reworkComment === 'string' ? raw.reworkComment : undefined, archived: raw.archived === true };
       }).filter(item => !item.archived && (parent || item.person === own || item.person === 'family'));
       next.sort((a, b) => Number(a.done) - Number(b.done) || (a.dueDate || '9999').localeCompare(b.dueDate || '9999') || (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0));
-      setItems(next);
+      setTaskData({ scope: taskScope, rows: next });
     });
     return () => { alive.current = false; stop(); };
-  }, [user.uid, parent, own]);
+  }, [taskScope]);
   useEffect(() => () => { if (proofPreview) URL.revokeObjectURL(proofPreview.url); }, [proofPreview]);
 
   const visible = items.filter(item => filter === 'today' ? !item.done && item.dueDate === today
@@ -191,7 +200,9 @@ export function TasksPage({ user, member }: { user: User; member: Member | null 
 
   return <div className="page-content compact-page tasks-v130 tasks-v2" data-testid="tasks-v2">
     <ModuleHeader icon="✅" title="Zadania" text="Rodzinne obowiązki, postępy i wspólnie ustalone nagrody." action={<button className="primary-button" disabled={!writesAllowed || !!busy} onClick={() => openAdd()}>＋ Dodaj zadanie</button>} />
-    {(backendMessage || !writesAllowed) && <p className="tasks-setup-note" role="status">{backendMessage || 'Nowe operacje zapisu wymagają konfiguracji backendu i reguł Firebase. W Preview z produkcyjną bazą pozostają wyłączone.'} Istniejące zadania pozostają dostępne.</p>}
+    {(backendMessage || !writesAllowed) && <p className="tasks-setup-note" role="status">{!taskFamilyId(member)
+      ? 'Zadania i nagrody wymagają potwierdzonego przypisania profilu do gospodarstwa. Dotychczasowe dane nie zostały usunięte. Nie uruchomiono migracji.'
+      : `${backendMessage || 'Nowe operacje zapisu wymagają konfiguracji backendu i reguł Firebase. W Preview z produkcyjną bazą pozostają wyłączone.'} Istniejące zadania gospodarstwa pozostają dostępne.`}</p>}
     <nav className="tasks-v2-tabs" aria-label="Widok zadań"><button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}>Zadania rodzinne</button><button className={tab === 'rewards' ? 'active' : ''} onClick={() => setTab('rewards')}>Punkty i nagrody</button></nav>
     <section className="task-summary-v130">
       <button onClick={() => { setTab('tasks'); setFilter('today'); }}><strong>{items.filter(item => !item.done && item.dueDate === today).length}</strong><span>Dzisiaj</span></button>

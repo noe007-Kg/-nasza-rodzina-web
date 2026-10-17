@@ -28,7 +28,7 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/calendars/**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, configured: false, connections: [] }) }));
 });
 
-test('Tasks preserves legacy reads when its backend is unavailable and serializes the three verification modes using an explicit API stub', async ({ page }) => {
+test('Tasks preserves existing household reads when its backend is unavailable and serializes the three verification modes using an explicit API stub', async ({ page }) => {
   let backendAvailable = false;
   const submittedDrafts: Array<Record<string, unknown>> = [];
   // This is a UI-only API stub. Transactions, points and Storage deletion are
@@ -51,7 +51,7 @@ test('Tasks preserves legacy reads when its backend is unavailable and serialize
   const tasks = page.getByTestId('tasks-v2');
   await expect(tasks).toContainText('Wynieść śmieci — test zatwierdzania');
   await expect(tasks).toContainText('Zadanie Pawła');
-  await expect(tasks.locator('.tasks-setup-note')).toContainText('Istniejące zadania pozostają dostępne.');
+  await expect(tasks.locator('.tasks-setup-note')).toContainText('Istniejące zadania gospodarstwa pozostają dostępne.');
   await expect(tasks.getByRole('button', { name: '＋ Dodaj zadanie', exact: true })).toBeDisabled();
   await expect(tasks.getByRole('button', { name: 'Oznacz wykonanie: Wynieść śmieci — test zatwierdzania', exact: true })).toBeDisabled();
   for (const viewport of viewports) {

@@ -150,9 +150,26 @@ service cloud.firestore {
     match /_notificationOutbox/{id} { allow read, write: if false; }
     match /_notificationBaselines/{id} { allow read, write: if false; }
     // All completion, approval and accounting transitions share the Admin transaction.
-    // Legacy tasks stay readable; no browser (including a parent) can mint points.
+    // Missing household metadata is never evidence that two accounts share a household.
+    function taskFamilyId(value) {
+      return value is string && value != '__legacy__' && value.matches('[A-Za-z0-9][A-Za-z0-9_-]{0,127}');
+    }
+    function taskMember() {
+      return member() && profile().get('disabled', false) == false
+        && taskFamilyId(profile().get('familyId', null));
+    }
+    function taskPerson() {
+      let personKey = profile().get('personKey', '');
+      return personKey is string && personKey.size() > 0 ? personKey : profile().get('name', '');
+    }
+    function taskVisible(data) {
+      return taskMember() && taskFamilyId(data.get('familyId', null))
+        && data.familyId == profile().familyId
+        && (parent() || data.get('person', '') == taskPerson() || data.get('person', '') == 'family');
+    }
+    // No browser (including a parent) can mint points or bypass Admin transitions.
     match /tasks/{id} {
-      allow read: if member();
+      allow read: if taskVisible(resource.data);
       allow write: if false;
     }
     match /taskPointBalances/{id} { allow read, write: if false; }

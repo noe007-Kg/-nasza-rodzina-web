@@ -1,6 +1,7 @@
 /** Existing member documents remain keyed by their Firebase UID (or profile ID). */
 export type FamilyMemberProfile = {
   id: string;
+  familyId?: string;
   uid?: string;
   name?: string;
   personKey?: string;

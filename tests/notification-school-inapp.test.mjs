@@ -65,7 +65,7 @@ function fixture() {
     },
   };
   for (const [id, name, role] of [['sebastian', 'Sebastian', 'parent'], ['dominika', 'Dominika', 'parent'], ['nikodem', 'Nikodem', 'child'], ['pawel', 'Paweł', 'child']]) {
-    records.set(`members/${id}`, { name, personKey: name, role, active: true, canLogin: true });
+    records.set(`members/${id}`, { name, personKey: name, role, active: true, canLogin: true, familyId: 'household-a' });
   }
   records.set('_eduConnections/family', { scope: 'family', accountRole: 'parent',
     expiresAt: Timestamp.fromMillis(Date.now() + 3600000), sessionVersion: 'same-protected-session',
@@ -268,7 +268,7 @@ test('fresh transaction membership prevents delivery after an account was archiv
 
 test('generic IN-APP sender supports an authenticated single-UID refresh without writing other inboxes', async () => {
   const f = fixture();
-  const event = deriveNotificationEvent('tasks', 'task-one', null, { title: 'Zadanie', person: 'family' });
+  const event = deriveNotificationEvent('tasks', 'task-one', null, { title: 'Zadanie', person: 'family', familyId: 'household-a' });
   assert.deepEqual(await enqueueInAppEvents(f.context, [event], { recipientUid: 'dominika' }), { created: 1, checked: 1 });
   assert.equal(f.inbox('dominika').length, 1); assert.equal(f.inbox('sebastian').length, 0); assert.equal(f.inbox('nikodem').length, 0);
   assert.equal((await enqueueInAppEvents(f.context, [event], { recipientUid: 'dominika' })).created, 0);
@@ -292,14 +292,14 @@ test('fresh chat participants and deleted records cannot be bypassed by a previo
   const chatEvent = deriveNotificationEvent('familyMessages', 'private', null, message);
   f.records.set('familyMessages/private', { ...message, channel: 'private:dominika:sebastian', participants: ['dominika', 'sebastian'] });
   assert.equal((await enqueueInAppEvents(f.context, [chatEvent], { recipientUid: 'nikodem', revalidateSource: true })).created, 0);
-  const taskEvent = deriveNotificationEvent('tasks', 'removed', null, { title: 'Usunięte zadanie', person: 'family' });
+  const taskEvent = deriveNotificationEvent('tasks', 'removed', null, { title: 'Usunięte zadanie', person: 'family', familyId: 'household-a' });
   assert.equal((await enqueueInAppEvents(f.context, [taskEvent], { recipientUid: 'nikodem', revalidateSource: true })).created, 0);
   assert.equal(f.inbox('nikodem').length, 0);
 });
 
 test('source validation uses the existing static collection allowlist and rejects record path injection', async () => {
   const f = fixture();
-  const event = deriveNotificationEvent('tasks', 'valid', null, { title: 'Zadanie', person: 'family' });
+  const event = deriveNotificationEvent('tasks', 'valid', null, { title: 'Zadanie', person: 'family', familyId: 'household-a' });
   for (const invalid of [{ ...event, collection: '_eduConnections' }, { ...event, recordId: '../victim' }, { ...event, recordId: '.' }]) {
     await assert.rejects(enqueueInAppEvents(f.context, [invalid], { recipientUid: 'nikodem', revalidateSource: true }), /Invalid notification source/);
   }

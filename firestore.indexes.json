@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "familyId", "order": "ASCENDING" },
+        { "fieldPath": "person", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "familyMessages",
       "queryScope": "COLLECTION",
       "fields": [

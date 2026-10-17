@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { refreshInAppNotifications, planRefreshSource, refreshSources, validateRefreshBody, MAX_REFRESH_RECORDS, MIN_REFRESH_INTERVAL_MS } from '../server/notification-refresh.mjs';
 import { enqueueInAppEvents } from '../server/notification-inbox.mjs';
 
-const parent = { role: 'parent', name: 'Sebastian', active: true, canLogin: true };
-const child = { role: 'child', name: 'Nikodem', personKey: 'Nikodem', active: true, canLogin: true };
-const task = { title: 'Rodzinne zadanie', person: 'family', done: false, createdBy: 'other' };
+const parent = { role: 'parent', name: 'Sebastian', active: true, canLogin: true, familyId: 'household-a' };
+const child = { role: 'child', name: 'Nikodem', personKey: 'Nikodem', active: true, canLogin: true, familyId: 'household-a' };
+const task = { title: 'Rodzinne zadanie', person: 'family', done: false, createdBy: 'other', familyId: 'household-a' };
 const message = { text: 'Prywatna treść nie może trafić do inbox', uid: 'other', name: 'Dominika', channel: 'family', participants: [], createdAt: 100 };
 const row = (id, data) => ({ id, data });
 function database(seed = {}, uid = 'own', profile = parent) {
@@ -207,7 +207,7 @@ test('a private chat participant removed after the query gets no alert from the 
 });
 
 test('adult refresh retains own/private membership boundaries and creates general family notifications', async () => {
-  const adult = { role: 'adult', name: 'Dorosły', personKey: 'member-0123456789abcdef01234567', active: true, canLogin: true };
+  const adult = { role: 'adult', name: 'Dorosły', personKey: 'member-0123456789abcdef01234567', active: true, canLogin: true, familyId: 'household-a' };
   const data = database({}, 'own', adult);
   assert.equal((await refresh(data, 10000)).baselines, 6);
   data.values.set('tasks/new', task);
