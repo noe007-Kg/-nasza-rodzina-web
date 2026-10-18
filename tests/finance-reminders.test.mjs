@@ -61,3 +61,43 @@ test('revoking sharing after producer query denies queued reminders to the forme
   assert.equal(result.created, 1); // Same-household parent still authorized.
   assert.equal(inbox(context, 'child').length, 0);
 });
+test('legacy bills and unassigned recipients never generate periods, events or reminders', async () => {
+  for (const familyId of [undefined, null, '', ' ', '__legacy__', 'a/b']) {
+    const context = familyMemoryContext({
+      'members/parent': { ...fixtureParent, familyId },
+      'members/foreign-parent': { ...fixtureParent, familyId },
+      'members/child': { ...fixtureChild, familyId },
+      'financeBills/legacy-bill': value({ familyId, ownerUid: 'parent', seriesId: 'legacy-bill',
+        anchorDueDate: '2026-10-19', recurrence: 'monthly', sharedWith: ['child'] }),
+    });
+    assert.equal(financeReminderEvent('legacy-bill', value({ familyId }), now), null);
+    const result = await runFinanceReminders(context, now);
+    assert.deepEqual(result, { periodsCreated: 0, events: 0, delivered: 0 });
+    assert.equal(context.calls.length, 0);
+  }
+});
+test('queued reminder rechecks an actual household change or removal before delivery', async () => {
+  const previous = value({ sharedWith: ['child'] });
+  for (const familyId of [undefined, '__legacy__', 'other-household']) {
+    const context = familyMemoryContext({ 'financeBills/moved-bill': { ...previous, familyId } });
+    const event = financeReminderEvent('moved-bill', previous, now);
+    assert.equal((await enqueueInAppEvents(context, [event], { revalidateSource: true })).created, 0);
+    assert.equal(inbox(context, 'parent').length, 0);
+    assert.equal(inbox(context, 'child').length, 0);
+  }
+});
+test('moving both bill and recipient after the producer snapshot does not transfer the queued alert to another household', async () => {
+  const previous = value({ sharedWith: ['child'] });
+  const event = financeReminderEvent('moved-together', previous, now);
+  const context = familyMemoryContext({ 'financeBills/moved-together': previous });
+  const getAll = context.db.runTransaction;
+  context.db.runTransaction = async operation => {
+    context.rows.set('financeBills/moved-together', { ...previous, familyId: 'other-household' });
+    context.rows.set('members/parent', { ...fixtureParent, familyId: 'other-household' });
+    context.rows.set('members/child', { ...fixtureChild, familyId: 'other-household' });
+    return getAll(operation);
+  };
+  assert.equal((await enqueueInAppEvents(context, [event], { revalidateSource: true })).created, 0);
+  assert.equal(inbox(context, 'parent').length, 0);
+  assert.equal(inbox(context, 'child').length, 0);
+});

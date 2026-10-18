@@ -123,11 +123,38 @@ test('validation rejects float amounts, invalid dates, unsafe links and injected
   }
   assert.equal(count(context, 'financeBills'), 0);
 });
-test('a legacy member can see only normalized legacy bills, not explicit-family records', async () => {
-  const context = familyMemoryContext({ 'members/legacy-parent': { ...fixtureParent, familyId: undefined } });
-  await manageFinanceAction(context, draft());
-  await manageFinanceAction(context.as('legacy-parent'), draft({ id: 'legacy-bill' }));
+test('unassigned parents from different households cannot read, create, modify, pay or generate legacy bills', async () => {
+  for (const familyId of [undefined, null, '', ' ', '__legacy__', 'a/b', '_group']) {
+    const context = familyMemoryContext({
+      'members/parent': { ...fixtureParent, familyId },
+      'members/another-parent': { ...fixtureParent, familyId },
+      'financeBills/legacy-bill': { ...draft(), familyId: '__legacy__', ownerUid: 'another-parent',
+        status: 'unpaid', archived: false, recurrence: 'monthly', seriesId: 'legacy-bill', periodIndex: 0, anchorDueDate: '2026-10-20' },
+    });
+    const before = JSON.stringify([...context.rows]);
+    for (const action of [{ action: 'state' }, { action: 'status' }, draft(),
+      draft({ id: 'legacy-bill' }), { action: 'markPaid', billId: 'legacy-bill' },
+      { action: 'generatePeriods', billId: 'legacy-bill', count: 2 }]) {
+      await assert.rejects(manageFinanceAction(context, action), rejects('FINANCE_FAMILY_NOT_CONFIGURED'));
+    }
+    assert.equal((await ensureFinancePeriods(context)).created, 0);
+    assert.equal(context.calls.length, 0);
+    assert.equal(JSON.stringify([...context.rows]), before);
+  }
+});
+test('explicit parents share only their household and never adopt unclassified legacy bills by name or owner', async () => {
+  const context = familyMemoryContext({
+    'members/mother': { ...fixtureParent, name: 'Dominika testowa' },
+    'members/unassigned-child': { ...fixtureChild, familyId: undefined },
+    'financeBills/legacy-bill': { ...draft(), familyId: '__legacy__', ownerUid: 'parent',
+      status: 'unpaid', archived: false, recurrence: 'monthly', seriesId: 'legacy-bill', periodIndex: 0, anchorDueDate: '2026-10-20' },
+  });
+  await manageFinanceAction(context, draft({ sharedWith: ['child'] }));
+  assert.deepEqual((await manageFinanceAction(context.as('mother'), { action: 'state' })).bills.map(row => row.id), ['bill-first']);
+  assert.deepEqual((await manageFinanceAction(context.as('child'), { action: 'state' })).bills.map(row => row.id), ['bill-first']);
+  await assert.rejects(manageFinanceAction(context.as('mother'), { action: 'markPaid', billId: 'legacy-bill' }), rejects('FINANCE_NOT_FOUND'));
+  await assert.rejects(manageFinanceAction(context, { action: 'generatePeriods', billId: 'legacy-bill', count: 2 }), rejects('FINANCE_NOT_FOUND'));
+  await assert.rejects(manageFinanceAction(context, draft({ id: 'unassigned-share', sharedWith: ['unassigned-child'] })), rejects('FINANCE_INVALID_RECIPIENT'));
   assert.equal(bill(context, 'legacy-bill').familyId, '__legacy__');
-  assert.deepEqual((await manageFinanceAction(context.as('legacy-parent'), { action: 'state' })).bills.map(row => row.id), ['legacy-bill']);
-  assert.deepEqual((await manageFinanceAction(context, { action: 'state' })).bills.map(row => row.id), ['bill-first']);
+  assert.equal(bill(context, 'legacy-bill').status, 'unpaid');
 });

@@ -15,6 +15,11 @@ export const FINANCE_RECURRENCES: Record<FinanceRecurrence, string> = {
 };
 export const FINANCE_CATEGORIES = ['Mieszkanie', 'Prąd', 'Woda', 'Internet', 'Telefon', 'Transport', 'Edukacja', 'Inne'];
 
+/** UI validation only; authoritative household access is enforced by the server and Rules. */
+export function financeHouseholdConfigured(value: unknown): value is string {
+  return typeof value === 'string' && value !== '__legacy__' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
+}
+
 /** Decimal text is converted without a floating-point multiplication or rounding. */
 export function financeAmountGrosze(value: string): number | null {
   const normalized = value.trim().replace(',', '.');
@@ -78,7 +83,7 @@ export function safeFinancePaymentUrl(value: string): string | null {
 export function parseFinanceBill(value: unknown): FinanceBill | null {
   if (!value || typeof value !== 'object') return null;
   const bill = value as Record<string, unknown>;
-  if (typeof bill.id !== 'string' || !bill.id || typeof bill.title !== 'string' || !bill.title
+  if (!financeHouseholdConfigured(bill.familyId) || typeof bill.id !== 'string' || !bill.id || typeof bill.title !== 'string' || !bill.title
     || !financeDateValid(bill.dueDate) || !Number.isSafeInteger(bill.amountGrosze) || Number(bill.amountGrosze) <= 0 || Number(bill.amountGrosze) > 100_000_000
     || !['unpaid', 'paid'].includes(String(bill.status)) || !Array.isArray(bill.sharedWith)) return null;
   const text = (name: string) => typeof bill[name] === 'string' ? bill[name] as string : '';

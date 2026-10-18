@@ -14,6 +14,7 @@ export function familyV2WritesAllowed(context, env = process.env, domain) {
   // Tasks can be released independently. The old global switch must never
   // unlock points or accidentally enable Health/Finance during that release.
   if (domain === 'tasks') return env.FAMILY_TASKS_WRITES_ENABLED === 'true' && explicitFamilyId(context.profile) !== null;
+  if (domain === 'finance') return env.FAMILY_FINANCE_WRITES_ENABLED === 'true' && explicitFamilyId(context.profile) !== null;
   return env.FAMILY_V2_WRITES_ENABLED === 'true';
 }
 

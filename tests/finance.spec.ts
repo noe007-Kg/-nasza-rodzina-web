@@ -1,12 +1,13 @@
 import { expect, test, type Page } from '@playwright/test';
 import { getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { manageFinanceAction } from '../server/finance-service.mjs';
 import { accounts, fixtureDatabase, password, seedEmulators, todayKey } from './emulator-fixtures';
 
 const viewports = [{ width: 390, height: 844 }, { width: 844, height: 390 },
   { width: 900, height: 1440 }, { width: 1024, height: 768 }, { width: 1440, height: 900 }];
+const household = 'finance-test-household';
 
 /** Local test transport, using the real finance service, Auth tokens and Firestore transactions.
  * It does not exercise deployment configuration or the deployed HTTP endpoint. */
@@ -44,6 +45,11 @@ async function noOverflow(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   await seedEmulators();
+  // Explicit test-only provisioning. Shared Tasks/Health fixtures stay unchanged.
+  const db = fixtureDatabase();
+  const batch = db.batch();
+  for (const account of Object.values(accounts)) batch.update(db.doc(`members/${account.uid}`), { familyId: household });
+  await batch.commit();
   await page.route('https://api.open-meteo.com/**', route => route.fulfill({ contentType: 'application/json', body: '{}' }));
   await page.route(/https:\/\/[^/]*(?:googleapis\.com|firebaseapp\.com|firebasestorage\.app|eduvulcan\.pl|vulcan\.net\.pl|fryderyk\.edu\.pl)\//,
     route => route.abort('blockedbyclient'));
@@ -80,7 +86,7 @@ test('a parent creates, copies, edits and pays a real emulator bill; recurring p
   const detail = page.getByTestId('finance-bill-detail');
   await expect(detail).toContainText('129,99');
   const root = (await fixtureDatabase().collection('financeBills').get()).docs[0];
-  expect(root.data()).toMatchObject({ amountGrosze: 12999, status: 'unpaid', familyId: '__legacy__',
+  expect(root.data()).toMatchObject({ amountGrosze: 12999, status: 'unpaid', familyId: household,
     ownerUid: accounts.parent.uid, sharedWith: [accounts.child.uid], calendarEnabled: false });
   await detail.getByRole('button', { name: 'Kopiuj numer', exact: true }).click();
   expect(await page.evaluate(() => (window as unknown as { __financeClipboard: string }).__financeClipboard)).toBe('PL00000000000000000000000000');
@@ -127,7 +133,7 @@ test('a child receives only a specific shared bill through the real service and 
   const db = fixtureDatabase();
   const data = { title: 'Opłata prywatna testowa', category: 'Inne', amountGrosze: 3500, dueDate: todayKey(),
     recipient: '', bankAccount: '', transferTitle: '', note: '', paymentUrl: '', recurrence: 'none', calendarEnabled: true,
-    sharedWith: [], familyId: '__legacy__', ownerUid: accounts.parent.uid, status: 'unpaid', archived: false,
+    sharedWith: [], familyId: household, ownerUid: accounts.parent.uid, status: 'unpaid', archived: false,
     seriesId: 'private-test', periodIndex: 0, anchorDueDate: todayKey(), createdAt: Timestamp.now(), updatedAt: Timestamp.now(), paidAt: null };
   await Promise.all([
     db.doc('financeBills/private-test').set(data),
@@ -187,4 +193,49 @@ test('an unavailable finance backend shows an empty protected preview and preser
   for (const viewport of viewports) { await page.setViewportSize(viewport); await noOverflow(page); }
   await expect(form.getByLabel('Nazwa opłaty', { exact: true })).toHaveValue('Niezapisana opłata testowa');
   expect((await fixtureDatabase().collection('financeBills').get()).empty).toBe(true);
+});
+
+test('an unassigned parent cannot read legacy bills through API or Rules and the existing calendar stays available', async ({ page }) => {
+  const db = fixtureDatabase();
+  const batch = db.batch();
+  for (const account of Object.values(accounts)) batch.update(db.doc(`members/${account.uid}`), { familyId: FieldValue.delete() });
+  batch.set(db.doc('financeBills/unclassified'), { title: 'Niedostępna opłata innego gospodarstwa', familyId: '__legacy__',
+    ownerUid: accounts.mother.uid, sharedWith: [], amountGrosze: 10000, status: 'unpaid', archived: false, dueDate: todayKey(), calendarEnabled: true });
+  batch.set(db.doc('calendarEvents/legacy-compatible'), { title: 'Dotychczasowy rodzinny termin', person: 'family',
+    date: Timestamp.fromDate(new Date(`${todayKey()}T12:00:00Z`)), endDate: Timestamp.fromDate(new Date(`${todayKey()}T13:00:00Z`)),
+    allDay: false, description: '', location: '', repeat: 'none', repeatUntil: null, createdBy: accounts.parent.uid });
+  for (const account of [accounts.parent, accounts.mother]) batch.set(db.doc(`privateCalendarEvents/private-${account.uid}`), {
+    title: `Prywatny termin ${account.name}`, person: account.name, ownerUid: account.uid, createdBy: account.uid, private: true,
+    date: Timestamp.fromDate(new Date(`${todayKey()}T14:00:00Z`)), endDate: Timestamp.fromDate(new Date(`${todayKey()}T15:00:00Z`)),
+    allDay: false, description: '', location: '', repeat: 'none', repeatUntil: null,
+  });
+  await batch.commit();
+  const initialBill = (await db.doc('financeBills/unclassified').get()).data();
+  let financeRequests = 0;
+  page.on('request', request => { if (request.url().endsWith('/api/family/finance')) financeRequests++; });
+  await localFinanceApi(page);
+  await login(page, accounts.parent);
+  const finance = page.getByTestId('finance-page');
+  await expect(finance.getByRole('alert')).toContainText('zweryfikowanego przypisania');
+  await expect(finance.locator('.finance-bill-row')).toHaveCount(0);
+  await expect(finance).not.toContainText('Niedostępna opłata innego gospodarstwa');
+  const denied = await page.evaluate(async () => {
+    // @ts-expect-error Vite resolves this local project module in the browser.
+    const { db, doc, getDoc } = await import('/src/app-shared.tsx');
+    try { await getDoc(doc(db, 'financeBills', 'unclassified')); return false; }
+    catch (error) { return (error as { code?: string }).code === 'permission-denied'; }
+  });
+  expect(denied).toBe(true);
+  const requestsBeforeCalendar = financeRequests;
+  await page.goto('/#Kalendarz');
+  await expect(page.locator('.calendar-day-view')).toBeVisible();
+  await expect(page.locator('.calendar-day-view')).toContainText('Prywatny termin Sebastian');
+  await expect(page.locator('.calendar-day-view')).not.toContainText('Prywatny termin Dominika');
+  await page.locator('.person-filters').getByRole('button', { name: 'Cała rodzina', exact: true }).click();
+  await expect(page.locator('.calendar-day-view')).toContainText('Dotychczasowy rodzinny termin');
+  await expect(page.locator('.calendar-day-view')).not.toContainText('Niedostępna opłata');
+  await expect(page.locator('.calendar-day-view')).not.toContainText('Prywatny termin');
+  expect(financeRequests).toBe(requestsBeforeCalendar);
+  expect((await db.doc('financeBills/unclassified').get()).data()).toEqual(initialBill);
+  expect((await db.collection('financeBillAudit').get()).empty).toBe(true);
 });

@@ -6,7 +6,7 @@ import { familyV2WritesAllowed } from '../family-v2-client';
 import { Card, Icon, PrimaryButton, SecondaryButton, SectionHeader, StatusPill } from '../ui';
 import { financeAction } from '../finance/finance-api';
 import { FINANCE_CATEGORIES, FINANCE_RECURRENCES, financeAmountGrosze, financeAmountInput, financeBillStatus,
-  financeCategoryTotals, financeDateValid, financeMonthLabel, financeToday, financeTotals, formatFinanceDate, formatFinanceMoney,
+  financeCategoryTotals, financeDateValid, financeHouseholdConfigured, financeMonthLabel, financeToday, financeTotals, formatFinanceDate, formatFinanceMoney,
   safeFinancePaymentUrl, type FinanceBill, type FinanceBillFields, type FinanceRecurrence } from '../finance/model';
 import { useFinanceBills } from '../finance/useFinanceBills';
 import './finance.css';
@@ -29,10 +29,12 @@ function useWideFinancePanel() {
 export function FinancePage({ user, member }: { user: User; member: Member | null }) {
   const parent = isParent(member);
   const accessScope = JSON.stringify([user.uid, member?.role, member?.active, member?.archived, member?.canLogin,
-    (member as Member & { familyId?: string } | null)?.familyId]);
+    member?.disabled, member?.familyId]);
   const directory = useFamilyDirectory();
-  const children = directory.filter(profile => profile.role === 'child' && memberCanLogin(profile) && !profile.id.startsWith('legacy:'));
-  const source = useFinanceBills(user.uid, accessScope);
+  const children = directory.filter(profile => financeHouseholdConfigured(member?.familyId) && profile.familyId === member.familyId
+    && profile.role === 'child' && memberCanLogin(profile) && !profile.id.startsWith('legacy:'));
+  const householdConfigured = financeHouseholdConfigured(member?.familyId);
+  const source = useFinanceBills(user.uid, accessScope, householdConfigured);
   const bills = source.data?.bills || [];
   const writesEnabled = parent && source.data?.writesEnabled === true && familyV2WritesAllowed();
   const widePanel = useWideFinancePanel();
@@ -119,6 +121,7 @@ export function FinancePage({ user, member }: { user: User; member: Member | nul
     <SectionHeader title={parent ? 'Finanse' : 'Udostępnione opłaty'} icon="document" description={parent ? 'Opłaty, terminy i historia domowych rachunków.' : 'Widzisz wyłącznie opłaty udostępnione bezpośrednio Tobie.'}
       actions={parent ? <PrimaryButton icon="plus" onClick={openNew}>Dodaj opłatę</PrimaryButton> : undefined}/>
     {parent && !writesEnabled && !source.loading && <p className="finance-access-note" role="status">{source.data ? 'Wersja Preview: zapis nowych opłat i zmian statusu jest wyłączony. Możesz obejrzeć formularz.' : 'Finanse wymagają przygotowanego backendu i reguł dostępu. Istniejące dane pozostają bez zmian.'}</p>}
+    {!householdConfigured && <p className="finance-access-note" role="alert">Finanse wymagają zweryfikowanego przypisania konta do gospodarstwa. Administrator musi uzupełnić konfigurację rodziny. Dane nie zostały zmienione.</p>}
     {source.error && <div className="finance-access-note" role="alert"><span>{source.error}</span><SecondaryButton icon="refresh" disabled={source.loading} onClick={() => void source.refresh().catch(() => {})}>Spróbuj ponownie</SecondaryButton></div>}
     {currentFeedback && !currentForm && !selected && <p className={`finance-feedback ${currentFeedback.error ? 'is-error' : ''}`} role={currentFeedback.error ? 'alert' : 'status'}>{currentFeedback.text}</p>}
     <div className="finance-period-toolbar"><label>Okres <select aria-label="Okres historii opłat" value={month} onChange={event => setMonth(event.target.value)}>{months.map(value => <option key={value} value={value}>{financeMonthLabel(value)}</option>)}<option value="all">Cała historia</option></select></label><small>Daty terminów: Europe/Warsaw</small></div>

@@ -50,11 +50,24 @@ test('private bill default, explicit child sharing, active member and household 
   assert.equal(canReadFinanceBill({ ...parent, archived: true }, bill), false);
   assert.equal(canReadFinanceBill({ ...parent, role: 'adult' }, bill), false);
 });
-test('legacy household matching is symmetric and does not grant all-family access', () => {
-  assert.equal(financeFamilyId({}), '__legacy__');
-  assert.equal(financeSameFamily({}, { familyId: '__legacy__' }), true);
+test('unassigned or reserved households never match each other or an explicit household', () => {
+  for (const value of [undefined, null, '', ' ', '\t', '__legacy__', ' family-a', 'family-a ', 'a/b', '_private', 1, 'a'.repeat(129)]) {
+    const member = { ...parent, familyId: value };
+    assert.equal(financeFamilyId(member), null);
+    assert.equal(financeSameFamily(member, { familyId: value }), false);
+    assert.equal(canReadFinanceBill(member, { ...bill, familyId: value, sharedWith: ['parent'] }), false);
+  }
+  assert.equal(financeFamilyId({}), null);
+  assert.equal(financeSameFamily({}, {}), false);
+  assert.equal(financeSameFamily({}, { familyId: '__legacy__' }), false);
   assert.equal(financeSameFamily({}, bill), false);
   assert.equal(financeSameFamily(parent, {}), false);
+});
+test('both named parents retain access inside one explicit household while an unrelated parent is denied', () => {
+  assert.equal(canReadFinanceBill({ ...parent, id: 'sebastian-test' }, bill), true);
+  assert.equal(canReadFinanceBill({ ...parent, id: 'dominika-test' }, bill), true);
+  assert.equal(canReadFinanceBill({ ...parent, id: 'foreign-parent', familyId: 'another-household' }, bill), false);
+  assert.equal(canReadFinanceBill({ ...parent, disabled: true }, bill), false);
 });
 test('historic totals and status are computed without changing bill data', () => {
   const entries = [bill, { ...bill, amountGrosze: 1001, status: 'paid' }];

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { financeAmountGrosze, financeAmountInput, financeBillStatus, financeCategoryTotals, financeDateValid, financeToday, financeTotals,
+import { financeAmountGrosze, financeAmountInput, financeBillStatus, financeCategoryTotals, financeDateValid, financeHouseholdConfigured, financeToday, financeTotals,
   parseFinanceBill, safeFinancePaymentUrl, type FinanceBill } from '../src/finance/model';
 import { projectFinanceCalendar } from '../src/finance/calendar-projection';
 import { calendarEventInView } from '../src/calendar-v2';
@@ -46,6 +46,17 @@ test('malformed financial amounts and dates cannot produce rendered bills', () =
   assert.ok(parseFinanceBill(bill()));
   assert.equal(parseFinanceBill(bill({ amountGrosze: 1.25 })), null);
   assert.equal(parseFinanceBill(bill({ dueDate: '2026-02-31' })), null);
+});
+test('unassigned, reserved and malformed households cannot become rendered bills or calendar projections', () => {
+  for (const familyId of [undefined, null, '', ' ', '__legacy__', ' family', 'family ', 'a/b', '_reserved', 1, 'x'.repeat(129)]) {
+    assert.equal(financeHouseholdConfigured(familyId), false);
+    assert.equal(parseFinanceBill({ ...bill(), familyId }), null);
+    assert.deepEqual(projectFinanceCalendar([{ ...bill(), familyId } as FinanceBill], 'test-parent', 'Sebastian'), []);
+  }
+  for (const familyId of ['household-123', 'A', 'f'.repeat(128)]) {
+    assert.equal(financeHouseholdConfigured(familyId), true);
+    assert.ok(parseFinanceBill(bill({ familyId })));
+  }
 });
 test('finance calendar projection is opted-in, stable, private and contains no transfer data', () => {
   const rows = [bill(), bill(), bill({ id: 'hidden', calendarEnabled: false })];

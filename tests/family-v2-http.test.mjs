@@ -165,3 +165,22 @@ test('global V2 flag alone cannot enable Tasks and its own flag cannot override 
     assert.equal(res.statusCode, 503); assert.equal(calls.tasks, 0);
   }
 });
+
+test('Finance opt-in is independent and cannot be spoofed or used in Preview', async () => {
+  const scoped = { ...context, profile: { ...context.profile, familyId: 'test-household' } };
+  const enabled = { VERCEL_ENV: 'production', VERCEL_URL: host, FAMILY_V2_SITE_ORIGIN: `https://${host}`, FAMILY_FINANCE_WRITES_ENABLED: 'true' };
+  let actions = 0;
+  const { router } = mocked({ env: enabled, memberGuard: async () => scoped,
+    financeAction: async () => { actions++; return {}; } });
+  const write = response(); await router(request('save', { url: '/api/family/finance' }), write);
+  assert.equal(write.statusCode, 200); assert.equal(write.body.writesEnabled, true); assert.equal(actions, 1);
+  for (const domain of ['tasks', 'health']) {
+    const denied = response(); await router(request('save', { url: `/api/family/${domain}` }), denied);
+    assert.equal(denied.statusCode, 503);
+  }
+  for (const env of [{ ...enabled, VERCEL_ENV: 'preview' }, { ...enabled, FAMILY_FINANCE_WRITES_ENABLED: 'false', FAMILY_V2_WRITES_ENABLED: 'true' }]) {
+    const closed = mocked({ env, memberGuard: async () => scoped, financeAction: async () => { throw new Error('Must not dispatch'); } });
+    const result = response(); await closed.router(request('save', { url: '/api/family/finance', body: { action: 'save', FAMILY_FINANCE_WRITES_ENABLED: 'true' } }), result);
+    assert.equal(result.statusCode, 503);
+  }
+});

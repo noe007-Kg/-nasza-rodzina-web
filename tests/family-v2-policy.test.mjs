@@ -47,3 +47,19 @@ test('production opt-in cannot make a production project use emulator credential
   assert.equal(familyV2WritesAllowed(production, { ...local, FAMILY_V2_WRITES_ENABLED: 'true' }), false);
   assert.equal(familyV2WritesAllowed(production, { FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9099', FAMILY_V2_WRITES_ENABLED: 'true' }), false);
 });
+
+test('Finance has its own opt-in and cannot enable Tasks or Health', () => {
+  const scoped = { ...production, profile: { familyId: 'test-household' } };
+  const enabled = { FAMILY_FINANCE_WRITES_ENABLED: 'true' };
+  assert.equal(familyV2WritesAllowed(scoped, enabled, 'finance'), true);
+  assert.equal(familyV2WritesAllowed(scoped, enabled, 'tasks'), false);
+  assert.equal(familyV2WritesAllowed(scoped, enabled, 'health'), false);
+  assert.equal(familyV2WritesAllowed(scoped, { FAMILY_V2_WRITES_ENABLED: 'true' }, 'finance'), false);
+  assert.equal(familyV2WritesAllowed(scoped, { ...enabled, VERCEL_ENV: 'preview' }, 'finance'), false);
+  for (const familyId of [undefined, null, '', '__legacy__', 'invalid/id', ' family-a']) {
+    assert.equal(familyV2WritesAllowed({ ...scoped, profile: { familyId } }, enabled, 'finance'), false);
+  }
+  for (const value of ['false', 'TRUE', '1', true]) {
+    assert.equal(familyV2WritesAllowed(scoped, { FAMILY_FINANCE_WRITES_ENABLED: value }, 'finance'), false);
+  }
+});

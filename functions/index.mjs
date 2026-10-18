@@ -35,6 +35,7 @@ const calendarEncryptionKeyId = defineString('CALENDAR_ENCRYPTION_KEY_ID', { def
 const googleCalendarOwnerUid = defineString('CALENDAR_GOOGLE_OWNER_UID', { default: '' });
 const familyV2WritesEnabled = defineString('FAMILY_V2_WRITES_ENABLED', { default: 'false' });
 const familyTasksWritesEnabled = defineString('FAMILY_TASKS_WRITES_ENABLED', { default: 'false' });
+const familyFinanceWritesEnabled = defineString('FAMILY_FINANCE_WRITES_ENABLED', { default: 'false' });
 const familyStorageBucket = defineString('FIREBASE_STORAGE_BUCKET', { default: '' });
 
 const notificationDependencies = {
@@ -163,7 +164,7 @@ export const healthDocumentReminders = onSchedule({ ...familyJobOptions, schedul
 // financial ACLs and notification permissions have been reviewed and published.
 export const financeReminders = onSchedule({ ...familyJobOptions, schedule: '0 9 * * *', retryCount: 3,
   maxRetrySeconds: 1800, minBackoffSeconds: 60, maxBackoffSeconds: 300 }, async () => {
-  if (familyV2WritesEnabled.value() !== 'true') return;
+  if (familyFinanceWritesEnabled.value() !== 'true') return;
   const result = await runFinanceReminders({ app, db });
   info('Finance reminder maintenance', result); // Counts only; no invoice details.
 });

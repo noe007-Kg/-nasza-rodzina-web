@@ -85,3 +85,16 @@ test('finance reminders use one independent Warsaw daily job without any secret 
   assert.equal(endpoint.concurrency, 1);
   assert.deepEqual(endpoint.secretEnvironmentVariables || [], []);
 });
+
+test('finance reminders stay inert with their switch off even when the global V2 flag is on', async () => {
+  const names = ['FAMILY_FINANCE_WRITES_ENABLED', 'FAMILY_V2_WRITES_ENABLED'];
+  const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  try {
+    process.env.FAMILY_FINANCE_WRITES_ENABLED = 'false';
+    process.env.FAMILY_V2_WRITES_ENABLED = 'true';
+    // A regression would try Firestore here. This test has no cloud credentials.
+    await functions.financeReminders.run({});
+  } finally {
+    for (const name of names) if (previous[name] === undefined) delete process.env[name]; else process.env[name] = previous[name];
+  }
+});
