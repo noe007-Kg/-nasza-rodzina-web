@@ -13,6 +13,7 @@ import {
 } from '../server/edu-storage.mjs';
 import { statusAction, syncAction } from '../server/edu-service.mjs';
 import { EduServerError } from '../server/edu-auth.mjs';
+import { runScheduledEduSync, eduSchedulePolicy } from '../server/edu-scheduler.mjs';
 
 const pupil = { id: 'nikodem-school', studentName: 'Nikodem Testowy', schoolName: 'Szkoła Podstawowa 4', schoolSymbol: 'SP4' };
 const sibling = { id: 'pawel-school', studentName: 'Paweł Testowy', schoolName: 'Szkoła Podstawowa 4', schoolSymbol: 'SP4' };
@@ -539,6 +540,36 @@ test('a confirmed successful sync rolls encrypted-session inactivity retention f
   await statusAction(context);
   assert.equal(fixture.records.get('_eduConnections/family').sessionConfirmedAt.toMillis(), confirmedAt);
   assert.equal(fixture.records.get('_eduConnections/family').expiresAt.toMillis(), confirmedAt + 24 * 3600000);
+}));
+
+test('scheduled authenticated reads at 23-hour intervals keep the same connection alive beyond its original 24-hour deadline', async t => withEncryption(async () => {
+  const connectedAt = Date.parse('2026-10-05T05:00:00Z');
+  let now = connectedAt;
+  t.mock.method(Date, 'now', () => now);
+  const fixture = databaseFixture(); const context = family(fixture);
+  await connectAuthenticated(context);
+  const originalVersion = fixture.records.get('_eduConnections/family').sessionVersion;
+  let reads = 0;
+  for (const elapsedHours of [23, 46, 69]) {
+    now = connectedAt + elapsedHours * 3600000;
+    const confirmedAt = now;
+    const result = await runScheduledEduSync({ db: fixture.db }, {
+      scheduleTime: new Date(now).toISOString(), window: eduSchedulePolicy(now).window,
+    }, { now: () => now, syncFn: (scheduled, body) => syncAction(scheduled, body, { readData: async () => {
+      reads++;
+      return confirmedReadResult(authenticatedSession(`synthetic-23h-${elapsedHours}`), confirmedAt);
+    } }) });
+    assert.equal(result.synced, 1);
+    const saved = fixture.records.get('_eduConnections/family');
+    assert.equal(saved.sessionVersion, originalVersion, 'No new login or connection is created');
+    assert.equal(saved.expiresAt.toMillis(), confirmedAt + 24 * 3600000);
+    assert.equal(saved.lastSuccessfulSyncAt.toMillis(), confirmedAt);
+    assert.equal(saved.reconnectRequired, undefined);
+    assert.equal(saved.lease, undefined);
+  }
+  assert.equal(reads, 3);
+  assert.equal([...fixture.records.keys()].filter(path => path.startsWith('schoolItems/')).length, 1,
+    'Refreshing the session does not duplicate the same school record');
 }));
 
 test('the same guarded renewal works for both scheduled contexts and an approved student without importing parent mail', async t => withEncryption(async () => {
