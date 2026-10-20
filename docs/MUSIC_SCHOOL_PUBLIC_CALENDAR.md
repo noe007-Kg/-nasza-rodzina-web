@@ -114,3 +114,15 @@ frontendu ukrywa nową projekcję bez utraty zapisanych danych.
 - E2E przeglądarkowe oraz wdrożone reguły/IAM: nie sprawdzono w tej sesji.
   Zaktualizowano istniejące scenariusze widoku muzycznego, bez deklarowania ich wykonania.
 - Nie zapisano danych produkcyjnych, nie wdrożono Functions ani Rules.
+
+### Skrócone wdrożenie wyłącznie nowego joba
+
+Po potwierdzonym zapisie siedmiu pól profili:
+
+```bash
+node scripts/deploy-music-school-job.mjs "$HOME/.nr-school-profiles-NAZWA_Z_PODSUMOWANIA" --project nasza-rodzina
+```
+
+Polecenie **wykonuje wdrożenie produkcyjne nowej funkcji**, nie jest dry-run. Wymaga Node 22, lokalnych zależności i autoryzowanego Firebase CLI/ADC. Sprawdza powiązanie prywatnych dowodów kopii, emulatora i zastosowania planu, aktualne pola/role/Auth oraz niezmienione reguły. Ustawia tylko `MUSIC_SCHOOL_ENABLED=true` w lokalnym pliku parametrów na czas wdrożenia; pozostałe parametry zachowuje. Przywraca poprzedni plik po zakończeniu, o ile nie zmienił go równolegle inny proces. Przerwanie całej sesji może pozostawić lokalny plik: nie publikować `.env` ani jego treści.
+
+Firebase CLI otrzymuje dokładnie `--only functions:nasza-rodzina:musicSchoolPublicHourly`. Nie wdraża reguł ani innych funkcji i nie zapisuje profili czy planu. Wynik sukcesu potwierdza wdrożenie przez CLI, a nie pierwsze uruchomienie harmonogramu. Bez zapisanego planu job nie ma lekcji do sprawdzania. Vercel/frontend i flagę Production trzeba uruchomić osobno na aktualnym, przejrzanym commicie produkcyjnym; nie promować starej gałęzi, jeśli produkcja ma nowsze zmiany.
