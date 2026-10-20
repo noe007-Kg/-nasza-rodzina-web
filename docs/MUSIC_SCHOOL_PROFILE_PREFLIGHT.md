@@ -92,3 +92,64 @@ zmianę metadanych między odczytami, powiązania UID z Auth, ryzyko utraty dost
 oraz rzeczywistą odmowę starego rachunku w obecnej logice Finansów po zmianie profili.
 Nie uruchamiano kontroli produkcyjnej z konta Codexa, migracji ani deploymentu.
 Nie zmieniano kodu aplikacji, Functions, reguł, indeksów ani integracji szkolnych.
+
+## Uzupełnione dowody produkcyjne właściciela
+
+Odczyt z Cloud Shell potwierdził kompletne i stabilne metadane, cztery konta
+logowania zgodne z UID profili i brak kont wyłączonych. Liczniki zagrożonych
+rachunków, żywych ticketów zdjęć zadań i załączników zdrowotnych wyniosły zero.
+To nie jest skan binarnych obiektów Storage ani dowód braku zewnętrznych zdjęć.
+
+Aktywne Firestore Rules mają SHA-256
+`255078250043a5e45245c891debf294968d910ec9059269e445f059c46ab404c`:
+identyczny plik istnieje w historii w `642982b` oraz `8e2189b`. Dostęp do szkoły
+w tych regułach nie zależy od `familyId`; nie jest to pełna izolacja gospodarstw.
+Aktywne Storage Rules mają SHA-256
+`e656d238ee388d951268ca38d1eca2abf2f5fdc55ef4b20e22911413d3dc935b`.
+Właściciel pokazał źródło: końcowy `allow read, write: if false` dla wszystkich
+ścieżek. To odrębny plik, nie aktualne reguły z repozytorium; nie publikować
+w jego miejsce całej nowej konfiguracji. Szkoła muzyczna nie wymaga Storage.
+Zmiana profili nie otwiera magazynu. Kod eduVULCAN zachowuje istniejący zakres
+połączenia `family` niezależnie od `familyId` profilu; kluczy ani sesji nie ruszamy.
+
+### Prywatna kopia i propozycja siedmiu pól (NIE zapis produkcyjny)
+
+```bash
+node scripts/prepare-school-profile-config.mjs --project nasza-rodzina
+```
+
+Narzędzie ponownie odczytuje i porównuje dokładnie te aktywne Rules, aktualny
+preflight i konta Auth. Jeśli pojawiły się zagrożone dane, niejednoznaczne UID,
+zmiana reguł lub profil już ma gospodarstwo, przygotowanie zostaje przerwane.
+W prywatnym terminalu właściciel potwierdza rzeczywisty roster i wybiera numery
+Pawła oraz Nikodema. Numery mapują się na pobrane, zweryfikowane UID — nie ma
+wyszukiwania po imieniu ani automatycznego przypisania do zalogowanego rodzica.
+Role, UID, `canLogin`, konta Auth i istniejące dane szkolne nie są zmieniane.
+
+Powstaje nowy prywatny katalog `~/.nr-school-profiles-*` (0700), zawierający
+pliki 0600: `fields-before.private.json`, `plan.private.json`,
+`preparation.private.json`. Są poza repozytorium i `/tmp`, więc nie trafią do
+GitHuba ani paczki Functions i przetrwają zwykłe ponowne uruchomienie Cloud Shell.
+Nie wysyłać ich do rozmowy. Przed dalszym etapem zachować także bezpieczną drugą
+kopię tego katalogu poza dyskiem Cloud Shell.
+
+Kopia obejmuje wyłącznie dwa potencjalnie zmieniane pola pięciu profili wraz
+z ich dokładnymi wersjami, UID i informacją o nieobecności pola. Nie jest to pełny
+backup aplikacji, profili, danych szkolnych ani plików. Propozycja obejmuje pięć
+ustawień nowego wspólnego `familyId` i `schoolEnabled: true` wyłącznie dwóch
+wybranych uczniów. Pozostałe flagi są zachowane; nie ma zmiany ról/uprawnień.
+Kandydat `familyId` jest utrwalany tylko w prywatnej propozycji.
+
+Odczyt plików po zapisaniu sprawdza integralność i logiczną odwracalność pól,
+rozróżniając brak pola, null i false. **Nie jest to rzeczywisty test odtworzenia
+Firestore/emulatora**. `firestoreRestoreVerified` i `fullApplicationBackupVerified`
+pozostają false. Narzędzie nie ma trybu `--apply`, a `canApply` pozostaje false.
+Przed jakimkolwiek zapisem należy dokończyć próbę odtworzenia w izolowanym
+emulatorze i przegląd konkretnej propozycji. Dopiero oddzielnie zatwierdzony
+wykonawca może sprawdzić świeże preconditions, a potem atomowo uzupełnić pola.
+Nie wykonywać ręcznych niesprawdzonych aktualizacji z konsoli.
+
+Dodatkowe sprawdzenia Node.js 22.23.3: łącznie 28/28 testów przygotowania
+propozycji i kontroli wpływu, kontrola składni `.mjs` PASS. Bez produkcyjnego
+odczytu/zapisu z konta Codexa i bez deploymentu. Kod aplikacji/Rules pozostaje
+niezmieniony.
