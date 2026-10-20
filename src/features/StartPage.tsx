@@ -1,3 +1,4 @@
+import { useMusicSchoolPlans, musicCalendarEvents } from '../school/music-school-client';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { User } from 'firebase/auth';
@@ -81,6 +82,8 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const [calendarDetail, setCalendarDetail] = useState<{ uid: string; key: string } | null>(null);
   const healthSources = useCalendarHealthSources({ uid: user.uid, member });
   const schoolSources = useCalendarSchoolSources(user.uid, member);
+  const musicSources = useMusicSchoolPlans(user.uid, schoolSources.scope);
+  const musicEvents = useMemo(() => musicCalendarEvents(musicSources.data?.plans || []), [musicSources.data]);
   const schoolRecords = schoolSources.rows;
   const [shopping, setShopping] = useState<StartShoppingItem[]>([]);
   const [quickProducts, setQuickProducts] = useState<QuickProduct[]>([]);
@@ -153,7 +156,7 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const okruszekEvents = useMemo(() => projectOkruszekCalendar(schoolRecords, events, schoolSources.access, profiles), [schoolRecords, events, schoolSources.scope, profiles]);
   const manualSchoolProjection = useMemo(() => projectManualSchoolCalendar(schoolRecords, events, schoolSources.access), [schoolRecords, events, schoolSources.scope]);
   const calendarSources = useMemo(() => [...events.map(calendarSourceDisplayEvent), ...schoolProjection.events, ...okruszekEvents,
-    ...manualSchoolProjection.events, ...healthSources.events, ...projectFamilyBirthdays(profiles)], [events, schoolProjection.events, okruszekEvents, manualSchoolProjection.events, healthSources.events, profiles]);
+    ...manualSchoolProjection.events, ...musicEvents, ...healthSources.events, ...projectFamilyBirthdays(profiles)], [events, schoolProjection.events, okruszekEvents, manualSchoolProjection.events, musicEvents, healthSources.events, profiles]);
   const sharedEvents = useMemo(() => familyCalendarEvents(calendarSources), [calendarSources]);
   const todayOccurrences = useMemo(() => generateCalendarOccurrencesFromSources(calendarRangeDisplaySources(sharedEvents, statusDay.start, statusDay.end), statusDay.start, statusDay.end), [sharedEvents, todayKey]);
   const statusViewer = useMemo(() => ({ uid: user.uid, person: own }), [user.uid, own]);

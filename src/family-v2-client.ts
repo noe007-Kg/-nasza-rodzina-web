@@ -9,7 +9,7 @@ export function assertFamilyV2WriteAllowed(): void {
   if (!familyV2WritesAllowed()) throw new Error('Wersja Preview: nowe operacje zapisu są wyłączone, aby chronić dane produkcyjne.');
 }
 
-export async function familyAction<T>(domain: 'tasks' | 'health' | 'finance', body: Record<string, unknown>): Promise<T> {
+export async function familyAction<T>(domain: 'tasks' | 'health' | 'finance' | 'music-school', body: Record<string, unknown>): Promise<T> {
   if (!['state', 'status'].includes(String(body.operation || body.action))) assertFamilyV2WriteAllowed();
   const user = auth.currentUser;
   if (!user) throw new Error('Zaloguj się ponownie do Naszej Rodziny.');

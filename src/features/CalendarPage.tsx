@@ -1,3 +1,4 @@
+import { useMusicSchoolPlans, musicCalendarEvents } from '../school/music-school-client';
 import { auth, addDays, addMonths, capitalize, collection, db, DetailRow, doc, downloadFile, endOfDay, errorMessage, eventActivityIcon, formatDateInput, formatTime, formatTimeInput, generateOccurrences, isParent, Modal, ModuleHeader, notify, ownPerson, parseLocalDate, personColor, personEventClass, personLabel, PersonSelect, React, sameDay, startOfDay, startOfWeek, useEffect, useMemo, useRef, useState, weekTitle, type CalendarEventData, type CalendarOccurrence, type CalendarView, type EventForm, type Member, type Page, type PersonKey, type RepeatType, type User } from '../app-shared';
 import { exportCalendarIcs, importCalendarIcs } from '../calendar-ics';
 import { planSeriesDelete, planSeriesUpdate, seriesScopeLabel, type SeriesScope } from '../calendar-series';
@@ -35,14 +36,16 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
   const currentCalendarUid = useRef(user.uid);
   currentCalendarUid.current = user.uid;
   const schoolSources = useCalendarSchoolSources(user.uid, member);
+  const musicSources = useMusicSchoolPlans(user.uid, schoolSources.scope);
+  const musicEvents = useMemo(() => musicCalendarEvents(musicSources.data?.plans || []), [musicSources.data]);
   const schoolProjection = useMemo(() => projectSchoolCalendar(schoolSources.rows, events, schoolSources.access, activeProfiles), [schoolSources.rows, schoolSources.scope, events, activeProfiles]);
   const manualSchoolProjection = useMemo(() => projectManualSchoolCalendar(schoolSources.rows, events, schoolSources.access), [schoolSources.rows, schoolSources.scope, events]);
   const okruszekEvents = useMemo(() => projectOkruszekCalendar(schoolSources.rows, events, schoolSources.access, activeProfiles), [schoolSources.rows, schoolSources.scope, events, activeProfiles]);
   const healthSources = useCalendarHealthSources({ uid: user.uid, member });
   const financeSources = useFinanceCalendarSources({ uid: user.uid, member });
   const birthdayEvents = useMemo(() => projectFamilyBirthdays(activeProfiles), [activeProfiles]);
-  const projectionEvents = useMemo(() => [...schoolProjection.events, ...manualSchoolProjection.events, ...okruszekEvents, ...healthSources.events, ...financeSources.events, ...birthdayEvents], [schoolProjection.events, manualSchoolProjection.events, okruszekEvents, healthSources.events, financeSources.events, birthdayEvents]);
-  const projectionScope = `${schoolSources.scope}|${user.uid}`;
+  const projectionEvents = useMemo(() => [...schoolProjection.events, ...manualSchoolProjection.events, ...okruszekEvents, ...musicEvents, ...healthSources.events, ...financeSources.events, ...birthdayEvents], [schoolProjection.events, manualSchoolProjection.events, okruszekEvents, musicEvents, healthSources.events, financeSources.events, birthdayEvents]);
+  const projectionScope = `${schoolSources.scope}|${user.uid}|${musicSources.data?.plans.map(p => p.id + ':' + p.revision).join(',') || ''}`;
   const displayEvents = useMemo(() => [...events.map(calendarSourceDisplayEvent), ...projectionEvents], [events, projectionEvents]);
   const own = ownPerson(member);
   const [selectedPerson, setSelectedPerson] = useState<PersonKey>(() => ownPerson(member));
@@ -365,7 +368,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
         <Modal title={visibleDisplayEvent?.title || selectedEvent.title} subtitle={selectedEvent.readOnly ? `${calendarSourceLabel(selectedEvent)} · Dane źródłowe` : selectedEvent.repeat !== 'none' ? 'Wydarzenie cykliczne' : 'Wydarzenie'} onClose={() => setSelectedEvent(null)} wide>
           {(!editing || selectedEvent.readOnly) ? (
             <>
-              {selectedEvent.readOnly && visibleDisplayEvent && <div className="calendar-source-detail"><CalendarSourceBadges event={visibleDisplayEvent} />{schoolSelection ? <><p>Dane pochodzą z {selectedEvent.source === 'health' ? 'modułu Zdrowie' : ['sp4', 'okruszek'].includes(selectedEvent.source || '') ? 'modułu Szkoła' : 'zapisanego profilu'}. Podgląd nie zmienia danych źródłowych.</p><button className="secondary-button" type="button" onClick={() => goTo(selectedEvent.source === 'health' ? 'Zdrowie' : ['sp4', 'okruszek'].includes(selectedEvent.source || '') ? 'Szkoła' : 'Ustawienia')}>Otwórz źródło</button></> : <><p>Treść wydarzenia pochodzi z Google Calendar. Zmień ją w kalendarzu źródłowym; kolejne pobranie zachowa lokalną widoczność.</p><button className="secondary-button" type="button" onClick={() => goTo('Ustawienia')}>Połączone kalendarze</button></>}</div>}
+              {selectedEvent.readOnly && visibleDisplayEvent && <div className="calendar-source-detail"><CalendarSourceBadges event={visibleDisplayEvent} />{schoolSelection ? <><p>Dane pochodzą z {selectedEvent.source === 'health' ? 'modułu Zdrowie' : ['sp4', 'okruszek', 'fryderyk'].includes(selectedEvent.source || '') ? 'modułu Szkoła' : 'zapisanego profilu'}. Podgląd nie zmienia danych źródłowych.</p><button className="secondary-button" type="button" onClick={() => goTo(selectedEvent.source === 'health' ? 'Zdrowie' : ['sp4', 'okruszek', 'fryderyk'].includes(selectedEvent.source || '') ? 'Szkoła' : 'Ustawienia')}>Otwórz źródło</button></> : <><p>Treść wydarzenia pochodzi z Google Calendar. Zmień ją w kalendarzu źródłowym; kolejne pobranie zachowa lokalną widoczność.</p><button className="secondary-button" type="button" onClick={() => goTo('Ustawienia')}>Połączone kalendarze</button></>}</div>}
               <div className="details-grid">
                 <DetailRow label="Osoba" value={personLabel((visibleDisplayEvent || selectedEvent).person)} />
                 <DetailRow label="Termin wydarzenia" value={capitalize((visibleDisplayEvent?.date || selectedOccurrenceDate || selectedEvent.date).toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))} />
@@ -373,7 +376,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
                 {(visibleDisplayEvent || selectedEvent).timingConfidence === 'estimated' && <DetailRow label="Dokładność godzin" value="Orientacyjne — harmonogram roboczy, do potwierdzenia" />}
                 <DetailRow label="Powtarzanie" value={describeRecurrence(selectedEvent)} />
                 {selectedEvent.repeatUntil && <DetailRow label="Powtarzaj do" value={selectedEvent.repeatUntil.toLocaleDateString('pl-PL')} />}
-                {(visibleDisplayEvent || selectedEvent).private ? <DetailRow label="Widoczność" value="Prywatny — tylko Ty" /> : ['google', 'okruszek'].includes(selectedEvent.source || '') ? <DetailRow label="Widoczność" value="Rodzinny" /> : null}
+                {(visibleDisplayEvent || selectedEvent).private ? <DetailRow label="Widoczność" value="Prywatny — tylko Ty" /> : ['google', 'okruszek', 'fryderyk'].includes(selectedEvent.source || '') ? <DetailRow label="Widoczność" value="Rodzinny" /> : null}
                 {(visibleDisplayEvent || selectedEvent).location && <DetailRow label="Lokalizacja" value={(visibleDisplayEvent || selectedEvent).location!} />}
                 {selectedEvent.repeatCount && <DetailRow label="Liczba wystąpień" value={String(selectedEvent.repeatCount)} />}
                 {(visibleDisplayEvent || selectedEvent).description && <DetailRow label="Notatka" value={(visibleDisplayEvent || selectedEvent).description} />}

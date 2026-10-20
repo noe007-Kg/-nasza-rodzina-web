@@ -1,3 +1,5 @@
+import { runMusicSchoolHourly } from './server/music-school-service.mjs';
+import { MUSIC_SCHOOL_SCHEDULE, MUSIC_SCHOOL_TIME_ZONE } from './server/music-school-model.mjs';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
@@ -165,4 +167,15 @@ export const financeReminders = onSchedule({ ...familyJobOptions, schedule: '0 9
   if (familyV2WritesEnabled.value() !== 'true') return;
   const result = await runFinanceReminders({ app, db });
   info('Finance reminder maintenance', result); // Counts only; no invoice details.
+});
+
+// Public school notices only: no eduVULCAN or Fryderyk credentials/session.
+const musicSchoolEnabled = defineString('MUSIC_SCHOOL_ENABLED', { default: 'false' });
+export const musicSchoolPublicHourly = onSchedule({ schedule: MUSIC_SCHOOL_SCHEDULE,
+  timeZone: MUSIC_SCHOOL_TIME_ZONE, region, retryCount: 0, minInstances: 0,
+  maxInstances: 1, concurrency: 1, memory: '256MiB', timeoutSeconds: 110,
+}, async event => {
+  const result = await runMusicSchoolHourly({ db }, { scheduleTime: event.scheduleTime,
+    env: { MUSIC_SCHOOL_ENABLED: musicSchoolEnabled.value() } });
+  info('Music school public notice check', result); // Aggregate counters only.
 });

@@ -41,9 +41,9 @@ test('Google Calendar adds one independent Gen2 hourly Warsaw job using separate
   assert.equal(endpoint.timeoutSeconds, 540); assert.equal(endpoint.maxInstances, 1); assert.equal(endpoint.concurrency, 1);
   assert.deepEqual(endpoint.secretEnvironmentVariables, [{ key: 'CALENDAR_ENCRYPTION_KEY_BASE64' }, { key: 'GOOGLE_CALENDAR_CLIENT_SECRET' }]);
   const exportedEndpoints = Object.entries(functions).filter(([, value]) => value?.__endpoint).map(([name]) => name).sort();
-  assert.equal(exportedEndpoints.length, 17);
+  assert.equal(exportedEndpoints.length, 18);
   assert.deepEqual(exportedEndpoints, ['notifyCalendar', 'notifyPrivateCalendar', 'notifyTasks', 'notifyShopping', 'notifyHealth', 'notifySchool',
-    'notifySchoolParents', 'notifySchoolStudent', 'notifyChat', 'notifySchoolSync', 'eduVulcanSchoolHours', 'eduVulcanOffHours', 'medicineReminders', 'googleCalendarHourly', 'taskPhotoCleanup', 'healthDocumentReminders', 'financeReminders'].sort());
+    'notifySchoolParents', 'notifySchoolStudent', 'notifyChat', 'notifySchoolSync', 'eduVulcanSchoolHours', 'eduVulcanOffHours', 'medicineReminders', 'googleCalendarHourly', 'taskPhotoCleanup', 'healthDocumentReminders', 'financeReminders', 'musicSchoolPublicHourly'].sort());
 });
 
 
@@ -68,5 +68,16 @@ test('finance reminders use one independent Warsaw daily job without any secret 
   assert.equal(endpoint.scheduleTrigger.retryConfig.retryCount, 3);
   assert.equal(endpoint.maxInstances, 1);
   assert.equal(endpoint.concurrency, 1);
+  assert.deepEqual(endpoint.secretEnvironmentVariables || [], []);
+});
+
+
+test('music school reads public notices hourly in Warsaw without any provider secret', () => {
+  const endpoint = functions.musicSchoolPublicHourly.__endpoint;
+  assert.equal(endpoint.platform, 'gcfv2');
+  assert.deepEqual(endpoint.region, ['europe-west1']);
+  assert.equal(endpoint.scheduleTrigger.schedule, '0 8-18 * * *');
+  assert.equal(endpoint.scheduleTrigger.timeZone, 'Europe/Warsaw');
+  assert.equal(endpoint.maxInstances, 1);
   assert.deepEqual(endpoint.secretEnvironmentVariables || [], []);
 });

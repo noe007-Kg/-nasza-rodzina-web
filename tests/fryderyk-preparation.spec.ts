@@ -11,6 +11,7 @@ test.beforeEach(async ({ context }) => {
   await context.route('https://api.open-meteo.com/**', route => route.fulfill({ contentType: 'application/json', body: '{}' }));
   await context.route(/https:\/\/[^/]*(?:googleapis\.com|firebaseapp\.com|firebasestorage\.app)\//, () => { throw new Error('Fryderyk tests forbid production Firebase.'); });
   await context.route('**/api/eduvulcan/**', route => { expect(route.request().method()).toBe('GET'); expect(new URL(route.request().url()).pathname).toBe('/api/eduvulcan/status'); return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, status: { configured: false, state: 'disconnected', profiles: [] } }) }); });
+  await context.route('**/api/family/music-school', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, plans: [], template: [], writesEnabled: false }) }));
   await context.route('**/api/calendars/**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, configured: false, connections: [] }) }));
 });
 
@@ -21,9 +22,10 @@ test('Rodzic otwiera osobny, niepołączony Fryderyk; żaden plan lub wiadomoś�
   await page.getByTestId('school-source-selector').getByRole('button', { name: /Fryderyk/ }).click();
   const panel = page.getByTestId('fryderyk-preparation'); await expect(panel).toContainText('Fryderyk — niepołączono'); await expect(panel).toContainText('jeszcze nie wykonano');
   await expect(panel).not.toContainText('Przyroda Nikodema'); await expect(page.getByTestId('school-sp4-content')).toBeHidden();
-  for (const name of ['Plan zajęć', 'Ogłoszenia', 'Wiadomości', 'Nieobecności']) { await panel.getByRole('button', { name, exact: true }).click(); await expect(panel.getByRole('heading', { name, exact: true })).toBeVisible(); }
+  await expect(panel).toContainText('publiczne komunikaty PSM');
+  await expect(panel).toContainText('Nie zapisano planu tego ucznia');
   await expect(panel.getByRole('textbox')).toHaveCount(0); await expect(panel.getByRole('button', { name: /Połącz|Synchronizuj/ })).toHaveCount(0);
-  await panel.getByRole('button', { name: 'Wróć do SP4', exact: true }).click(); await expect(page.getByTestId('school-stat-lessons')).toBeVisible();
+  await page.getByTestId('school-source-selector').getByRole('button', { name: /SP4/ }).click(); await expect(page.getByTestId('school-stat-lessons')).toBeVisible();
   await expect(page.locator('.school-plan-list')).toContainText('Przyroda Nikodema'); expect(requests).toEqual([]);
 });
 
@@ -42,7 +44,7 @@ test('Zmiana ucznia przywraca jego osobny domyślny widok SP4', async ({ page })
   await login(page); await page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true }).click();
   await page.getByTestId('school-source-selector').getByRole('button', { name: /Fryderyk/ }).click(); await expect(page.getByTestId('fryderyk-preparation')).toBeVisible();
   await page.locator('.school-students').getByRole('button', { name: 'Paweł', exact: true }).click(); await expect(page.getByTestId('fryderyk-preparation')).toHaveCount(0);
-  await expect(page.getByTestId('school-sp4-content')).toBeVisible(); await expect(page.locator('.school-plan-list')).toContainText('Fizyka Pawła');
+  await expect(page.getByTestId('school-source-selector').getByRole('button', { name: /Okruszek/ })).toBeVisible(); await expect(page.getByTestId('school-sp4-content')).toBeHidden();
 });
 
 test('Fryderyk jest responsywny w pięciu rozmiarach, a przygotowanie połączenia występuje tylko w ustawieniach rodzica', async ({ page, browserName }) => {

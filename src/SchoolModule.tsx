@@ -15,7 +15,8 @@ import type { SchoolEntry, SchoolType } from './school-import';
 import { schoolReadAccess, SCHOOL_PROFILE_UNBOUND } from './school/read-access';
 import { SchoolGrades } from './school/SchoolGrades';
 import { SchoolExpandableList } from './school/SchoolExpandableList';
-import { FryderykPreparation, SchoolSourceSelector, type SchoolSourceView } from './school/SchoolSources';
+import { MusicSchoolPlan } from './school/MusicSchoolPlan';
+import { SchoolSourceSelector, type SchoolSourceView } from './school/SchoolSources';
 import { OkruszekPlan } from './school/OkruszekPlan';
 import { OKRUSZEK_PLAN_ID } from './school/okruszek-plan';
 import { schoolOwnerProfileId, schoolSourcesForProfile } from './school/profile-schools';
@@ -423,7 +424,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
     {person && <SchoolSourceSelector value={sourceView} sources={sources} onChange={source => {
       setSourceSelection({ person, source }); setDetail(null); setForm(null); setDeleting(null); setImportOpen(false);
     }} />}
-    {person && sourceView === 'fryderyk' && <FryderykPreparation key={`${identity}:${person}`} student={studentProfiles.find(profile => memberPersonKey(profile) === person)?.name || person} parent={parent} onBack={() => setSourceSelection({ person, source: 'sp4' })} />}
+    {person && sourceView === 'fryderyk' && <MusicSchoolPlan key={`${identity}:${person}`} uid={user.uid} ownerProfileId={ownerProfileId} student={studentProfiles.find(profile => memberPersonKey(profile) === person)?.name || person} parent={parent} scope={identity} />}
     {person && sourceView === 'okruszek' && <OkruszekPlan key={`${identity}:${person}:${ownerProfileId}`} user={user} parent={parent} person={person} ownerProfileId={ownerProfileId} />}
     {sources.includes('sp4') && <div className="school-sp4-content" data-testid="school-sp4-content" hidden={sourceView !== 'sp4'}>
     {notice && <div className="school-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Zamknij komunikat"><Icon name="close" /></button></div>}

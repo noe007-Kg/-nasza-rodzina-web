@@ -1,0 +1,12 @@
+.music-school-plan { display:grid; gap:12px; min-width:0; }
+.music-school-plan p, .music-school-plan li, .music-school-plan small { overflow-wrap:anywhere; }
+.music-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.music-editor { display:flex; flex-wrap:wrap; gap:12px; padding:16px; background:var(--surface,#fff); color:var(--text,#171b4b); border:1px solid #dbcaec; border-radius:18px; }
+.music-editor h3, .music-editor p, .music-editor>label:last-of-type { flex-basis:100%; }
+.music-editor label { display:flex; flex-wrap:wrap; gap:6px; align-items:center; max-width:100%; }
+.music-editor fieldset { min-width:0; max-width:100%; border:1px solid #dbcaec; border-radius:12px; display:flex; flex-wrap:wrap; gap:8px; }
+.music-editor input:not([type=checkbox]), .music-editor textarea { box-sizing:border-box; max-width:100%; min-height:40px; }
+.music-editor button { min-height:42px; border-radius:12px; padding:8px 14px; }
+.music-occurrence { display:grid; gap:6px; padding:12px 0; border-bottom:1px solid #e8dff0; }
+.music-occurrence button { justify-self:start; }
+@media(max-width:600px) { .music-editor { padding:10px; } .music-editor fieldset { width:100%; } }
