@@ -149,7 +149,10 @@ emulatorze i przegląd konkretnej propozycji. Dopiero oddzielnie zatwierdzony
 wykonawca może sprawdzić świeże preconditions, a potem atomowo uzupełnić pola.
 Nie wykonywać ręcznych niesprawdzonych aktualizacji z konsoli.
 
-Dodatkowe sprawdzenia Node.js 22.23.3: łącznie 28/28 testów przygotowania
+Dodatkowe sprawdzenia Node.js 22.23.3: łącznie 30/30 testów przygotowania
 propozycji i kontroli wpływu, kontrola składni `.mjs` PASS. Bez produkcyjnego
 odczytu/zapisu z konta Codexa i bez deploymentu. Kod aplikacji/Rules pozostaje
 niezmieniony.
+
+Wersje profili są porównywane przez sekundy i nanosekundy. Nie porównujemy ich
+wyłącznie przez `Timestamp.toMillis()`, które SDK Firestore zaokrągla w dół.

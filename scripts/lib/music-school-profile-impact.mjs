@@ -25,7 +25,10 @@ export async function captureProfileImpact({ db, auth }) {
     try {
       const result = await db.collection(name).select(...PROFILE_IMPACT_FIELDS).limit(maximumDocuments + 1).get();
       collections[name] = { complete: result.size <= maximumDocuments, rows: result.docs.map(doc => ({
-        id: doc.id, version: doc.updateTime?.toMillis?.() ?? null, data: doc.data(),
+        id: doc.id, version: doc.updateTime?.toMillis?.() ?? null,
+        versionParts: Number.isInteger(doc.updateTime?.seconds) && Number.isInteger(doc.updateTime?.nanoseconds)
+          ? { seconds: doc.updateTime.seconds, nanoseconds: doc.updateTime.nanoseconds } : null,
+        data: doc.data(),
       })).sort((a, b) => a.id.localeCompare(b.id)) };
     } catch { failures.push(name); }
   }

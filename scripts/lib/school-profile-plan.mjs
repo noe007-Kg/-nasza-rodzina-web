@@ -8,6 +8,11 @@ export const SCHOOL_PROFILE_RULE_HASHES = Object.freeze({
 export const profilePlanHash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 const validUid = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 const own = (object, field) => Object.hasOwn(object, field);
+export function sameProfileVersion(a, b) {
+  return Number.isInteger(a?.seconds) && Number.isInteger(a?.nanoseconds)
+    && Number.isInteger(b?.seconds) && Number.isInteger(b?.nanoseconds)
+    && a.seconds === b.seconds && a.nanoseconds === b.nanoseconds;
+}
 function captureField(data, field) { return own(data, field) ? { present: true, value: data[field] } : { present: false }; }
 
 /** A private proposal and before-images, not authorization to execute writes. */

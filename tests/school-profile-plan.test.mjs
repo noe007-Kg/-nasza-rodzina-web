@@ -1,9 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { prepareSchoolProfilePlan, rehearseSchoolProfileFields, profilePlanHash } from '../scripts/lib/school-profile-plan.mjs';
+import { prepareSchoolProfilePlan, rehearseSchoolProfileFields, profilePlanHash, sameProfileVersion } from '../scripts/lib/school-profile-plan.mjs';
 
 const familyId = 'family-12345678-1234-4234-8234-123456789abc';
+test('profile version matching preserves nanoseconds instead of comparing truncated SDK milliseconds', () => {
+  const a = { seconds: 1792480000, nanoseconds: 123456000 };
+  assert.equal(sameProfileVersion(a, { ...a }), true);
+  assert.equal(sameProfileVersion(a, { ...a, nanoseconds: 123457000 }), false);
+});
+test('missing version evidence cannot be accepted', () => {
+  assert.equal(sameProfileVersion(null, null), false);
+  assert.equal(sameProfileVersion({ seconds: 1 }, { seconds: 1 }), false);
+});
 function input() {
   return { projectId: 'nasza-rodzina', householdConfirmed: true, familyId,
     profiles: Array.from({ length: 5 }, (_, i) => ({ uid: `uid-${i}`, version: { seconds: 1792480000, nanoseconds: i * 1000 },

@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { captureProfileImpact, assessProfileImpact, PROFILE_IMPACT_FIELDS } from './lib/music-school-profile-impact.mjs';
-import { prepareSchoolProfilePlan, rehearseSchoolProfileFields, profilePlanHash, SCHOOL_PROFILE_RULE_HASHES } from './lib/school-profile-plan.mjs';
+import { prepareSchoolProfilePlan, rehearseSchoolProfileFields, profilePlanHash, SCHOOL_PROFILE_RULE_HASHES, sameProfileVersion } from './lib/school-profile-plan.mjs';
 
 const args = process.argv.slice(2);
 let app, prompt;
@@ -39,7 +39,7 @@ try {
   const records = await context.db.collection('members').select(...PROFILE_IMPACT_FIELDS, 'name', 'personKey').limit(6).get();
   const profiles = records.docs.map(doc => ({ uid: doc.id, data: doc.data(), version: { seconds: doc.updateTime.seconds, nanoseconds: doc.updateTime.nanoseconds } })).sort((a, b) => a.uid.localeCompare(b.uid));
   if (profiles.length !== 5 || profiles.some(p => !second.collections.members.rows.some(old => old.id === p.uid
-    && old.version === p.version.seconds * 1000 + p.version.nanoseconds / 1e6))) throw new Error('PROFILE_SNAPSHOT_CHANGED');
+    && sameProfileVersion(old.versionParts, p.version)))) throw new Error('PROFILE_SNAPSHOT_CHANGED');
   const authResult = await context.auth.getUsers(profiles.filter(p => p.data.canLogin === true).map(p => ({ uid: p.uid })));
   const authUsers = authResult.users.map(u => ({ uid: u.uid, disabled: u.disabled === true }));
   console.log('Prywatny przegląd profili. Numer wskazuje rzeczywisty UID, nie wyszukiwanie po imieniu.');
