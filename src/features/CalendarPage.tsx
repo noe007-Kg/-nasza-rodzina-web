@@ -37,7 +37,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
   currentCalendarUid.current = user.uid;
   const schoolSources = useCalendarSchoolSources(user.uid, member);
   const musicSources = useMusicSchoolPlans(user.uid, schoolSources.scope);
-  const musicEvents = useMemo(() => musicCalendarEvents(musicSources.data?.plans || []), [musicSources.data]);
+  const musicEvents = useMemo(() => musicCalendarEvents(musicSources.data?.plans || [], activeProfiles), [musicSources.data, activeProfiles]);
   const schoolProjection = useMemo(() => projectSchoolCalendar(schoolSources.rows, events, schoolSources.access, activeProfiles), [schoolSources.rows, schoolSources.scope, events, activeProfiles]);
   const manualSchoolProjection = useMemo(() => projectManualSchoolCalendar(schoolSources.rows, events, schoolSources.access), [schoolSources.rows, schoolSources.scope, events]);
   const okruszekEvents = useMemo(() => projectOkruszekCalendar(schoolSources.rows, events, schoolSources.access, activeProfiles), [schoolSources.rows, schoolSources.scope, events, activeProfiles]);

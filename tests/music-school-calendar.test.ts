@@ -29,3 +29,25 @@ test('cancellation updates the original stable calendar event and preserves sour
   assert.match(after.title, /ODWOŁANE/); assert.match(after.description, /gov.pl/);
 });
 test('empty scoped API result exposes no school events', () => assert.deepEqual(musicCalendarEvents([]), []));
+
+test('personal calendar uses current person key resolved by saved owner UID, not a stale plan name', () => {
+  const stale = { ...plan, person: 'Nikodem Sebastian Połoński' };
+  const profiles = [
+    { id: 'student-uid', name: 'Nikodem Sebastian Połoński', personKey: 'Nikodem' },
+    { id: 'other-uid', name: stale.person, personKey: 'Other' },
+  ];
+  const [event] = musicCalendarEvents([stale], profiles);
+  assert.equal(event.ownerProfileId, 'student-uid');
+  assert.equal(event.person, 'Nikodem');
+  assert.equal(calendarEventInView(event, 'Nikodem', 'Parent', 'parent-uid'), true);
+  assert.equal(calendarEventInView(event, 'family', 'Parent', 'parent-uid'), true);
+  assert.equal(calendarEventInView(event, 'Other', 'Parent', 'parent-uid'), false);
+  assert.equal(calendarEventInView(event, 'Nikodem', 'Nikodem', 'student-uid'), true);
+  assert.equal(event.id, musicCalendarEvents([stale])[0].id);
+  assert.equal(stale.person, 'Nikodem Sebastian Połoński');
+});
+test('directory name matches cannot reassign an occurrence owned by another UID', () => {
+  const [event] = musicCalendarEvents([plan], [{ id: 'foreign-uid', name: plan.person, personKey: 'Nikodem' }]);
+  assert.equal(event.person, plan.person);
+  assert.equal(calendarEventInView(event, 'Nikodem', 'Parent', 'parent-uid'), false);
+});

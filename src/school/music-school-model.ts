@@ -1,4 +1,5 @@
 import type { CalendarEventData } from '../app-shared';
+import { memberPersonKey, type FamilyMemberProfile } from '../family-members';
 export type MusicLesson = { id: string; weekday: number; title: string; teacher: string; room: string; time: string; endTime: string };
 export type MusicOccurrence = { id: string; title: string; date: string; time: string; endTime: string; startAt: string; endAt: string;
   teacher: string; room: string; cancelled: boolean; moved: boolean; manual: boolean; note: string;
@@ -6,10 +7,10 @@ export type MusicOccurrence = { id: string; title: string; date: string; time: s
 export type MusicPlan = { id: string; ownerProfileId: string; person: string; revision: number; validFrom: string; validUntil: string;
   lessons: MusicLesson[]; excludedDates: string[]; check: { status: string; successAt?: number | null; attemptAt?: number } | null; occurrences: MusicOccurrence[] };
 export type MusicState = { plans: MusicPlan[]; template: MusicLesson[]; writesEnabled: boolean };
-export function musicCalendarEvents(plans: MusicPlan[]): CalendarEventData[] {
+export function musicCalendarEvents(plans: MusicPlan[], profiles: readonly FamilyMemberProfile[] = []): CalendarEventData[] {
   return plans.flatMap(plan => plan.occurrences.map(x => ({
     id: `music:${plan.id}:${x.id}`, title: `${x.cancelled ? 'ODWOŁANE — ' : x.moved ? 'ZMIANA TERMINU — ' : ''}${x.title}`,
-    person: plan.person, date: new Date(x.startAt), endDate: new Date(x.endAt), allDay: false,
+    person: memberPersonKey(profiles.find(profile => profile.id === plan.ownerProfileId)) || plan.person, date: new Date(x.startAt), endDate: new Date(x.endAt), allDay: false,
     description: [x.cancelled ? 'Zajęcia odwołane.' : 'Zaplanowane — brak informacji o odwołaniu; nie jest to potwierdzenie odbycia zajęć.',
       `Szkoła muzyczna · nauczyciel: ${x.teacher} · sala ${x.room}`,
       'Plan potwierdzony przez rodzica; dziennik Fryderyk niepołączony.',

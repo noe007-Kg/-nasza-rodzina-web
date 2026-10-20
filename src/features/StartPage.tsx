@@ -83,7 +83,7 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const healthSources = useCalendarHealthSources({ uid: user.uid, member });
   const schoolSources = useCalendarSchoolSources(user.uid, member);
   const musicSources = useMusicSchoolPlans(user.uid, schoolSources.scope);
-  const musicEvents = useMemo(() => musicCalendarEvents(musicSources.data?.plans || []), [musicSources.data]);
+  const musicEvents = useMemo(() => musicCalendarEvents(musicSources.data?.plans || [], profiles), [musicSources.data, profiles]);
   const schoolRecords = schoolSources.rows;
   const [shopping, setShopping] = useState<StartShoppingItem[]>([]);
   const [quickProducts, setQuickProducts] = useState<QuickProduct[]>([]);
