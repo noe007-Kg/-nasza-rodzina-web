@@ -6,6 +6,15 @@ export const SCHOOL_PROFILE_RULE_HASHES = Object.freeze({
   storage: 'e656d238ee388d951268ca38d1eca2abf2f5fdc55ef4b20e22911413d3dc935b',
 });
 export const profilePlanHash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
+/** Safe diagnostics: fingerprints only, never source, credentials or rule resource IDs. */
+export function inspectSchoolProfileRules(files, expected) {
+  const validShape = Array.isArray(files) && files.length === 1 && typeof files[0]?.content === 'string';
+  const actual = validShape ? profilePlanHash(files[0].content) : null;
+  const configured = typeof expected === 'string' && /^[a-f0-9]{64}$/.test(expected);
+  return { matched: validShape && configured && actual === expected,
+    fileCount: Array.isArray(files) ? files.length : null, expected: configured ? expected : null, actual,
+    firstDifferentPosition: actual && configured ? [...expected].findIndex((c, index) => c !== actual[index]) : null };
+}
 const validUid = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 const own = (object, field) => Object.hasOwn(object, field);
 export function sameProfileVersion(a, b) {

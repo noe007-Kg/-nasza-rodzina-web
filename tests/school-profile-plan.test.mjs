@@ -1,9 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { prepareSchoolProfilePlan, rehearseSchoolProfileFields, profilePlanHash, sameProfileVersion } from '../scripts/lib/school-profile-plan.mjs';
+import { prepareSchoolProfilePlan, rehearseSchoolProfileFields, profilePlanHash, sameProfileVersion, inspectSchoolProfileRules } from '../scripts/lib/school-profile-plan.mjs';
 
 const familyId = 'family-12345678-1234-4234-8234-123456789abc';
+test('rule diagnostics report exact match and single-character hash differences without weakening the guard', () => {
+  const content = 'rules_version = "2"; private-test-marker', hash = profilePlanHash(content);
+  assert.equal(inspectSchoolProfileRules([{ content }], hash).matched, true);
+  const changed = `${hash[0] === 'a' ? 'b' : 'a'}${hash.slice(1)}`;
+  const result = inspectSchoolProfileRules([{ content }], changed);
+  assert.equal(result.matched, false); assert.equal(result.firstDifferentPosition, 0);
+  assert.equal(JSON.stringify(result).includes('private-test-marker'), false);
+});
+test('invalid/multiple source files and missing pin remain blocked', () => {
+  const hash = profilePlanHash('source');
+  for (const files of [null, [], [{ content: 'source' }, { content: 'source' }], [{}], [{ content: null }]]) assert.equal(inspectSchoolProfileRules(files, hash).matched, false);
+  assert.equal(inspectSchoolProfileRules([{ content: 'source' }], null).matched, false);
+});
 test('profile version matching preserves nanoseconds instead of comparing truncated SDK milliseconds', () => {
   const a = { seconds: 1792480000, nanoseconds: 123456000 };
   assert.equal(sameProfileVersion(a, { ...a }), true);

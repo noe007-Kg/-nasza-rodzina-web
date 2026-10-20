@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { captureProfileImpact, assessProfileImpact, PROFILE_IMPACT_FIELDS } from './lib/music-school-profile-impact.mjs';
-import { prepareSchoolProfilePlan, rehearseSchoolProfileFields, profilePlanHash, SCHOOL_PROFILE_RULE_HASHES, sameProfileVersion } from './lib/school-profile-plan.mjs';
+import { prepareSchoolProfilePlan, rehearseSchoolProfileFields, profilePlanHash, SCHOOL_PROFILE_RULE_HASHES, sameProfileVersion, inspectSchoolProfileRules } from './lib/school-profile-plan.mjs';
 
 const args = process.argv.slice(2);
 let app, prompt;
@@ -24,9 +24,12 @@ try {
     const name = active.data.rulesetName;
     if (!/^projects\/nasza-rodzina\/rulesets\/[A-Za-z0-9_-]+$/.test(name)) throw new Error('RULESET_REFERENCE_INVALID');
     const response = await client.request({ method: 'GET', url: `https://firebaserules.googleapis.com/v1/${name}` });
-    const files = response.data.source?.files;
-    if (!Array.isArray(files) || files.length !== 1 || typeof files[0].content !== 'string'
-      || profilePlanHash(files[0].content) !== SCHOOL_PROFILE_RULE_HASHES[service]) throw new Error('PRODUCTION_RULES_CHANGED');
+    const check = inspectSchoolProfileRules(response.data.source?.files, SCHOOL_PROFILE_RULE_HASHES[service]);
+    if (!check.matched) {
+      console.log('Porównanie reguł (bez treści):', JSON.stringify({ service, ...check }));
+      throw new Error('PRODUCTION_RULES_CHANGED');
+    }
+    console.log(`Reguły ${service}: ZGODNE (porównanie automatyczne).`);
   }
   app = initializeApp({ projectId: args[1], credential: applicationDefault() }, 'prepare-school-profile-config');
   const context = { db: getFirestore(app), auth: getAuth(app) };
