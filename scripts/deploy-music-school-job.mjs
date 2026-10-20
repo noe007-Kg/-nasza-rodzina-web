@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile, writeFile, unlink, readdir } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -8,17 +8,11 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import { GoogleAuth } from 'google-auth-library';
 import { validateProfileUpdateEvidence } from './lib/school-profile-update.mjs';
+import { prepareMusicDeployPackage } from './lib/music-school-deploy-package.mjs';
 import { inspectSchoolProfileRules, SCHOOL_PROFILE_RULE_HASHES } from './lib/school-profile-plan.mjs';
 
-export function musicParameterFile(original) {
-  const source = original ?? '';
-  const definitions = source.split(/\r?\n/).filter(line => /^\s*(?:export\s+)?MUSIC_SCHOOL_ENABLED\s*=/.test(line));
-  if (definitions.length > 1) throw new Error('DUPLICATE_MUSIC_PARAMETER');
-  const replacement = 'MUSIC_SCHOOL_ENABLED=true';
-  return definitions.length ? source.replace(/^\s*(?:export\s+)?MUSIC_SCHOOL_ENABLED\s*=.*$/m, replacement) : `${source}${source.endsWith('\n') || !source ? '' : '\n'}${replacement}\n`;
-}
 const root = fileURLToPath(new URL('..', import.meta.url));
-export const DEPLOY_ARGUMENTS = Object.freeze(['-y', 'firebase-tools@latest', 'deploy', '--project', 'nasza-rodzina', '--only', 'functions:nasza-rodzina:musicSchoolPublicHourly']);
+export const DEPLOY_ARGUMENTS = Object.freeze(['-y', 'firebase-tools@latest', 'deploy', '--non-interactive', '--project', 'nasza-rodzina', '--only', 'functions:nasza-rodzina:musicSchoolPublicHourly']);
 async function run() {
   const [directory, flag, project, ...extra] = process.argv.slice(2);
   if (!directory || flag !== '--project' || project !== 'nasza-rodzina' || extra.length) throw new Error('EXPLICIT_DIRECTORY_PROJECT_REQUIRED');
@@ -54,25 +48,14 @@ async function run() {
     const auth = await getAuth(app).getUsers(docs.filter(d => d.data().canLogin === true).map(d => ({ uid: d.id })));
     if (auth.users.length !== 4 || auth.notFound.length || auth.users.some(u => u.disabled)) throw new Error('AUTH_CHECK_FAILED');
   } finally { await deleteApp(app); }
-  const envFile = join(root, 'functions', '.env.nasza-rodzina');
-  let original = null;
-  try { original = await readFile(envFile, 'utf8'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const configured = musicParameterFile(original);
-  await writeFile(envFile, configured, { mode: 0o600 });
-  try {
-    console.log('Kontrole PASS. Wdrażam wyłącznie musicSchoolPublicHourly z MUSIC_SCHOOL_ENABLED=true. Bez zmiany reguł, profili, SP4, Finansów i Zadań.');
-    const status = await new Promise((accept, reject) => {
-      const child = spawn('npx', DEPLOY_ARGUMENTS, { cwd: root, stdio: 'inherit', env: { ...process.env, npm_config_cache: '/tmp/nasza-rodzina-npm-cache' } });
-      child.on('error', reject); child.on('exit', (code, signal) => accept(signal ? 1 : code));
-    });
-    if (status !== 0) throw new Error('DEPLOY_NOT_CONFIRMED');
-    console.log('Firebase CLI potwierdził wdrożenie nowej funkcji. Frontend Vercel i zapis planu ucznia wymagają osobnej weryfikacji.');
-  } finally {
-    // Do not clobber a simultaneous local configuration edit.
-    if (await readFile(envFile, 'utf8') === configured) {
-      if (original === null) await unlink(envFile); else await writeFile(envFile, original, { mode: 0o600 });
-    } else console.log('Konfiguracja lokalna zmieniona równolegle — nie nadpisano jej.');
-  }
+  const staged = await prepareMusicDeployPackage(root);
+  console.log('Kontrole PASS. Osobny pakiet zawiera tylko musicSchoolPublicHourly i jego zależności, bez deklaracji sekretów innych modułów.');
+  const status = await new Promise((accept, reject) => {
+    const child = spawn('npx', [...DEPLOY_ARGUMENTS, '--config', staged.configFile], { cwd: staged.directory, stdio: 'inherit', env: { ...process.env, npm_config_cache: '/tmp/nasza-rodzina-npm-cache' } });
+    child.on('error', reject); child.on('exit', (code, signal) => accept(signal ? 1 : code));
+  });
+  if (status !== 0) throw new Error('DEPLOY_NOT_CONFIRMED');
+  console.log('Firebase CLI potwierdził wdrożenie nowej funkcji. Frontend Vercel i zapis planu ucznia wymagają osobnej weryfikacji.');
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   run().catch(error => { console.error('Wdrożenie zatrzymane lub niepotwierdzone:', /^[A-Z][A-Z0-9_]+$/.test(error.message) ? error.message : 'RELEASE_CHECK_FAILED'); process.exitCode = 1; });
