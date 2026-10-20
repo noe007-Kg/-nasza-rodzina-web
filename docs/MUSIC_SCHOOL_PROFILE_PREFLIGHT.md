@@ -172,3 +172,33 @@ Dla każdego z pięciu profili odtwarza pola z kopii, odczytuje i porównuje wyn
 Zakres dowodu: tylko odtworzenie i rollback wskazanych pól profili w emulatorze. Nie jest to pełna kopia aplikacji, test produkcyjnego restore ani certyfikat izolacji reguł. Nie odblokowuje automatycznie migracji ani zapisów. W razie niepowodzenia nie powstaje dowód zaliczenia.
 
 Testy automatyczne obejmują odrzucanie zewnętrznych endpointów oraz przebieg REST z atrapą emulatora. **Atrapa nie stanowi dowodu rzeczywistego odtworzenia**; dowód dla prywatnej kopii powstanie dopiero przy rzeczywistym uruchomieniu powyższego polecenia w Cloud Shell.
+
+### Ograniczona operacja 7 pól — osobna od wdrożenia
+
+Nowe narzędzie domyślnie nie zapisuje niczego: wymaga jawnego trybu. Najpierw:
+
+```bash
+node scripts/update-school-profiles.mjs --check "$HOME/.nr-school-profiles-NAZWA_Z_PODSUMOWANIA" --project nasza-rodzina
+```
+
+Kontrola wiąże kopię, plan, potwierdzenie przygotowania i dowód odtworzenia z emulatora przez SHA-256. Sprawdza dokładnie pięć UID, pięć familyId i dwie flagi uczniów, aktualne Auth, nanosekundowe wersje profili, odczyty metadanych oraz niezmienione przejrzane reguły produkcyjne. Nie przyjmuje dowodu dla innego planu ani rozszerzenia patcha. Zatrzymuje się przy wykrytym ryzyku utraty dostępu.
+
+**PASS dotyczy wyłącznie wskazanej operacji pól.** Nie potwierdza pełnej izolacji starszych modułów, pełnej kopii aplikacji, zawartości Storage ani gotowości Finansów/Zadań do zapisów. Dwa odczyty metadanych nie są atomowym snapshotem wszystkich kolekcji. Zmiany Auth lub reguł po ostatniej kontroli nie dają się zablokować transakcją Firestore; na czas tej krótkiej operacji należy wstrzymać równoległe zmiany konfiguracji. Nie wykonujemy migracji 236 pól ani deployu.
+
+Po przejrzeniu wyniku właściciel może jawnie uruchomić ograniczony zapis:
+
+```bash
+node scripts/update-school-profiles.mjs --apply "$HOME/.nr-school-profiles-NAZWA_Z_PODSUMOWANIA" --project nasza-rodzina
+```
+
+Wymagany prywatny interaktywny terminal i potwierdzenie `ZAPISZ 7`. Zapis dotyczy wyłącznie `members`, jednej transakcji, bez automatycznych ponowień. Transakcja odczytuje wszystkie pięć profili przed aktualizacją i sprawdza ich wersje. Dokładne UID nie są wyświetlane w podsumowaniu. Prywatny dziennik intencji powstaje **przed** próbą zapisu, dowód zastosowania dopiero po odczycie wyniku. Istniejący dziennik intencji blokuje ponowienie. Jeśli terminal się rozłączy albo wynik będzie niepewny, nie usuwaj dziennika, nie ponawiaj operacji i nie przyjmuj, że było 0 zapisów. Trzeba sprawdzić pola i wersje dokumentów względem planu. Brak dowodu zastosowania przy istniejącej intencji wymaga przeglądu; automatyczny rollback jest wtedy celowo zablokowany.
+
+Wycofanie po prawidłowo potwierdzonym zapisie:
+
+```bash
+node scripts/update-school-profiles.mjs --rollback "$HOME/.nr-school-profiles-NAZWA_Z_PODSUMOWANIA" --project nasza-rodzina
+```
+
+Potwierdzenie `COFNIJ 7`. Dowód zastosowania musi należeć do tej samej kopii i planu. Wszystkie pięć wersji dokumentów i obecne wartości muszą odpowiadać dowodowi; późniejsza modyfikacja dowolnego profilu zatrzymuje rollback. Przywracane są wyłącznie zmienione pola, w tym usunięcie pól wcześniej nieobecnych. Brak modyfikacji ról, sesji, planów lekcji, reguł i pozostałych kolekcji. Dowód rollbacku powstaje po ponownym odczycie. Kopie zachowaj prywatnie.
+
+Walidacja kodu: testy jednostkowe i atrapy transakcji weryfikują odmowę obcej rodziny/UID, dowód innego planu, zmieniony profil, odebrane Auth, rozszerzony patch, atomiczną kolejność odczytów przed zapisami i bezpieczny rollback. Nie stanowią dowodu działania nowej operacji na produkcji. Rzeczywisty test emulatorowy poprzedniego narzędzia dotyczył pól, nie serwerowych reguł bezpieczeństwa.
