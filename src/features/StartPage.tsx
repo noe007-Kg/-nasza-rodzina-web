@@ -1,29 +1,20 @@
+import { FamilyHome } from './FamilyHome';
+import { familyAgendaRange, upcomingFamilyEvents } from './family-home-model';
+import { formatWarsawTime } from '../calendar-timeline';
 import { useMusicSchoolPlans, musicCalendarEvents } from '../school/music-school-client';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useMemo, useState } from 'react';
 import type { User } from 'firebase/auth';
 import { collection, query, where, Timestamp } from 'firebase/firestore';
-import { DndContext, DragOverlay, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { db } from '../firebase';
 import { onSnapshot } from '../feedback';
-import { AppIcon, capitalize, formatShortDate, formatTime, isAdultMember, isParent, isPersonKey, ownPerson, personLabel, type CalendarEventData, type Member, type Page, type TaskItem, type QuickProduct, Modal, DetailRow } from '../app-shared';
+import { isPersonKey, ownPerson, type CalendarEventData, type Member, type Page, type TaskItem, Modal, DetailRow } from '../app-shared';
 import { subscribeCalendar } from '../calendar-store';
-import { Icon } from '../ui';
 import { useDashboardOrder } from './useDashboardOrder';
-import { reorderDashboardCards, type StartCardId } from './start-layout';
-import './start-dashboard.css';
 import { useCalendarSchoolSources } from '../useCalendarSchoolSources';
 import { useFamilyDirectory, orderedFamilyProfiles } from '../family-directory';
-import { useNotifications } from '../notifications';
-import { DEFAULT_QUICK_PRODUCTS, categorizeProduct, isShoppingCategory } from './ShoppingPage';
-import { buildFamilyTime, familyStatusRefreshDelay, latestConversations, shoppingPreview, warsawCalendarDay, type StartChatMessage, type StartShoppingItem } from './start-tile-projections';
-import { ChatDetails, FamilyTimeDetails, ShoppingDetails } from './StartTileDetails';
-import { useStartTileColors } from './useStartTileColors';
-import { getStartTileColorStyle, selectedStartTileColorId, type StartTileColors } from './start-tile-colors';
-import './start-tile-colors.css';
-import { useStartTileSizes } from './useStartTileSizes';
-import { selectedStartTileSize, type StartTileSizes } from './start-tile-sizes';
-import { familyCalendarEvents, calendarOwnerColor, projectFamilyBirthdays } from '../calendar-v2';
+import { categorizeProduct, isShoppingCategory } from './ShoppingPage';
+import { buildFamilyTime, familyStatusRefreshDelay, latestConversations, warsawCalendarDay, type StartChatMessage, type StartShoppingItem } from './start-tile-projections';
+import { familyCalendarEvents, projectFamilyBirthdays } from '../calendar-v2';
 import { CalendarOwnerBadge } from '../CalendarOwnerBadge';
 import { projectOkruszekCalendar, projectSchoolCalendar } from '../calendar-source-projections';
 import { projectManualSchoolCalendar } from '../calendar-school-display';
@@ -34,48 +25,13 @@ import { useCalendarHealthSources } from '../health/useCalendarHealthSources';
 import './calendar-v2.css';
 
 type Weather = { temp: number; max: number; min: number; wind: number; label: string; icon: string };
-type HealthPreview = { id: string; title: string; person: string; type: string; date: string; time: string; status: string; medicineTime: string; confirmedDate: string };
-type Tile = { id: StartCardId; label: string; page: Page; value?: ReactNode; status?: string; preview?: ReactNode; details?: ReactNode };
 function timestampDate(value: unknown) { return value instanceof Timestamp ? value.toDate() : undefined; }
-
-/** No sortable transforms: all seven source tiles keep their positions until drop. */
-function DashboardTile({ tile, active, onOpen, suppressClick, dragDisabled, colors, sizes }: { tile: Tile; active: boolean; onOpen: () => void; suppressClick: () => boolean; dragDisabled: boolean; colors: StartTileColors; sizes: StartTileSizes }) {
-  const { attributes, listeners, setNodeRef: setDragRef } = useDraggable({ id: tile.id, disabled: dragDisabled });
-  const { setNodeRef: setDropRef } = useDroppable({ id: tile.id });
-  if (tile.id === 'calendar') return <article ref={node => { setDragRef(node); setDropRef(node); }} {...listeners}
-    className={`start-dashboard-card start-card--${tile.id}${active ? ' is-drag-source' : ''}`}
-    data-custom-color={selectedStartTileColorId(colors, tile.id)} style={getStartTileColorStyle(colors, tile.id)}
-    data-card-size={selectedStartTileSize(sizes, tile.id)} data-testid={`start-card-${tile.id}`} data-card-id={tile.id}
-    aria-label={tile.label} onContextMenu={event => event.preventDefault()}>
-    <button type="button" {...attributes} className="start-calendar-open" aria-label="Otwórz Kalendarz" onClick={event => { if (suppressClick()) { event.preventDefault(); return; } onOpen(); }}><TileContents tile={tile} headingOnly/></button>
-    <div className="start-custom-content" id={`start-card-preview-${tile.id}`}>{tile.details}</div>
-  </article>;
-  return <button ref={node => { setDragRef(node); setDropRef(node); }} {...attributes} {...listeners}
-    type="button" className={`start-dashboard-card start-card--${tile.id}${active ? ' is-drag-source' : ''}`}
-    data-custom-color={selectedStartTileColorId(colors, tile.id)} style={getStartTileColorStyle(colors, tile.id)}
-    data-card-size={selectedStartTileSize(sizes, tile.id)}
-    data-testid={`start-card-${tile.id}`} data-card-id={tile.id} aria-label={tile.label} aria-describedby={`start-card-preview-${tile.id}`}
-    onClick={event => { if (suppressClick()) { event.preventDefault(); return; } onOpen(); }} onContextMenu={event => event.preventDefault()}>
-    <TileContents tile={tile}/>
-  </button>;
-}
-
-function TileContents({ tile, overlay = false, headingOnly = false }: { tile: Tile; overlay?: boolean; headingOnly?: boolean }) {
-  const heading = <span className="start-card-heading"><span className="start-card-icon"><AppIcon page={tile.id === 'family-time' ? 'Rodzina' : tile.page} size={26}/></span><strong>{tile.label}</strong><Icon name="arrow-right" size={17}/></span>;
-  if (headingOnly) return heading;
-  return <>
-    {heading}
-    {tile.details ? <span className="start-custom-content" id={overlay ? undefined : `start-card-preview-${tile.id}`}>{tile.details}</span> : <><span className="start-card-value">{tile.value}</span><span className="start-card-status">{tile.status}</span>
-    <span className="start-card-preview" id={overlay ? undefined : `start-card-preview-${tile.id}`}>{tile.preview}</span></>}
-  </>;
-}
 
 export function StartPage({ user, member, goTo }: { user: User; member: Member | null; goTo: (page: Page) => void }) {
   const name = member?.name || 'Rodzina';
-  const parent = isParent(member); const own = ownPerson(member);
+  const own = ownPerson(member);
   const directory = useFamilyDirectory();
   const profiles = useMemo(() => orderedFamilyProfiles(directory, user.uid), [directory, user.uid]);
-  const { items: notifications } = useNotifications();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [calendarData, setCalendarData] = useState<{ uid: string; rows: CalendarEventData[] }>({ uid: user.uid, rows: [] });
   const events = calendarData.uid === user.uid ? calendarData.rows : [];
@@ -86,22 +42,11 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const musicEvents = useMemo(() => musicCalendarEvents(musicSources.data?.plans || [], profiles), [musicSources.data, profiles]);
   const schoolRecords = schoolSources.rows;
   const [shopping, setShopping] = useState<StartShoppingItem[]>([]);
-  const [quickProducts, setQuickProducts] = useState<QuickProduct[]>([]);
   const [messages, setMessages] = useState<StartChatMessage[]>([]);
-  const [health, setHealth] = useState<HealthPreview[]>([]);
   const [weather, setWeather] = useState<Weather | null>(null);
-  const [activeCard, setActiveCard] = useState<StartCardId | null>(null);
   const [now, setNow] = useState(() => new Date());
   const { order, saveOrder, loaded } = useDashboardOrder(user.uid);
-  const { colors } = useStartTileColors(user.uid);
-  const { sizes } = useStartTileSizes(user.uid);
-  const suppressClickUntil = useRef(0);
-  const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { delay: 550, tolerance: 8 } }),
-    // Preserve ordinary scrolling until the delayed gesture activates on Safari.
-    useSensor(TouchSensor, { activationConstraint: { delay: 550, tolerance: 8 } }),
-    useSensor(KeyboardSensor),
-  );
+
   useEffect(() => onSnapshot(collection(db, 'tasks'), snap => {
     setTasks(snap.docs.map(d => {
       const x = d.data();
@@ -116,11 +61,6 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   useEffect(() => onSnapshot(collection(db, 'shoppingItems'), snap => setShopping(snap.docs.map(d => {
     const x = d.data(); const title = String(x.title || ''); return { id: d.id, title, done: x.done === true, category: isShoppingCategory(x.category) ? x.category : categorizeProduct(title), quantity: typeof x.quantity === 'string' ? x.quantity : '', unit: typeof x.unit === 'string' ? x.unit : '', createdAt: timestampDate(x.createdAt) };
   }))), [user.uid]);
-  useEffect(() => onSnapshot(collection(db, 'quickProducts'), snap => setQuickProducts(snap.docs.map(d => {
-    const x = d.data(); return { id: d.id, title: String(x.title || 'Produkt'), category: isShoppingCategory(x.category) ? x.category : 'inne',
-      icon: typeof x.icon === 'string' ? x.icon : undefined, imageURL: typeof x.imageURL === 'string' ? x.imageURL : undefined,
-      adultOnly: typeof x.adultOnly === 'boolean' ? x.adultOnly : undefined, hidden: x.hidden === true, defaultQuantity: String(x.defaultQuantity || '1'), defaultUnit: String(x.defaultUnit || 'szt.') };
-  }))), [user.uid]);
   useEffect(() => { let active = true; const uid = user.uid; const stop = subscribeCalendar(uid, rows => { if (active) setCalendarData({ uid, rows }); }); return () => { active = false; stop(); }; }, [user.uid]);
   useEffect(() => {
     const groups: Record<string, StartChatMessage[]> = { family: [], private: [] };
@@ -132,9 +72,6 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
     const privateMessages = onSnapshot(query(collection(db, 'familyMessages'), where('participants', 'array-contains', user.uid)), snap => load('private', snap));
     return () => { family(); privateMessages(); };
   }, [user.uid]);
-  useEffect(() => onSnapshot(parent ? collection(db, 'healthRecords') : query(collection(db, 'healthRecords'), where('privateToParents', '==', false), where('person', 'in', ['family', own])), snap => {
-    setHealth(snap.docs.map(d => { const x = d.data(); return { id: d.id, title: String(x.title || ''), person: String(x.person || 'family'), type: String(x.type || ''), date: String(x.date || ''), time: String(x.time || ''), status: String(x.status || ''), medicineTime: String(x.medicineTime || x.time || ''), confirmedDate: String(x.confirmedDate || '') }; }));
-  }), [user.uid, parent, own]);
   useEffect(() => {
     const controller = new AbortController();
     async function loadWeather() {
@@ -151,14 +88,13 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
     return () => { controller.abort(); window.clearInterval(timer); };
   }, []);
 
-  const statusDay = warsawCalendarDay(now); const todayKey = statusDay.key; const todayWeekday = statusDay.weekday;
+  const statusDay = warsawCalendarDay(now); const todayKey = statusDay.key;
   const schoolProjection = useMemo(() => projectSchoolCalendar(schoolRecords, events, schoolSources.access, profiles), [schoolRecords, events, schoolSources.scope, profiles]);
   const okruszekEvents = useMemo(() => projectOkruszekCalendar(schoolRecords, events, schoolSources.access, profiles), [schoolRecords, events, schoolSources.scope, profiles]);
   const manualSchoolProjection = useMemo(() => projectManualSchoolCalendar(schoolRecords, events, schoolSources.access), [schoolRecords, events, schoolSources.scope]);
   const calendarSources = useMemo(() => [...events.map(calendarSourceDisplayEvent), ...schoolProjection.events, ...okruszekEvents,
     ...manualSchoolProjection.events, ...musicEvents, ...healthSources.events, ...projectFamilyBirthdays(profiles)], [events, schoolProjection.events, okruszekEvents, manualSchoolProjection.events, musicEvents, healthSources.events, profiles]);
   const sharedEvents = useMemo(() => familyCalendarEvents(calendarSources), [calendarSources]);
-  const todayOccurrences = useMemo(() => generateCalendarOccurrencesFromSources(calendarRangeDisplaySources(sharedEvents, statusDay.start, statusDay.end), statusDay.start, statusDay.end), [sharedEvents, todayKey]);
   const statusViewer = useMemo(() => ({ uid: user.uid, person: own }), [user.uid, own]);
   const statusEvents = useMemo(() => calendarSources.filter(event => !event.private || ((event.person === own || event.person === 'family')
     && (event.ownerUid || event.createdBy) === user.uid)), [calendarSources, own, user.uid]);
@@ -172,50 +108,18 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
     window.addEventListener('focus', refresh); document.addEventListener('visibilitychange', refresh);
     return () => { window.clearTimeout(timer); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
   }, [nextStatusRefreshAt, user.uid]);
-  const openedCalendarOccurrence = calendarDetail?.uid === user.uid ? todayOccurrences.find(item => item.key === calendarDetail.key) : null;
-  const todaySchoolItems = useMemo(() => schoolRecords.filter(record => (record.type === 'lesson' || record.type === 'activity') && (record.weekday === todayWeekday || (!!record.date && record.date === todayKey))).sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99')), [schoolRecords, todayWeekday, todayKey]);
+  const agendaRange = useMemo(() => familyAgendaRange(now), [todayKey]);
+  const agendaOccurrences = useMemo(() => generateCalendarOccurrencesFromSources(calendarRangeDisplaySources(sharedEvents, agendaRange.start, agendaRange.end), agendaRange.start, agendaRange.end), [sharedEvents, agendaRange]);
+  const upcoming = useMemo(() => upcomingFamilyEvents(agendaOccurrences, now), [agendaOccurrences, now]);
+  const openedCalendarOccurrence = calendarDetail?.uid === user.uid ? upcoming.find(item => item.key === calendarDetail.key) : null;
   const familyTime = buildFamilyTime(profiles, statusOccurrences, [], now, statusViewer);
   const openTasks = tasks.filter(item => !item.done).sort((a, b) => ({ high: 0, normal: 1, low: 2 }[a.priority] - { high: 0, normal: 1, low: 2 }[b.priority] || (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99')));
   const openShopping = shopping.filter(item => !item.done);
   const conversations = latestConversations(messages, profiles, user.uid);
-  const shoppingRows = shoppingPreview(shopping, DEFAULT_QUICK_PRODUCTS, quickProducts, isAdultMember(member));
-  const healthUpcoming = health.filter(record => record.type === 'visit' && record.date >= todayKey && record.status !== 'cancelled' && record.status !== 'done').sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
-  const medicines = health.filter(record => record.type === 'medicine' && record.confirmedDate !== todayKey).sort((a, b) => a.medicineTime.localeCompare(b.medicineTime));
-  const schoolUpcoming = schoolRecords.filter(record => (record.type === 'homework' || record.type === 'test') && (!record.date || record.date >= todayKey)).sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999'));
-  const rows = (items: ReactNode[]) => items.length ? <span className="start-preview-rows">{items.map((item, index) => <span key={index}>{item}</span>)}</span> : null;
-  const tiles: Tile[] = [
-    { id: 'family-time', label: 'Rodzinny czas', page: 'Kalendarz', details: <FamilyTimeDetails summary={familyTime} now={now}/> },
-    { id: 'calendar', label: 'Kalendarz', page: 'Kalendarz', details: <><span className="start-calendar-count"><b>{todayOccurrences.length}</b> rodzinnych wydarzeń dzisiaj</span>{todayOccurrences.length ? <span className="start-calendar-rows">{todayOccurrences.slice(0, 3).map(item => <button type="button" key={item.key} style={{ '--calendar-owner-color': calendarOwnerColor(item.source.person) } as import('react').CSSProperties} aria-label={`Szczegóły: ${item.source.title}`} onClick={event => { event.stopPropagation(); if (Date.now() >= suppressClickUntil.current) setCalendarDetail({ uid: user.uid, key: item.key }); }}><time>{item.source.allDay ? 'Cały dzień' : formatTime(item.date)}</time><span><strong>{item.source.cancelled ? 'ODWOŁANE — ' : ''}{item.source.title}</strong><CalendarOwnerBadge event={item.source}/></span></button>)}</span> : <span className="start-calendar-empty">Brak rodzinnych wydarzeń na dzisiaj.</span>}</> },
-    { id: 'tasks', label: 'Zadania', page: 'Zadania', value: openTasks.length, status: 'zadań do zrobienia', preview: rows(openTasks.slice(0, 3).map(item => <><span className={`start-preview-dot${item.priority === 'high' ? ' important' : ''}`}/><span>{item.title}</span></>)) || 'Brak zadań do zrobienia.' },
-    { id: 'shopping', label: 'Zakupy', page: 'Zakupy', details: <ShoppingDetails rows={shoppingRows} openCount={openShopping.length} total={shopping.length} bought={shopping.length - openShopping.length}/> },
-    { id: 'chat', label: 'Czat', page: 'Czat', details: <ChatDetails conversations={conversations} notifications={notifications} messages={messages} currentUid={user.uid}/> },
-    { id: 'health', label: 'Zdrowie', page: 'Zdrowie', value: healthUpcoming.length, status: 'nadchodzących wizyt', preview: rows([...healthUpcoming.slice(0, 2).map(record => <><time>{formatShortDate(record.date)} · {record.time || '—'}</time><span>{record.title} · {record.person}</span></>), ...medicines.slice(0, 1).map(record => <><time>{record.medicineTime || 'Lek'}</time><span>{record.title} · {record.person}</span></>)]) || 'Brak nadchodzących wizyt i leków do potwierdzenia.' },
-    { id: 'school', label: 'Szkoła', page: 'Szkoła', value: todaySchoolItems.length, status: 'lekcji i zajęć dzisiaj', preview: rows([...todaySchoolItems.slice(0, 1).map(record => <><time>{record.time || '—'}</time><span>{record.subject || record.title} · {personLabel(record.person)}</span></>), ...schoolUpcoming.slice(0, 2).map(record => <><span className="start-school-kind">{record.type === 'test' ? 'Sprawdzian' : 'Zadanie'}</span><span>{record.title} · {personLabel(record.person)}</span></>)]) || 'Brak zaplanowanych zajęć i nowych zadań.' },
-  ];
-  const byId = Object.fromEntries(tiles.map(tile => [tile.id, tile])) as Record<StartCardId, Tile>;
-  function finishDrag(event: DragEndEvent) {
-    setActiveCard(null); suppressClickUntil.current = Date.now() + 250;
-    if (event.over && event.active.id !== event.over.id) saveOrder(reorderDashboardCards(order, event.active.id, event.over.id));
-  }
-  return <div className="page-content start-dashboard-page family-ui start-dashboard-v151" data-testid="start-dashboard">
-    <section className="start-family-banner" data-testid="start-merged-banner" aria-label="Powitanie i pogoda">
-      <div className="start-mobile-header" data-testid="start-mobile-header"><img src="/nasza-rodzina-logo.svg" alt="Nasza Rodzina"/><h1>Cześć, <span>{name}!</span></h1><span className="start-mobile-weather" title={weather?.label || 'Pobieranie pogody…'}><span aria-hidden="true">{weather?.icon || '🌤️'}</span><strong>{weather ? `${weather.temp}°C` : '—°C'}</strong><small aria-label="Prędkość wiatru"><span aria-hidden="true">💨</span> {weather ? weather.wind : '—'} km/h</small></span></div>
-      <div className="start-welcome-copy"><h1>Cześć, <span>{name}!</span> <span aria-hidden="true">👋</span></h1><p>Miło Cię znowu widzieć.<br/>Dobrego dnia dla całej rodziny!</p></div>
-      <div className="start-family-art" aria-hidden="true"><img src="/start-banner.png" alt=""/></div>
-      <div className="start-banner-weather" title="Pogoda: Open-Meteo"><span className="start-weather-symbol" aria-hidden="true">{weather?.icon || '🌤️'}</span><div className="start-weather-reading"><strong>Kołobrzeg</strong><b>{weather ? `${weather.temp}°C` : '—°C'}</b><small>{weather?.label || 'Pobieranie pogody…'}</small></div><div className="start-weather-date"><strong>{capitalize(now.toLocaleDateString('pl-PL', { weekday: 'long' }))}</strong><time dateTime={todayKey}>{now.toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })}</time>{weather && <small>↑ {weather.max}°C · ↓ {weather.min}°C<br/>Wiatr {weather.wind} km/h</small>}</div></div>
-    </section>
-    <p className="start-drag-hint" id="start-drag-hint"><Icon name="users" size={15}/> Przytrzymaj kafel, aby przenieść. Układ zapisuje się na Twoim koncie.</p>
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={event => { suppressClickUntil.current = Number.POSITIVE_INFINITY; setActiveCard(event.active.id as StartCardId); }} onDragEnd={finishDrag} onDragCancel={() => { setActiveCard(null); suppressClickUntil.current = Date.now() + 250; }} accessibility={{ screenReaderInstructions: { draggable: 'Naciśnij spację, aby przenieść kafel. Użyj strzałek, następnie spacji, aby zapisać kolejność. Escape anuluje.' }, announcements: {
-      onDragStart: ({ active }) => `Przenosisz ${byId[active.id as StartCardId]?.label || 'kafel'}. Kolejność zmieni się po puszczeniu.`,
-      onDragOver: ({ over }) => over ? `Upuść przy ${byId[over.id as StartCardId]?.label || 'kaflu'}.` : 'Poza kaflami.',
-      onDragEnd: ({ active, over }) => over ? `Zapisano pozycję ${byId[active.id as StartCardId]?.label || 'kafla'}.` : 'Anulowano przenoszenie.',
-      onDragCancel: () => 'Anulowano przenoszenie. Kolejność bez zmian.',
-    } }}>
-      <section className="start-dashboard-grid" aria-label="Twój rodzinny Start" aria-describedby="start-drag-hint" data-order={order.join(',')} data-layout-ready={loaded}>
-        {order.map(id => <DashboardTile key={id} tile={byId[id]} active={activeCard === id} onOpen={() => goTo(byId[id].page)} suppressClick={() => Date.now() < suppressClickUntil.current} dragDisabled={!loaded} colors={colors} sizes={sizes}/>)}
-      </section>
-      {createPortal(<DragOverlay dropAnimation={null} zIndex={1200}>{activeCard && <div className={`start-dashboard-card start-card--${activeCard} start-card-overlay`} data-testid="start-drag-overlay" aria-hidden="true" inert data-card-size={selectedStartTileSize(sizes, activeCard)} data-custom-color={selectedStartTileColorId(colors, activeCard)} style={getStartTileColorStyle(colors, activeCard)}><TileContents tile={byId[activeCard]} overlay/></div>}</DragOverlay>, document.body)}
-    </DndContext>
-    {openedCalendarOccurrence && <Modal title={openedCalendarOccurrence.source.title} subtitle="Dzisiejsze wydarzenie rodzinne" onClose={() => setCalendarDetail(null)}><div className="details-grid"><CalendarOwnerBadge event={openedCalendarOccurrence.source}/><DetailRow label="Termin" value={openedCalendarOccurrence.date.toLocaleDateString('pl-PL')}/><DetailRow label="Godzina" value={openedCalendarOccurrence.source.allDay ? 'Cały dzień' : `${formatTime(openedCalendarOccurrence.date)}–${formatTime(openedCalendarOccurrence.endDate)}`}/>{openedCalendarOccurrence.source.location && <DetailRow label="Lokalizacja" value={openedCalendarOccurrence.source.location}/>}<DetailRow label="Źródło" value={openedCalendarOccurrence.source.source === 'sp4' ? 'SP4' : openedCalendarOccurrence.source.source === 'google' ? 'Google Calendar' : openedCalendarOccurrence.source.source === 'health' ? 'Zdrowie' : openedCalendarOccurrence.source.source === 'fryderyk' ? 'Fryderyk' : 'Nasza Rodzina'}/>{openedCalendarOccurrence.source.cancelled && <DetailRow label="Status" value="ODWOŁANE"/>}{openedCalendarOccurrence.source.description && <DetailRow label="Opis" value={openedCalendarOccurrence.source.description}/>}</div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setCalendarDetail(null); goTo('Kalendarz'); }}>Otwórz Kalendarz</button></div></Modal>}
-  </div>;
+  return <>
+    <FamilyHome name={name} now={now} weather={weather} familyTime={familyTime} profiles={profiles} upcoming={upcoming}
+      tasks={openTasks} shoppingCount={openShopping.length} chatCount={conversations.length} order={order} loaded={loaded}
+      saveOrder={saveOrder} goTo={goTo} onOpenEvent={key => setCalendarDetail({ uid: user.uid, key })}/>
+    {openedCalendarOccurrence && <Modal title={openedCalendarOccurrence.source.title} subtitle="Wydarzenie rodzinne" onClose={() => setCalendarDetail(null)}><div className="details-grid"><CalendarOwnerBadge event={openedCalendarOccurrence.source}/><DetailRow label="Termin" value={openedCalendarOccurrence.date.toLocaleDateString('pl-PL', { timeZone: 'Europe/Warsaw' })}/><DetailRow label="Godzina" value={openedCalendarOccurrence.source.allDay ? 'Cały dzień' : `${formatWarsawTime(openedCalendarOccurrence.date)}–${formatWarsawTime(openedCalendarOccurrence.endDate)}`}/>{openedCalendarOccurrence.source.cancelled && <DetailRow label="Status" value="ODWOŁANE"/>}{openedCalendarOccurrence.source.description && <DetailRow label="Opis" value={openedCalendarOccurrence.source.description}/>}</div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setCalendarDetail(null); goTo('Kalendarz'); }}>Otwórz Kalendarz</button></div></Modal>}
+  </>;
 }

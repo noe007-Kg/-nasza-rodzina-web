@@ -1,3 +1,4 @@
+import type { AccountAccentPreference } from './account-accent';
 import { APP_UPDATED, APP_VERSION, collection, dateKey, db, downloadFile, errorMessage, getDocs, isParent, type Member, ModuleHeader, notify, type Page, type User, useState } from "../app-shared";
 
 import { AccountSettings } from '../account/AccountSettings';
@@ -8,12 +9,10 @@ import { fetchCalendarEvents } from '../calendar-store';
 import { NotificationSettings } from '../notifications';
 import { ConnectedCalendarsSettings } from '../calendars/ConnectedCalendarsSettings';
 import type { CalendarNotice } from '../calendars/model';
-import { StartTileColorsSettings } from './StartTileColorsSettings';
-import { StartTileSizesSettings } from './StartTileSizesSettings';
 import { SchoolConnectionsPreparation } from '../school/SchoolSources';
 import './settings-appearance.css';
 
-export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout, calendarNotice }: { user: User; member: Member | null; theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void; goTo: (page: Page) => void; onLogout: () => Promise<void>; calendarNotice?: CalendarNotice }) {
+export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout, calendarNotice, accountAccent }: { accountAccent: { preference: AccountAccentPreference; setPreference: (value: AccountAccentPreference) => void; saved: boolean }; user: User; member: Member | null; theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void; goTo: (page: Page) => void; onLogout: () => Promise<void>; calendarNotice?: CalendarNotice }) {
   const parent=isParent(member);
   const [loggingOut, setLoggingOut] = useState(false);
   async function logout() {
@@ -51,7 +50,7 @@ export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout, ca
         <AccountSettings user={user} />
         <OwnProfileSettings user={user} member={member} />
 
-        <article className="settings-section settings-appearance" data-testid="settings-appearance"><header><span>🎨</span><div><strong>Wygląd</strong><small>Motyw aplikacji, kolory i rozmiary kafelków</small></div></header><div className="appearance-theme-buttons" role="group" aria-label="Motyw aplikacji"><button type="button" aria-pressed={theme === 'light'} onClick={()=>setTheme('light')}><span aria-hidden="true">☀️</span> Jasny</button><button type="button" aria-pressed={theme === 'dark'} onClick={()=>setTheme('dark')}><span aria-hidden="true">🌙</span> Ciemny</button></div><p className="settings-footnote">Motyw zapisuje się na tym urządzeniu.</p><StartTileColorsSettings uid={user.uid}/><StartTileSizesSettings uid={user.uid}/></article>
+        <article className="settings-section settings-appearance" data-testid="settings-appearance"><header><span>🎨</span><div><strong>Wygląd</strong><small>Motyw i kolor aplikacji</small></div></header><div className="appearance-theme-buttons" role="group" aria-label="Motyw aplikacji"><button type="button" aria-pressed={theme === 'light'} onClick={()=>setTheme('light')}><span aria-hidden="true">☀️</span> Jasny</button><button type="button" aria-pressed={theme === 'dark'} onClick={()=>setTheme('dark')}><span aria-hidden="true">🌙</span> Ciemny</button></div><p className="settings-footnote">Motyw zapisuje się na tym urządzeniu.</p><div className="appearance-theme-buttons" role="group" aria-label="Kolor aplikacji">{([['auto', 'Automatyczny'], ['blue', 'Niebieski'], ['pink', 'Różowy']] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={accountAccent.preference === value} onClick={() => accountAccent.setPreference(value)}>{label}</button>)}</div><p className="settings-footnote">Kolor dotyczy zalogowanego konta na tym urządzeniu. Wybranie kalendarza innej osoby nie zmienia motywu. Automatycznie: Sebastian, Paweł i Nikodem — niebieski; Dominika i Layla — różowy.</p>{!accountAccent.saved && <p role="status">Nie udało się zapisać koloru na tym urządzeniu. Zmiana działa do zamknięcia strony.</p>}</article>
 
         <NotificationSettings />
 

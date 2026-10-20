@@ -1,3 +1,4 @@
+import { useAccountAccent } from './features/useAccountAccent';
 import { onSnapshot as observeDocument } from 'firebase/firestore';
 import { APP_VERSION, AppIcon, auth, collection, createRoot, db, doc, ErrorBoundary, errorMessage, Feedback, onAuthStateChanged, onSnapshot, pageFromHash, React, registerPwa, SchoolModule, signOut, useEffect, useMemo, useRef, useState, type Member, type Page, type PersonKey, type User } from "./app-shared";
 
@@ -29,6 +30,7 @@ import './responsive.css';
 import './improvements.css';
 import './navigation.css';
 import './brand-theme.css';
+import './account-accent.css';
 
 
 
@@ -64,6 +66,7 @@ function FamilyApp({ user }: { user: User }) {
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileError, setProfileError] = useState('');
   const [member, setMember] = useState<Member | null>(null);
+  const accountAccent = useAccountAccent(user.uid, member);
   const [familyMembers, setFamilyMembers] = useState<FamilyMemberProfile[]>([]);
   const [aggregateProfile, setAggregateProfile] = useState<FamilyAggregateProfile>({ emoji: '👨‍👩‍👧‍👦' });
   const [calendarSelection, setCalendarSelection] = useState<{ person: PersonKey; requestId: number }>();
@@ -154,7 +157,7 @@ function FamilyApp({ user }: { user: User }) {
       case 'Zdrowie': return <HealthPage user={user} member={displayedMember} />;
       case 'Szkoła': return <SchoolModule key={schoolReadAccessKey(user.uid, schoolReadAccess(member))} user={user} member={displayedMember} familyMembers={displayedMembers} />;
       case 'Rodzina': return <FamilyPage user={user} member={displayedMember} goTo={goTo} selected={selectedFamilyPerson} onSelect={setSelectedFamilyPerson} />;
-      case 'Ustawienia': return <SettingsPage user={user} member={displayedMember} theme={theme} setTheme={setTheme} goTo={goTo} onLogout={logout} calendarNotice={calendarNotice} />;
+      case 'Ustawienia': return <SettingsPage accountAccent={accountAccent} user={user} member={displayedMember} theme={theme} setTheme={setTheme} goTo={goTo} onLogout={logout} calendarNotice={calendarNotice} />;
       default: return <StartPage user={user} member={displayedMember} goTo={goTo} />;
     }
   }

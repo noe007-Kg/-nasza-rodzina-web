@@ -1,0 +1,57 @@
+/* Account accent is independent of light/dark mode and of calendar owner colours. */
+html[data-account-accent="pink"] {
+  --account-primary:#c72796; --account-end:#cf2d78; --account-soft:#fff0f8; --account-ink:#a32175;
+  --account-hover:#ab1c7f; --account-page:#fff8fc; --account-line:#e9dff0;
+  --account-page-gradient:linear-gradient(135deg,#f4efff 0%,#fff8fc 48%,#fff0f6 100%);
+}
+html[data-account-accent="blue"] {
+  --account-primary:#2563c5; --account-end:#2875cc; --account-soft:#eaf2ff; --account-ink:#204f9c;
+  --account-hover:#1c4f9e; --account-page:#f5f8ff; --account-line:#dfe7f4;
+  --account-page-gradient:linear-gradient(135deg,#eef4ff 0%,#f7faff 48%,#eff7fc 100%);
+  --brand-soft:#eff4fc; --brand-input:#fbfdff;
+}
+html[data-account-accent][data-theme="dark"] {
+  --account-page:#171426; --account-line:#44384f; --account-soft:#43263d; --account-ink:#f4b1dc;
+  --account-page-gradient:linear-gradient(135deg,#211a36,#171426 55%,#281929);
+}
+html[data-account-accent="blue"][data-theme="dark"] {
+  --account-page:#121c2b; --account-line:#30425b; --account-soft:#203856; --account-ink:#a9ccff;
+  --account-page-gradient:linear-gradient(135deg,#18283f,#121c2b 55%,#172d40);
+  --brand-card:#1b2a3d; --brand-soft:#22344c; --brand-input:#21334a; --brand-muted:#b3c3d9; --brand-ink:#eef4ff;
+}
+html[data-account-accent] {
+  --brand-primary:var(--account-primary); --brand-primary-end:var(--account-end);
+  --brand-primary-gradient:linear-gradient(110deg,var(--account-primary),var(--account-end));
+  --brand-primary-hover:linear-gradient(110deg,var(--account-hover),var(--account-end));
+  --brand-primary-soft:var(--account-soft); --brand-primary-ink:var(--account-ink);
+  --brand-page:var(--account-page); --brand-page-background:var(--account-page-gradient); --brand-line:var(--account-line);
+  --brand-action-shadow:0 5px 15px color-mix(in srgb,var(--account-primary) 16%,transparent);
+  --brand-focus-ring:color-mix(in srgb,var(--account-primary) 22%,transparent);
+}
+html[data-account-accent] .family-ui { --family-primary:var(--account-primary); }
+html[data-account-accent] :is(.school-module.family-ui,.school-dialog.family-ui) {
+  --brand-primary:var(--account-primary); --brand-primary-end:var(--account-end);
+  --brand-primary-gradient:linear-gradient(110deg,var(--account-primary),var(--account-end));
+  --brand-primary-hover:linear-gradient(110deg,var(--account-hover),var(--account-end));
+  --brand-primary-soft:var(--account-soft); --brand-primary-ink:var(--account-ink);
+}
+html[data-account-accent] .family-menu { --menu-ink:var(--brand-ink); --menu-muted:var(--brand-muted); --menu-line:var(--brand-line); --menu-hover:var(--account-soft); }
+html[data-account-accent] .sidebar.family-menu { background:var(--brand-page-background); border-color:var(--brand-line); }
+html[data-account-accent] .family-menu .nav-button.active,
+html[data-account-accent] .mobile-navigation.family-menu { background:var(--brand-primary-gradient); border-color:var(--account-primary); box-shadow:var(--brand-action-shadow); }
+html[data-account-accent] .mobile-navigation.family-menu button.active { background:var(--account-soft); color:var(--account-ink); }
+html[data-account-accent] .family-menu :is(.brand-copy small,.brand-heart) { color:var(--account-ink); }
+html[data-account-accent] .family-top-profile.is-current { background:var(--account-soft); border-color:color-mix(in srgb,var(--account-primary) 30%,transparent); }
+html[data-account-accent] .is-current .family-top-avatar { border-color:var(--account-primary); }
+html[data-account-accent] :is(.school-filters button.active,.school-week-days button.active) { background:var(--account-soft); color:var(--account-ink); border-color:var(--account-primary); }
+/* Person-specific calendar surfaces must not inherit the signed-in person's accent. */
+html[data-account-accent] .event-dominika { --event-surface:#fff0f8; }
+html[data-account-accent][data-theme="dark"] .event-dominika { --event-surface:#43263d; }
+html[data-account-accent] .family-ui .family-button.family-primary-button { background:var(--brand-primary-gradient); box-shadow:var(--brand-action-shadow); }
+html[data-account-accent] .family-ui .family-button.family-primary-button:hover:not(:disabled) { background:var(--brand-primary-hover); }
+html[data-account-accent] .notification-bell,
+html[data-account-accent] .notification-heading-icon,
+html[data-account-accent] .notification-center-tabs button.is-active { background:var(--account-soft); color:var(--account-ink); border-color:var(--brand-line); }
+html[data-account-accent] .notification-badge { background:var(--account-primary); }
+html[data-account-accent] .appearance-theme-buttons > button[aria-pressed=true] { border-color:var(--account-primary); box-shadow:0 0 0 1px var(--account-soft); background:var(--account-soft); color:var(--account-ink); }
+html[data-account-accent="blue"] .family-ui { --family-background:var(--account-page); --family-line:var(--account-line); }
