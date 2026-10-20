@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { prepareSchoolProfilePlan, rehearseSchoolProfileFields, profilePlanHash, sameProfileVersion, inspectSchoolProfileRules } from '../scripts/lib/school-profile-plan.mjs';
+import { prepareSchoolProfilePlan, rehearseSchoolProfileFields, profilePlanHash, sameProfileVersion, inspectSchoolProfileRules, SCHOOL_PROFILE_RULE_HASHES } from '../scripts/lib/school-profile-plan.mjs';
 
 const familyId = 'family-12345678-1234-4234-8234-123456789abc';
 test('rule diagnostics report exact match and single-character hash differences without weakening the guard', () => {
@@ -117,4 +117,9 @@ test('CLI has no production writer/apply mode, persists private files outside re
   assert.match(source, /args\.length !== 2/); assert.match(source, /args\[0\] !== '--project'/);
   assert.match(source, /mode: 0o600/); assert.match(source, /mkdtemp\(join\(homedir\(\)/);
   assert.match(source, /flag: 'wx'/); assert.doesNotMatch(source, /console\.error\(error\)/);
+});
+
+test('reviewed Storage fingerprint accepts observed production digest and rejects transcription error', () => {
+  assert.equal(SCHOOL_PROFILE_RULE_HASHES.storage, 'e656d238ee388d951268ca38d1eca2dbf2f5fdc55ef4b20e22911413d3dc935b');
+  assert.notEqual(SCHOOL_PROFILE_RULE_HASHES.storage, 'e656d238ee388d951268ca38d1eca2abf2f5fdc55ef4b20e22911413d3dc935b');
 });

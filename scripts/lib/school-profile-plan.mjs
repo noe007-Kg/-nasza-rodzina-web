@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 export const SCHOOL_PROFILE_RULE_HASHES = Object.freeze({
   firestore: '255078250043a5e45245c891debf294968d910ec9059269e445f059c46ab404c',
-  storage: 'e656d238ee388d951268ca38d1eca2abf2f5fdc55ef4b20e22911413d3dc935b',
+  storage: 'e656d238ee388d951268ca38d1eca2dbf2f5fdc55ef4b20e22911413d3dc935b',
 });
 export const profilePlanHash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 /** Safe diagnostics: fingerprints only, never source, credentials or rule resource IDs. */
