@@ -156,3 +156,19 @@ niezmieniony.
 
 Wersje profili są porównywane przez sekundy i nanosekundy. Nie porównujemy ich
 wyłącznie przez `Timestamp.toMillis()`, które SDK Firestore zaokrągla w dół.
+
+### Próba odtworzenia wyłącznie w emulatorze
+
+Po przygotowaniu prywatnego planu uruchom (Node 22, Java dostępna w Cloud Shell):
+
+```bash
+node scripts/verify-school-profile-restore.mjs "$HOME/.nr-school-profiles-NAZWA_Z_PODSUMOWANIA"
+```
+
+Narzędzie uruchamia Firebase CLI z osobną konfiguracją w `/tmp`, wyłącznie Firestore Emulator na `127.0.0.1:8787`, w projekcie `demo-school-profile-restore`. Nie używa Admin SDK ani uwierzytelnienia do produkcji. Rzeczywiste UID nie są wysyłane do emulatora: dokumenty próbne mają losowy prefiks i indeks. Port musi być dostępny. Pierwsze uruchomienie może pobrać emulator; cache npm jest w `/tmp`.
+
+Dla każdego z pięciu profili odtwarza pola z kopii, odczytuje i porównuje wynik, stosuje próbny patch, następnie wycofuje tylko zmienione pola i porównuje wynik. Weryfikuje zachowanie pola kontrolnego, brak pola oraz wartości `null` i `false`. Dowód JSON z hashami kopii i planu jest zapisywany prywatnie dopiero po wszystkich poprawnych porównaniach. Nie zmienia istniejących plików przygotowania. Emulator zatrzymuje się po zakończeniu.
+
+Zakres dowodu: tylko odtworzenie i rollback wskazanych pól profili w emulatorze. Nie jest to pełna kopia aplikacji, test produkcyjnego restore ani certyfikat izolacji reguł. Nie odblokowuje automatycznie migracji ani zapisów. W razie niepowodzenia nie powstaje dowód zaliczenia.
+
+Testy automatyczne obejmują odrzucanie zewnętrznych endpointów oraz przebieg REST z atrapą emulatora. **Atrapa nie stanowi dowodu rzeczywistego odtworzenia**; dowód dla prywatnej kopii powstanie dopiero przy rzeczywistym uruchomieniu powyższego polecenia w Cloud Shell.
