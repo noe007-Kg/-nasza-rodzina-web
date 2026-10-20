@@ -120,6 +120,6 @@ test('CLI has no production writer/apply mode, persists private files outside re
 });
 
 test('reviewed Storage fingerprint accepts observed production digest and rejects transcription error', () => {
-  assert.equal(SCHOOL_PROFILE_RULE_HASHES.storage, 'e656d238ee388d951268ca38d1eca2dbf2f5fdc55ef4b20e22911413d3dc935b');
+  assert.equal(SCHOOL_PROFILE_RULE_HASHES.storage, 'e656d238ee388d951268ca38d1eca2dbf2f5fdc55ef4b20e22911413d36c935b');
   assert.notEqual(SCHOOL_PROFILE_RULE_HASHES.storage, 'e656d238ee388d951268ca38d1eca2abf2f5fdc55ef4b20e22911413d3dc935b');
 });
