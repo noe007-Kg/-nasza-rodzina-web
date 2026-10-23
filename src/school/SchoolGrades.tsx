@@ -22,7 +22,7 @@ function GradeRow<T extends SchoolGradeRecord>({ record, onOpen }: { record: T; 
   </button>;
 }
 
-export function SchoolGrades<T extends SchoolGradeRecord>({ records, resetKey, onOpen }: { records: readonly T[]; resetKey: string; onOpen: (record: T) => void }) {
+export function SchoolGrades<T extends SchoolGradeRecord>({ records, resetKey, onOpen, isNew = () => false, renderAction }: { records: readonly T[]; resetKey: string; onOpen: (record: T) => void; isNew?: (record: T) => boolean; renderAction?: (record: T) => React.ReactNode }) {
   const subjects = useMemo(() => groupSchoolGrades(records), [records]);
   const partials = useMemo(() => records.filter(record => !isPeriodGrade(record)), [records]);
   const newestPartials = useMemo(() => sortGradesNewest(partials), [partials]);
@@ -30,7 +30,7 @@ export function SchoolGrades<T extends SchoolGradeRecord>({ records, resetKey, o
   const distribution = useMemo(() => gradeDistribution(partials), [partials]);
   const [selection, setSelection] = useState<{ key: string; subject: string | null }>({ key: resetKey, subject: null });
   const selected = selection.key === resetKey ? subjects.find(subject => subject.key === selection.subject) : undefined;
-  const renderGrade = (record: T) => <GradeRow key={record.id} record={record} onOpen={onOpen} />;
+  const renderGrade = (record: T) => <div key={record.id}>{isNew(record) && <span className="school-new-badge">Nowa ocena</span>}<GradeRow record={record} onOpen={onOpen} />{renderAction?.(record)}</div>;
 
   if (!records.length) return <div className="school-empty-state"><Icon name="grade" /><strong>Nie ma jeszcze ocen.</strong><p>Oceny pojawią się po dodaniu lub synchronizacji.</p></div>;
   if (selected) return <div className="school-grades school-subject-detail" data-testid="school-grade-subject">
@@ -44,7 +44,7 @@ export function SchoolGrades<T extends SchoolGradeRecord>({ records, resetKey, o
     <header className="school-grades-heading"><div><span className="school-eyebrow">Postępy w szkole</span><h3>Oceny</h3><p>Prawdziwe wpisy z dziennika i dodane przez rodzinę.</p></div><span className="school-grades-total"><strong>{records.length}</strong><small>{records.length === 1 ? 'wpis' : 'wpisów'}</small></span></header>
     <div className="school-grade-summary"><span><b>{partials.length}</b> Oceny i wyniki</span><span><b>{subjects.filter(subject => subject.subject.trim()).length}</b> Przedmioty</span><span><b>{periods.length}</b> Wpisy okresowe</span></div>
     <section className="school-grade-subjects" aria-labelledby="school-grade-subjects-title"><div className="school-list-section-heading"><h3 id="school-grade-subjects-title">Przedmioty</h3></div><div className="school-grade-subject-grid">{subjects.map((subject, index) => <button key={subject.key} type="button" data-testid="school-grade-subject-card" className={`school-grade-subject-card grade-tone-${index % 4}`} onClick={() => setSelection({ key: resetKey, subject: subject.key })}>
-      <span className="school-grade-subject-title"><strong>{subject.subject || 'Bez przedmiotu'}</strong><Icon name="chevron-right" /></span><span className="school-grade-subject-values">{subject.partial.slice(0, 5).map(record => <span key={record.id}>{record.title || 'Bez oznaczenia'}</span>)}</span>
+      <span className="school-grade-subject-title"><strong>{subject.subject || 'Bez przedmiotu'} {[...subject.partial, ...subject.period].some(isNew) && <small className="school-new-badge">Nowa ocena</small>}</strong><Icon name="chevron-right" /></span><span className="school-grade-subject-values">{subject.partial.slice(0, 5).map(record => <span key={record.id}>{record.title || 'Bez oznaczenia'}</span>)}</span>
       <span className="school-grade-subject-caption">{subject.partial.length} ocen / wyników{subject.period.length ? ` · ${subject.period.length} okresowych` : ''}</span>{subject.portalAverage !== null && <small>Średnia z dziennika: {subject.portalAverage}</small>}
     </button>)}</div></section>
     <SchoolExpandableList key={`${resetKey}:latest`} items={newestPartials} title="Ostatnie oceny" resetKey={`${resetKey}:latest`} renderItem={renderGrade} className="school-latest-grades" testId="school-latest-grades" countLabel={`${partials.length} ocen / wyników`} collapseLabel="Zwiń listę" />

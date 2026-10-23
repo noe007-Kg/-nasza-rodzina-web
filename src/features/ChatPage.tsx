@@ -123,8 +123,9 @@ export function ChatPage({ user, member }: { user: User; member: Member | null }
     return () => { stopFamily(); stopPrivate(); };
   }, [user.uid]);
 
+  const [displayed, setDisplayed] = useState<{ channel: string; ids: string[] }>({ channel: '', ids: [] });
   const channel = mode === 'family' ? 'family' : selectedUid ? privateChannel(user.uid, selectedUid) : '';
-  const { unread, error: readStateError } = useChatReadState(user.uid, messages, channel, mode === 'private' && selectedUid ? [user.uid, selectedUid].sort() : []);
+  const { unread, error: readStateError } = useChatReadState(user.uid, messages, channel, mode === 'private' && selectedUid ? [user.uid, selectedUid].sort() : [], displayed.channel === channel ? displayed.ids : []);
   const familyUnread = unread.family || 0;
   const privateUnread = Object.entries(unread).filter(([key]) => key !== 'family').reduce((total, [, count]) => total + count, 0);
   const visible = messages.filter((m) => m.channel === channel).slice(-300).sort((a, b) => {
@@ -143,13 +144,37 @@ export function ChatPage({ user, member }: { user: User; member: Member | null }
 
   useEffect(() => {
     if (!channel || document.visibilityState !== 'visible' || !familyV2WritesAllowed()) return;
-    const ids = new Set(messages.filter(message => message.channel === channel).map(message => message.id));
+    const ids = new Set(displayed.channel === channel ? displayed.ids : []);
     for (const item of notifications) {
       if (item.read || !item.recordId || !ids.has(item.recordId) || !['familyChat', 'privateChat'].includes(item.category) || notificationReads.current.has(item.id)) continue;
       notificationReads.current.add(item.id);
       void markRead(item).catch(() => notificationReads.current.delete(item.id));
     }
-  }, [channel, messages, notifications, markRead]);
+  }, [channel, displayed, notifications, markRead]);
+
+  useEffect(() => {
+    const root = messagesRef.current;
+    if (!root || !channel) return;
+    const timers = new Map<Element, ReturnType<typeof setTimeout>>();
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        const pending = timers.get(entry.target);
+        if (pending) { clearTimeout(pending); timers.delete(entry.target); }
+        if (!entry.isIntersecting || entry.intersectionRatio < 0.6) continue;
+        timers.set(entry.target, setTimeout(() => {
+          timers.delete(entry.target);
+          if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+          const id = (entry.target as HTMLElement).dataset.messageId;
+          if (id) setDisplayed(previous => ({ channel, ids: [...new Set([...(previous.channel === channel ? previous.ids : []), id])] }));
+        }, 700));
+      }
+    }, {root, threshold: [0, 0.6, 1]});
+    const observe = () => root.querySelectorAll<HTMLElement>('[data-message-id]').forEach(element => { observer.unobserve(element); observer.observe(element); });
+    observe();
+    const wake = () => { for (const timer of timers.values()) clearTimeout(timer); timers.clear(); if (document.visibilityState === 'visible') observe(); };
+    document.addEventListener('visibilitychange', wake); window.addEventListener('focus', wake); window.addEventListener('blur', wake);
+    return () => { observer.disconnect(); for (const timer of timers.values()) clearTimeout(timer); document.removeEventListener('visibilitychange', wake); window.removeEventListener('focus', wake); window.removeEventListener('blur', wake); };
+  }, [channel, visible.map(row => row.id).join(':'), user.uid]);
 
   const selectedMember = members.find((m) => m.id === selectedUid);
 
@@ -209,7 +234,7 @@ export function ChatPage({ user, member }: { user: User; member: Member | null }
               const showDate = !sameChatDay(previous?.createdAt, message.createdAt);
               return <React.Fragment key={message.id}>
                 {showDate && message.createdAt && <div className="chat-date-divider"><time dateTime={message.createdAt.toISOString()}>{sameChatDay(message.createdAt, new Date()) ? 'Dzisiaj' : message.createdAt.toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })}</time></div>}
-                <div className={`chat-message-line ${message.uid === user.uid ? 'mine' : ''}`} onContextMenu={(e) => { e.preventDefault(); setMessageMenu(message); }}>
+                <div data-message-id={message.id} className={`chat-message-line ${message.uid === user.uid ? 'mine' : ''}`} onContextMenu={(e) => { e.preventDefault(); setMessageMenu(message); }}>
                 {message.uid !== user.uid && <ProfileAvatar profile={showIdentity ? person || { name: message.name } : { emoji: ' ' }} className={`chat-avatar ${showIdentity ? '' : 'ghost'}`} />}
                 <div className={`chat-bubble ${message.uid === user.uid ? 'mine' : ''} ${isImportant(`chat:message:${message.id}`) ? 'chat-important' : ''}`}>
                   {isImportant(`chat:message:${message.id}`) && <span className="chat-important-label">★ Ważne</span>}

@@ -69,7 +69,7 @@ export type Page =
 
 export type PersonKey = string;
 
-export type CalendarView = 'day' | 'week' | 'month';
+export type CalendarView = 'schedule' | 'day' | 'week' | 'month';
 
 export type RepeatType = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 

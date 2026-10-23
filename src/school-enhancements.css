@@ -21,3 +21,5 @@
 }
 .school-module .school-important-toggle[aria-pressed='true'] { background: #fff0c2; }
 .school-module .school-important-toggle:focus-visible { outline: 3px solid var(--family-primary); outline-offset: 2px; }
+
+.school-new-counters{display:flex;flex-wrap:wrap;gap:12px;margin:20px 0}.school-new-counters>button{flex:1;min-width:150px}.school-new-badge{display:inline-block;background:#e5f4ec;color:#1d6043;border-radius:12px;padding:3px 8px;font-size:12px;font-weight:700}.school-important-section,.school-recent-grades{margin:20px 0;padding:18px;border-radius:22px;background:var(--brand-card,#fff)}

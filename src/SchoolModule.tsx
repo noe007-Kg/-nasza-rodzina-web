@@ -13,6 +13,7 @@ import type { IconName } from './ui';
 import { isSchoolType, MAX_SCHOOL_FILE_BYTES, MAX_SCHOOL_ROWS, parseSchoolFile, SCHOOL_TYPES, schoolImportId, validateSchoolEntry, validSchoolDate } from './school-import';
 import type { SchoolEntry, SchoolType } from './school-import';
 import { schoolReadAccess, SCHOOL_PROFILE_UNBOUND } from './school/read-access';
+import { useSchoolNewness } from './school/useSchoolNewness';
 import { SchoolGrades } from './school/SchoolGrades';
 import { SchoolExpandableList } from './school/SchoolExpandableList';
 import { MusicSchoolPlan } from './school/MusicSchoolPlan';
@@ -27,7 +28,7 @@ import './school-enhancements.css';
 type SchoolMember = { name?: string; role?: string; personKey?: string; photoURL?: string; schoolEnabled?: boolean; active?: boolean; canLogin?: boolean };
 type SchoolRecord = SchoolEntry & {
   id: string; calendarEventId?: string; calendarCreatedBy?: string; createdBy?: string; createdAt?: Date;
-  source?: string; syncedAt?: Date; parentOnly?: boolean;
+  source?: string; syncedAt?: Date; parentOnly?: boolean; importedAt?: number;
   sourceRecordId?: string; sourceProfileId?: string; providerScopeId?: string; schoolPlanId?: string;
 };
 type SchoolForm = SchoolEntry & { scheduleMode: 'weekly' | 'date'; addToCalendar: boolean; calendarDate: string };
@@ -84,7 +85,7 @@ function readSchoolRecord(id: string, data: Record<string, unknown>, parentOnly 
     calendarEventId: typeof data.calendarEventId === 'string' ? data.calendarEventId : undefined,
     calendarCreatedBy: typeof data.calendarCreatedBy === 'string' ? data.calendarCreatedBy : undefined,
     createdBy: typeof data.createdBy === 'string' ? data.createdBy : undefined,
-    createdAt: recordDate(data.createdAt), syncedAt: recordDate(data.syncedAt),
+    createdAt: recordDate(data.createdAt), importedAt: data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : recordDate(data.createdAt)?.getTime(), syncedAt: recordDate(data.syncedAt),
     source: parentOnly ? 'eduvulcan' : typeof data.source === 'string' ? data.source : undefined, parentOnly,
     sourceRecordId: typeof data.sourceRecordId === 'string' ? data.sourceRecordId : undefined,
     sourceProfileId: typeof data.sourceProfileId === 'string' ? data.sourceProfileId : undefined,
@@ -93,7 +94,7 @@ function readSchoolRecord(id: string, data: Record<string, unknown>, parentOnly 
   };
 }
 function importantMessageId(row: SchoolRecord): string {
-  return `school:message:${row.person}:${row.id.replace(/^parent-message:/, '')}`;
+  return row.type === 'message' ? `school:message:${row.person}:${row.id.replace(/^parent-message:/, '')}` : `school:entry:${row.id}`;
 }
 function entryFromForm(form: SchoolForm, students: readonly string[]): SchoolEntry {
   const { scheduleMode: _mode, addToCalendar: _calendar, calendarDate: _calendarDate, ...entry } = form;
@@ -158,6 +159,8 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
   const [notice, setNotice] = useState('');
   const [form, setForm] = useState<SchoolForm | null>(null);
   const [editing, setEditing] = useState<SchoolRecord | null>(null);
+  const {isNew, markSeen, error: newnessError} = useSchoolNewness(user.uid);
+  const [onlyNew, setOnlyNew] = useState(false);
   const [detail, setDetail] = useState<SchoolRecord | null>(null);
   const [deleting, setDeleting] = useState<SchoolRecord | null>(null);
   const [actionError, setActionError] = useState('');
@@ -206,6 +209,8 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
     fileVersion.current += 1;
   }, [parent, ownStudent, user.uid]);
 
+  function openDetail(row: SchoolRecord) {setDetail(row); if (isNew(row)) void markSeen(row.id);}
+
   const allRecords = useMemo(() => parent ? [...records, ...parentMessages] : records, [parent, records, parentMessages]);
   const studentProfiles = useMemo<FamilyMemberProfile[]>(() => {
     if (parent) return schoolMemberProfiles(familyMembers ?? legacyFamilyProfiles());
@@ -229,7 +234,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
   const listTypeOrder: SchoolType[] = ['lesson', 'activity', 'test', 'homework', 'grade', 'message'];
   // Authorization and the selected student's scope are applied before grouping or limiting.
   const recordGroups = listTypeOrder.filter(type => filter === 'all' || filter === type).map(type => {
-    let rows = sortGradesNewest(ownRecords.filter(row => row.type === type));
+    let rows = sortGradesNewest(ownRecords.filter(row => row.type === type && (!onlyNew || isNew(row))));
     const newestPosition = new Map(rows.map((row, index) => [row.id, index]));
     if (type === 'message') rows.sort((a, b) => Number(parent && isImportant(importantMessageId(b))) - Number(parent && isImportant(importantMessageId(a))) || newestPosition.get(a.id)! - newestPosition.get(b.id)!);
     if (type === 'lesson' || type === 'activity') rows.sort((a, b) => a.weekday - b.weekday || a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.id.localeCompare(b.id));
@@ -243,7 +248,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
     return { type, rows };
   }).filter(group => group.rows.length);
   const filteredRecords = recordGroups.flatMap(group => group.rows);
-  const listResetKey = `${identity}:${person}:${filter}`;
+  const listResetKey = `${identity}:${person}:${filter}:${onlyNew}`;
   const todaySessions = ownRecords.filter((row) => (row.type === 'lesson' || row.type === 'activity') && matchesDay(row, today)).sort((a, b) => a.time.localeCompare(b.time));
   const todayDeadlines = ownRecords.filter((row) => (row.type === 'homework' || row.type === 'test') && row.date === today);
   const visibleTypes = SCHOOL_TYPES.filter((type) => parent || type !== 'message');
@@ -260,7 +265,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
     target?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
   function openCategory(type: SchoolType) {
-    setFilter(type);
+    setFilter(type); setOnlyNew(false);
     focusSection(type === 'lesson' ? weekPanel : recordsPanel);
   }
   function previewFor(type: SchoolType): string {
@@ -404,14 +409,14 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
   }
 
   function rowButton(row: SchoolRecord, inPlan = false) {
-    const starVisible = parent && row.type === 'message';
-    return <div className={`school-entry-wrapper ${starVisible ? 'school-entry-with-star' : ''} ${starVisible && isImportant(importantMessageId(row)) ? 'is-important' : ''}`} key={row.id}><button type="button" className={`school-entry ${inPlan ? 'school-plan-entry' : ''}`} onClick={() => setDetail(row)}>
+    const starVisible = row.type !== 'lesson';
+    return <div className={`school-entry-wrapper ${starVisible ? 'school-entry-with-star' : ''} ${starVisible && isImportant(importantMessageId(row)) ? 'is-important' : ''}`} key={row.id}><button type="button" className={`school-entry ${inPlan ? 'school-plan-entry' : ''}`} onClick={() => openDetail(row)}>
       <span className={`school-entry-icon school-type-${row.type}`} aria-hidden="true"><Icon name={META[row.type].icon} /></span>
       {inPlan && <time>{row.time}<small>{row.endTime}</small></time>}
-      <span className="school-entry-copy"><strong>{row.title}</strong><span>{[row.subject, inPlan ? row.note : row.date ? shortDate(row.date) : row.weekday ? WEEKDAYS[row.weekday - 1] : '', !inPlan && row.time ? `${row.time}${row.endTime ? `–${row.endTime}` : ''}` : ''].filter(Boolean).join(' · ') || META[row.type].singular}</span>{row.source === 'eduvulcan' && <small className="school-source-badge">eduVULCAN · {row.parentOnly ? 'dla rodzica' : 'tylko odczyt'}</small>}</span>
+      <span className="school-entry-copy"><strong>{row.title} {isNew(row) && <small className="school-new-badge">{row.type === 'grade' ? 'Nowa ocena' : 'Nowe'}</small>}</strong><span>{[row.subject, inPlan ? row.note : row.date ? shortDate(row.date) : row.weekday ? WEEKDAYS[row.weekday - 1] : '', !inPlan && row.time ? `${row.time}${row.endTime ? `–${row.endTime}` : ''}` : ''].filter(Boolean).join(' · ') || META[row.type].singular}</span>{row.source === 'eduvulcan' && <small className="school-source-badge">eduVULCAN · {row.parentOnly ? 'dla rodzica' : 'tylko odczyt'}</small>}</span>
       {!inPlan && <span className="school-entry-type">{META[row.type].singular}</span>}
       <span className="school-entry-arrow" aria-hidden="true"><Icon name="chevron-right" /></span>
-    </button>{starVisible && <button type="button" className="school-important-toggle" aria-label={isImportant(importantMessageId(row)) ? 'Usuń z ważnych' : 'Oznacz jako ważne'} aria-pressed={isImportant(importantMessageId(row))} onClick={() => { void toggleImportant(importantMessageId(row)).catch((error) => setNotice(errorText(error))); }}><Icon name="grade" fill={isImportant(importantMessageId(row)) ? 'currentColor' : 'none'} /></button>}</div>;
+    </button>{starVisible && <button type="button" className="school-important-toggle" aria-label={isImportant(importantMessageId(row)) ? 'Usuń z ważnych' : 'Oznacz jako ważne'} aria-pressed={isImportant(importantMessageId(row))} onClick={() => { void toggleImportant(importantMessageId(row)).catch((error) => setNotice(errorText(error))); }}><span aria-hidden="true">📌</span></button>}</div>;
   }
 
   return <div className="page-content school-module family-ui">
@@ -427,6 +432,10 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
     {person && sourceView === 'fryderyk' && <MusicSchoolPlan key={`${identity}:${person}`} uid={user.uid} ownerProfileId={ownerProfileId} student={studentProfiles.find(profile => memberPersonKey(profile) === person)?.name || person} parent={parent} scope={identity} />}
     {person && sourceView === 'okruszek' && <OkruszekPlan key={`${identity}:${person}:${ownerProfileId}`} user={user} parent={parent} person={person} ownerProfileId={ownerProfileId} />}
     {sources.includes('sp4') && <div className="school-sp4-content" data-testid="school-sp4-content" hidden={sourceView !== 'sp4'}>
+    {newnessError && <p role="alert">{newnessError}</p>}
+    <section className="school-new-counters" aria-label="Nowe informacje">{(['grade', 'test', 'homework'] as const).map(type => <button type="button" className="secondary-button" key={type} aria-pressed={onlyNew && filter === type} onClick={() => {setFilter(type); setOnlyNew(true); focusSection(recordsPanel);}}><strong>{ownRecords.filter(row => row.type === type && isNew(row)).length}</strong> {type === 'grade' ? 'Nowe oceny' : type === 'test' ? 'Nowe sprawdziany' : 'Nowe zadania'}</button>)}{onlyNew && <button type="button" className="secondary-button" onClick={() => setOnlyNew(false)}>Pokaż także przeczytane</button>}</section>
+    <section className="school-important-section"><h2>⭐ Najważniejsze</h2>{ownRecords.filter(row => isImportant(importantMessageId(row))).map(row => rowButton(row))}{!ownRecords.some(row => isImportant(importantMessageId(row))) && <p>Przypnij ważny wpis za pomocą pinezki.</p>}</section>
+    <section className="school-recent-grades"><h2>Ostatnie oceny</h2>{sortGradesNewest(ownRecords.filter(row => row.type === 'grade' && !isPeriodGrade(row))).slice(0, 5).map(row => rowButton(row))}</section>
     {notice && <div className="school-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Zamknij komunikat"><Icon name="close" /></button></div>}
     {loadError && <div className="school-error" role="alert"><span>{loadError}</span><SecondaryButton onClick={() => setRetry((value) => value + 1)}>Spróbuj ponownie</SecondaryButton></div>}
     {parent && messageError && <div className="school-error" role="alert"><span>{messageError}</span><SecondaryButton onClick={() => setRetry((value) => value + 1)}>Ponów odczyt wiadomości</SecondaryButton></div>}
@@ -458,8 +467,8 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
         </section>
         <section ref={recordsPanel} tabIndex={-1} className="school-panel school-records-panel" aria-labelledby="school-records-title">
           <SectionHeader id="school-records-title" level={2} title="Wpisy szkolne" description={`Wszystkie zapisane informacje · ${ownRecords.length} wpisów`} icon="book" className="school-panel-heading" />
-          <div className="school-filters" role="group" aria-label="Rodzaj wpisów"><button type="button" className={filter === 'all' ? 'active' : ''} aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>Wszystkie <span>{ownRecords.length}</span></button>{visibleTypes.map((type) => <button type="button" key={type} className={filter === type ? 'active' : ''} aria-pressed={filter === type} onClick={() => setFilter(type)}><Icon name={META[type].icon} />{META[type].title}<span>{ownRecords.filter((row) => row.type === type).length}</span></button>)}</div>
-          <div className="school-record-list">{filter === 'grade' ? <SchoolGrades key={listResetKey} records={filteredRecords} resetKey={listResetKey} onOpen={setDetail} /> : filteredRecords.length ? recordGroups.map(group => <SchoolExpandableList key={`${listResetKey}:${group.type}`} items={group.rows} title={META[group.type].title} resetKey={`${listResetKey}:${group.type}`} renderItem={row => rowButton(row)} testId={`school-list-${group.type}`} />) : <div className="school-empty-state"><strong>Brak wpisów w tej kategorii.</strong>{(filter === 'all' || parent || CHILD_TYPES.includes(filter)) && <SecondaryButton onClick={() => openAdd(filter === 'all' ? 'homework' : filter)}>Dodaj pierwszy wpis</SecondaryButton>}</div>}</div>
+          <div className="school-filters" role="group" aria-label="Rodzaj wpisów"><button type="button" className={filter === 'all' ? 'active' : ''} aria-pressed={filter === 'all'} onClick={() => {setFilter('all'); setOnlyNew(false);}}>Wszystkie <span>{ownRecords.length}</span></button>{visibleTypes.map((type) => <button type="button" key={type} className={filter === type ? 'active' : ''} aria-pressed={filter === type} onClick={() => {setFilter(type); setOnlyNew(false);}}><Icon name={META[type].icon} />{META[type].title}<span>{ownRecords.filter((row) => row.type === type).length}</span></button>)}</div>
+          <div className="school-record-list">{filter === 'grade' ? <SchoolGrades isNew={isNew} renderAction={row => <button type="button" className="secondary-button" aria-pressed={isImportant(importantMessageId(row))} onClick={() => {void toggleImportant(importantMessageId(row)).catch(error => setNotice(errorText(error)));}}>📌 {isImportant(importantMessageId(row)) ? 'Odepnij' : 'Przypnij'}</button>} key={listResetKey} records={filteredRecords} resetKey={listResetKey} onOpen={openDetail} /> : filteredRecords.length ? recordGroups.map(group => <SchoolExpandableList key={`${listResetKey}:${group.type}`} items={group.rows} title={META[group.type].title} resetKey={`${listResetKey}:${group.type}`} renderItem={row => rowButton(row)} testId={`school-list-${group.type}`} />) : <div className="school-empty-state"><strong>Brak wpisów w tej kategorii.</strong>{(filter === 'all' || parent || CHILD_TYPES.includes(filter)) && <SecondaryButton onClick={() => openAdd(filter === 'all' ? 'homework' : filter)}>Dodaj pierwszy wpis</SecondaryButton>}</div>}</div>
         </section>
       </div>
     </>}
@@ -489,7 +498,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
     </SchoolDialog>}
 
     {detail && <SchoolDialog title={detail.type === 'grade' ? 'Szczegóły oceny' : detail.title} onClose={() => setDetail(null)}>
-      {parent && detail.type === 'message' && <SecondaryButton icon="grade" aria-pressed={isImportant(importantMessageId(detail))} onClick={() => { void toggleImportant(importantMessageId(detail)).catch((error) => setNotice(errorText(error))); }}>{isImportant(importantMessageId(detail)) ? '★ Ważna wiadomość' : '☆ Oznacz jako ważne'}</SecondaryButton>}
+      {detail.type !== 'lesson' && <SecondaryButton icon="grade" aria-pressed={isImportant(importantMessageId(detail))} onClick={() => { void toggleImportant(importantMessageId(detail)).catch((error) => setNotice(errorText(error))); }}>{isImportant(importantMessageId(detail)) ? '📌 Odepnij informację' : '📌 Przypnij informację'}</SecondaryButton>}
       <dl className="school-detail">{detail.type === 'grade' && <div><dt>Ocena / wynik</dt><dd>{detail.title}</dd></div>}<div><dt>Osoba</dt><dd>{detail.person}</dd></div><div><dt>Rodzaj</dt><dd>{detail.type === 'grade' && isPeriodGrade(detail) ? 'Ocena okresowa' : META[detail.type].singular}</dd></div>{detail.subject && <div><dt>Przedmiot</dt><dd>{detail.subject}</dd></div>}{detail.date && <div><dt>Data</dt><dd>{localDate(detail.date).toLocaleDateString('pl-PL')}</dd></div>}{detail.weekday > 0 && !detail.date && <div><dt>Co tydzień</dt><dd>{WEEKDAYS[detail.weekday - 1]}</dd></div>}{detail.time && <div><dt>Godzina</dt><dd>{detail.time}{detail.endTime ? `–${detail.endTime}` : ''}</dd></div>}{detail.type === 'grade' && parseGradeMetadata(detail.note).teacher && <div><dt>Nauczyciel</dt><dd>{parseGradeMetadata(detail.note).teacher}</dd></div>}{detail.type === 'grade' && parseGradeMetadata(detail.note).weight !== undefined && <div><dt>Waga w dzienniku</dt><dd>{parseGradeMetadata(detail.note).weight}</dd></div>}{detail.note && <div className="school-detail-note"><dt>Notatka</dt><dd>{detail.note}</dd></div>}</dl>
       {detail.source === 'eduvulcan' && <div className="school-provider-detail"><strong>Źródło: eduVULCAN · tylko do odczytu</strong>{detail.syncedAt && <p>Odczytano: {detail.syncedAt.toLocaleString('pl-PL')}</p>}{detail.parentOnly && <p>Wiadomość z dziennika jest dostępna wyłącznie rodzicom.</p>}<p>Zmiany w dzienniku pojawią się po kolejnym odświeżeniu. Własne wpisy możesz dodawać osobno.</p></div>}
       {!parent && detail.calendarEventId && !canEdit(detail) && <p className="school-form-hint">Te zajęcia są połączone z kalendarzem rodzica. Zmiany wprowadza rodzic.</p>}

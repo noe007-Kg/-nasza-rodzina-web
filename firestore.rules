@@ -135,6 +135,21 @@ service cloud.firestore {
       allow create, update: if member() && request.auth.uid == uid && validPreferences(request.resource.data);
       allow delete: if false;
     }
+    // Personal school metadata never changes the provider's records.
+    match /userPreferences/{uid}/schoolState/{id} {
+      allow read: if member() && uid == request.auth.uid;
+      allow create: if member() && uid == request.auth.uid && id == 'baseline'
+        && request.resource.data.keys().hasOnly(['startedAt'])
+        && request.resource.data.startedAt == request.time;
+      allow update, delete: if false;
+    }
+    match /userPreferences/{uid}/schoolSeen/{id} {
+      allow read: if member() && uid == request.auth.uid;
+      allow create, update: if member() && uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['seen', 'updatedAt'])
+        && request.resource.data.seen == true && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
     match /notificationInbox/{uid}/items/{id} {
       allow read: if member() && request.auth.uid == uid;
       allow update: if member() && request.auth.uid == uid
@@ -253,6 +268,14 @@ service cloud.firestore {
       allow create, update: if member() && uid == request.auth.uid
         && channelId == request.resource.data.channel && validChatReadState(request.resource.data);
       allow delete: if member() && uid == request.auth.uid;
+    }
+    match /chatReadStates/{uid}/messages/{id} {
+      allow read: if member() && uid == request.auth.uid;
+      allow create, update: if member() && uid == request.auth.uid
+        && chatMessageVisible(id)
+        && request.resource.data.keys().hasOnly(['read', 'updatedAt'])
+        && request.resource.data.read == true && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
     }
     // New medical documents have explicit server-issued UID ACLs. The parent role
     // grants no automatic access to an adult's document or to its authorization.

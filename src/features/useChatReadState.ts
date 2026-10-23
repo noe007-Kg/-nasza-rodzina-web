@@ -5,42 +5,41 @@ import type { ChatMessage } from '../app-shared';
 import { chatUnreadCounts } from './chat-state';
 import { familyV2WritesAllowed } from '../family-v2-client';
 
-/** Read receipts belong only to the signed-in UID, independently from alert preferences. */
-export function useChatReadState(uid: string, messages: readonly ChatMessage[], channel: string, participants: readonly string[]) {
-  const [readAt, setReadAt] = useState<Record<string, number>>({});
+/** Immutable per-message receipts merge naturally across devices, including gaps in history. */
+export function useChatReadState(uid: string, messages: readonly ChatMessage[], channel: string, _participants: readonly string[], displayed: readonly string[] = []) {
+  const [state, setState] = useState<{uid: string; readAt: Record<string, number>; seen: Set<string>}>({uid, readAt: {}, seen: new Set()});
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {const wake = () => setRetry(value => value + 1); window.addEventListener('focus', wake); window.addEventListener('online', wake); return () => {window.removeEventListener('focus', wake); window.removeEventListener('online', wake);};}, []);
   const [error, setError] = useState('');
-  const lastWrite = useRef('');
   const inflight = useRef(new Set<string>());
   useEffect(() => {
-    setReadAt({}); lastWrite.current = '';
-    return onSnapshot(collection(db, 'chatReadStates', uid, 'channels'), snapshot => {
-      setReadAt(Object.fromEntries(snapshot.docs.flatMap(row => {
+    setState({uid, readAt: {}, seen: new Set()}); setError('');
+    const legacy = onSnapshot(collection(db, 'chatReadStates', uid, 'channels'), snapshot => {
+      const readAt = Object.fromEntries(snapshot.docs.flatMap(row => {
         const value = row.data();
         return value.channel === row.id && value.lastReadAt instanceof Timestamp ? [[row.id, value.lastReadAt.toMillis()]] : [];
-      })));
-      setError('');
+      }));
+      setState(previous => previous.uid === uid ? {...previous, readAt} : previous);
+    }, () => setError('Nie udało się odczytać stanu rozmów. Sprawdź reguły Firebase.'));
+    const receipts = onSnapshot(collection(db, 'chatReadStates', uid, 'messages'), {includeMetadataChanges: true}, snapshot => {
+      setState(previous => previous.uid === uid ? {...previous, seen: new Set(snapshot.docs.filter(row => !row.metadata.hasPendingWrites).map(row => row.id))} : previous);
     }, () => setError('Zapamiętywanie przeczytanych wiadomości wymaga aktualnych reguł Firebase.'));
+    return () => { legacy(); receipts(); };
   }, [uid]);
-  const latest = messages.filter(message => message.channel === channel).at(-1);
-  const participantKey = participants.join(':');
+  const seen = state.uid === uid ? state.seen : new Set<string>();
   useEffect(() => {
-    if (!channel || !latest?.createdAt) return;
-    const writeKey = `${uid}:${channel}:${latest.id}`;
-    const save = () => {
-      if (!familyV2WritesAllowed() || document.visibilityState !== 'visible' || lastWrite.current === writeKey || inflight.current.has(writeKey)) return;
-      if ((readAt[channel] ?? 0) >= latest.createdAt!.getTime()) { lastWrite.current = writeKey; return; }
-      inflight.current.add(writeKey);
-      // Cursor is the latest message actually received, not the time a write
-      // reaches Firestore. A new message arriving meanwhile must stay unread.
-      void setDoc(doc(db, 'chatReadStates', uid, 'channels', channel), { channel, participants: [...participants], lastReadAt: Timestamp.fromDate(latest.createdAt!), updatedAt: serverTimestamp(), lastMessageId: latest.id }).then(() => {
-        lastWrite.current = writeKey;
-      }).catch(() => setError('Nie udało się zapisać stanu odczytu. Spróbuj ponownie.')).finally(() => inflight.current.delete(writeKey));
-    };
-    save();
-    document.addEventListener('visibilitychange', save);
-    window.addEventListener('focus', save);
-    return () => { document.removeEventListener('visibilitychange', save); window.removeEventListener('focus', save); };
-  }, [uid, channel, latest?.id, latest?.createdAt?.getTime(), participantKey, readAt]);
-  const unread = useMemo(() => chatUnreadCounts(messages, uid, readAt), [messages, uid, readAt]);
+    if (!channel || document.visibilityState !== 'visible' || !familyV2WritesAllowed()) return;
+    for (const id of displayed) {
+      const message = messages.find(row => row.id === id && row.channel === channel && row.uid !== uid);
+      const key = `${uid}:${id}`;
+      if (!message?.createdAt || seen.has(id) || inflight.current.has(key)) continue;
+      inflight.current.add(key);
+      void setDoc(doc(db, 'chatReadStates', uid, 'messages', id), { read: true, updatedAt: serverTimestamp() })
+        .then(() => setError(''))
+        .catch(() => setError('Nie udało się zapisać stanu odczytu. Spróbuj ponownie.'))
+        .finally(() => inflight.current.delete(key));
+    }
+  }, [uid, channel, displayed, messages, state, retry]);
+  const unread = useMemo(() => chatUnreadCounts(messages.filter(row => state.uid !== uid || !state.seen.has(row.id)), uid, state.uid === uid ? state.readAt : {}), [messages, uid, state]);
   return { unread, error };
 }
