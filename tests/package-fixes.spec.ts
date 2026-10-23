@@ -28,7 +28,11 @@ for(const [label,width,height] of [['phone',390,844],['ipad',1024,768],['desktop
   await expect.poll(async()=> (await events.first().boundingBox())!.y).toBeLessThan(beforeScroll);
   await events.first().click();
   if(width>=768){await expect(page.locator('.calendar-schedule-details')).toContainText('Sala 10');const d=await page.locator('.calendar-schedule-details').boundingBox(),axis=await page.locator('.calendar-schedule-day').boundingBox();expect(d!.x).toBeGreaterThan(axis!.x+axis!.width-1);}
-  else await expect(page.getByRole('dialog')).toContainText('Sala 10');
+  else {await expect(page.getByRole('dialog')).toContainText('Sala 10');await page.getByRole('dialog').getByRole('button',{name:'Zamknij',exact:true}).click();}
+  await page.getByRole('button',{name:'Dzisiaj',exact:true}).click();
+  if(width>=768)await expect(page.locator('.calendar-schedule-details')).toContainText('Wybierz wydarzenie');
+  for(const [label,selector] of [['Dzień','.calendar-day-view'],['Tydzień','.nr-calendar-week-content'],['Miesiąc','.calendar-month-card']]){await page.getByRole('button',{name:label,exact:true}).click();await expect(page.locator(selector)).toBeVisible();}
+
  });
 }
 test('chat receipts persist on two devices and do not clear unrendered history',async({page,browser})=>{

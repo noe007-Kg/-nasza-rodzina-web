@@ -173,6 +173,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
   }
 
   function navigate(direction: number) {
+    if (view === 'schedule') setSelectedEvent(null);
     if (view === 'day' || view === 'schedule') setFocusDate((current) => addDays(current, direction));
     else if (view === 'week') setFocusDate((current) => addDays(current, direction * 7));
     else setFocusDate((current) => addMonths(current, direction));
@@ -342,7 +343,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
 
       <section className="calendar-toolbar">
         <div className="calendar-navigation"><button onClick={() => navigate(-1)}>‹</button><strong>{titleForView()}</strong><button onClick={() => navigate(1)}>›</button></div>
-        <button className="secondary-button" type="button" onClick={() => setFocusDate(new Date())}>Dzisiaj</button>
+        <button className="secondary-button" type="button" onClick={() => { setFocusDate(new Date()); if (view === 'schedule') setSelectedEvent(null); }}>Dzisiaj</button>
         <div className="view-switch">
           {(['schedule', 'day', 'week', 'month'] as CalendarView[]).map((item) => <button key={item} type="button" className={view === item ? 'active' : ''} onClick={() => setView(item)}>{item === 'schedule' ? 'Harmonogram' : item === 'day' ? 'Dzień' : item === 'week' ? 'Tydzień' : 'Miesiąc'}</button>)}
         </div>
