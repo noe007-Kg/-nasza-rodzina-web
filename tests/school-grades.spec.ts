@@ -173,7 +173,7 @@ test('Wszystkie ogranicza każdy rodzaj do pięciu, a zmiana filtra lub ucznia r
   await page.getByTestId('school-list-grade').getByRole('button', { name: 'Pokaż wszystkie: Oceny', exact: true }).click();
   await page.locator('.school-students').getByRole('button', { name: 'Paweł', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Okruszek: Paweł', exact: true })).toBeVisible();
-  await expect(page.locator('.school-record-list')).not.toContainText('Nauczyciel testowy');
+  await expect(page.getByRole('region', { name: 'Okruszek: Paweł', exact: true })).not.toContainText('Nauczyciel testowy');
   await page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true }).click();
   await expect(page.getByTestId('school-list-grade').locator('.school-entry')).toHaveCount(5);
   await page.getByTestId('school-stat-grades').click();
