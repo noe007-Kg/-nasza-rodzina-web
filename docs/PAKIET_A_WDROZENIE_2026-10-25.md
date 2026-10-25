@@ -34,7 +34,8 @@ nie rozbudowano backupów i nie zmieniano rodzinnych zadań w ramach testowania.
 - Dodano cztery indeksy kolejek wyłącznie przez operacje create. Potwierdzono
   READY dokładnych indeksów. Nie usunięto pozostałych indeksów.
 - Pierwsze wywołania funkcji w czasie tworzenia indeksów zgłaszały brak indeksu.
-  Po READY należy potwierdzić poprawne uruchomienie przed zakończeniem wydania.
+  Po READY potwierdzono poprawne uruchomienie: 25.10.2026 16:05:55 czasu Warszawy,
+  `Task photograph cleanup`, `attempted=0`, `deleted=0`, `retry=0` (pusta kolejka).
 
 Automatyczna kontrola odrzuciła pierwotną wspólną komendę reguł jako zbyt szeroką.
 Nie wykonywano jej inną drogą. Rozdzielono zakres, udowodniono identyczność reguł
@@ -46,6 +47,7 @@ Aktywne pliki wdrożeniowe i opis powtarzania operacji: `deploy/package-a/README
 
 - Dotychczasowe 327 testów jednostkowych przeszło przy poprzedniej kontroli.
 - Testy server:v2 po rozszerzeniu obejmują 57 scenariuszy; dodatkowo 9 testów nagród.
+- Końcowy wspólny przebieg na Node 22: 73/73 (server:v2, nagrody i Functions runtime).
 - Testy krytyczne, polityk i routera uruchomione również na docelowym Node 22: 39/39.
 - Pełne istniejące reguły v2 w emulatorach: 15/15.
 - Dokładne, ograniczone reguły produkcyjne Pakietu A: 3/3, w tym obca rodzina,
@@ -57,6 +59,21 @@ Aktywne pliki wdrożeniowe i opis powtarzania operacji: `deploy/package-a/README
 
 Nie zatwierdzano ani nie odsyłano prawdziwych rodzinnych zadań tylko na potrzeby
 testu. Testy zapisu wykorzystują wyłącznie odizolowany projekt demo.
+
+## Potwierdzenie Vercel
+
+- Produkcja: https://nasza-rodzina-web.vercel.app/ — główna domena przypisana do
+  nowego wdrożenia; `READY`, `target=production`, bez błędu aliasu.
+- Wdrożenie: `dpl_6r3red24dnTFD489uDLXqUzDsAmU`.
+- Wersja kodu: `f67cedffa700499c6d439f9cb1d05d3b88400995`.
+- Potwierdzono HTTP 200 strony i obecność właściwego bucketa dowodów w paczce.
+  POST `/api/family/tasks` z operacją odczytu bez logowania zwraca prawidłowe
+  401 `EDU_UNAUTHENTICATED`.
+- Kontrola logów error/fatal tego wdrożenia w oknie 10 minut nie wykazała wpisów.
+- Przeglądarka produkcyjna poprawnie pokazuje ekran logowania. Brak dostępnej
+  zalogowanej sesji użytkownika ogranicza weryfikację rzeczywistych przycisków
+  rodzica w produkcji. Nie obchodzono logowania ani nie podszywano się pod rodzinę.
+- Ten dopisek dokumentacyjny powstał po wydaniu; nie zmienia wdrożonego kodu.
 
 Reguły są weryfikowaną testami propozycją dla obecnego modelu jednej rodziny;
 nie stanowią audytu pozwalającego publicznie udostępnić aplikację wielu rodzinom.
