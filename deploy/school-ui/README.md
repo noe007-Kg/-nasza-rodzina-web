@@ -24,3 +24,5 @@ Validation includes provider/scheduler/scoped-session tests, real emulator reten
 ## Health history follow-up
 
 Titles and person labels in legacy Health cards were inline and visually concatenated. The history now has separate stacked title/person lines, a dated timeline marker, an explicit "Bez daty" fallback, and "Cała rodzina" instead of the internal `family` key. Other legacy Health card text also stacks consistently. This changes rendering only and leaves all household medical records untouched. Production build and the extended Chromium Health layout test passed; the test verifies the person label below the title and responsive navigation at phone/desktop sizes.
+
+Follow-up source `87fbcad7494b073ca7f6f41ccd3ad89638d31d59` is deployed in `dpl_JBmz8WWfdU8JnaHCGeEj8GfS42As`, confirmed READY on the main production domain. The preceding school changes remain included.
