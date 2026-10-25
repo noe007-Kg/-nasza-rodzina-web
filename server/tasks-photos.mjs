@@ -79,8 +79,14 @@ export async function deleteQueuedTaskPhoto(context, job, now = new Date()) {
   } catch {
     const attempts = Math.min(30, Number(job.attempts || 0) + 1);
     const delay = Math.min(24 * 60 * 60 * 1000, 60_000 * 2 ** Math.min(attempts, 10));
-    await cleanupRef.set({ attempts, state: 'pending', lastErrorCode: 'TASK_PHOTO_DELETE_FAILED',
-      nextAttemptAt: Timestamp.fromMillis(now.getTime() + delay), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    try {
+      await cleanupRef.set({ attempts, state: 'pending', lastErrorCode: 'TASK_PHOTO_DELETE_FAILED',
+        nextAttemptAt: Timestamp.fromMillis(now.getTime() + delay), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    } catch {
+      // The pending job was committed with approval/rework before Storage was
+      // touched. Preserve that durable retry even when Firestore is unavailable;
+      // a cleanup bookkeeping failure must not turn awarded points into an API error.
+    }
     return false;
   }
 }

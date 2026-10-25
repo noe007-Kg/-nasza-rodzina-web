@@ -153,6 +153,56 @@ test('a Storage deletion failure revokes access immediately and a later cleanup 
   assert.equal(balance(context).balance, 12);
 });
 
+test('rework removes the old proof through retry and requires a new proof before points', async () => {
+  const { context, child, ticket } = await submittedPhoto();
+  context.bucket.controls.failDeletes = 1;
+  await manageTasksAction(context, { action: 'rework', taskId: 'photo-task', comment: 'Popraw wykonanie' }, { now: familyTestNow });
+  assert.equal(balance(context), undefined);
+  assert.equal(context.rows.get('tasks/photo-task').reworkComment, 'Popraw wykonanie');
+  assert.equal(context.rows.get('tasks/photo-task').proofPath, undefined);
+  await assert.rejects(manageTasksAction(child, { action: 'submit', taskId: 'photo-task', uploadId: ticket.uploadId }, { now: familyTestNow }));
+  const fresh = await manageTasksAction(child, { action: 'begin-photo', taskId: 'photo-task', contentType: 'image/png', size: png.length }, { now: familyTestNow });
+  context.bucket.objects.set(fresh.path, { bytes: png, metadata: { size: png.length, contentType: 'image/png',
+    metadata: { taskId: 'photo-task', uploadId: fresh.uploadId, uploaderUid: 'child' } } });
+  await manageTasksAction(child, { action: 'submit', taskId: 'photo-task', uploadId: fresh.uploadId }, { now: familyTestNow });
+  await runTaskPhotoCleanup(context, { now: new Date(familyTestNow.getTime() + 3600000) });
+  assert.equal(context.bucket.objects.has(ticket.path), false);
+  assert.equal(context.bucket.objects.has(fresh.path), true);
+  assert.equal(balance(context), undefined);
+  await manageTasksAction(context, { action: 'approve', taskId: 'photo-task' }, { now: familyTestNow });
+  assert.equal(balance(context).balance, 12);
+  assert.equal(context.bucket.objects.size, 0);
+});
+
+for (const storageFails of [true, false]) test(`approval survives cleanup bookkeeping outage (Storage failure: ${storageFails})`, async () => {
+  const { context, ticket } = await submittedPhoto();
+  context.bucket.controls.failDeletes = storageFails ? 1 : 0;
+  const batch = context.db.batch;
+  const collection = context.db.collection;
+  context.db.batch = () => { const writer = batch(); return { ...writer, commit: async () => { throw new Error('FIRESTORE_UNAVAILABLE'); } }; };
+  context.db.collection = name => {
+    const query = collection(name);
+    if (name !== '_taskPhotoCleanup') return query;
+    return { ...query, doc: id => ({ ...query.doc(id), set: async () => { throw new Error('FIRESTORE_UNAVAILABLE'); } }) };
+  };
+  const result = await manageTasksAction(context, { action: 'approve', taskId: 'photo-task' }, { now: familyTestNow });
+  assert.equal(result.completed, true);
+  assert.equal(balance(context).balance, 12);
+  assert.equal(context.rows.get('tasks/photo-task').proofPath, undefined);
+  assert.equal(context.rows.get(`_taskPhotoUploads/${ticket.uploadId}`).state, 'revoked');
+  const job = context.rows.get(`_taskPhotoCleanup/${taskPhotoCleanupId(ticket.path)}`);
+  assert.equal(job.state, 'pending');
+  assert.equal(job.path, ticket.path);
+  context.db.batch = batch;
+  context.db.collection = collection;
+  const retry = await runTaskPhotoCleanup(context, { now: familyTestNow });
+  assert.equal(retry.deleted, 1);
+  assert.equal(context.bucket.objects.has(ticket.path), false);
+  await manageTasksAction(context, { action: 'approve', taskId: 'photo-task' }, { now: familyTestNow });
+  assert.equal(balance(context).balance, 12);
+  assert.equal(inCollection(context, 'taskPointLedger').length, 1);
+});
+
 test('orphan cleanup deletes abandoned uploads but preserves submitted photos awaiting a parent', async () => {
   const { context, ticket } = await submittedPhoto();
   const orphanId = '00112233-4455-6677-8899-aabbccddeeff';
