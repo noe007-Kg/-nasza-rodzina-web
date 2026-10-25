@@ -20,3 +20,7 @@ Validation includes provider/scheduler/scoped-session tests, real emulator reten
 - Passed: 97 server/provider/scheduler tests, 34 grade/newness projection tests, six real emulator integration tests, one exact-release marker-rules test, 14 distinct Chromium UI cases (two badge/Health cases and 12 grade cases). Two pre-existing SP4 assertions for Paweł were corrected to use his current Okruszek region and successfully rerun.
 - Production build and Functions canonical source check passed. Existing bundle-size and Firebase SDK upgrade warnings remain outside this minimal change.
 - No password is stored, no expired provider session is revived, and no new permanent-login guarantee is claimed. Actual provider revocation still requires reconnecting. Automatic renewal depends on a successful authorized synchronization.
+
+## Health history follow-up
+
+Titles and person labels in legacy Health cards were inline and visually concatenated. The history now has separate stacked title/person lines, a dated timeline marker, an explicit "Bez daty" fallback, and "Cała rodzina" instead of the internal `family` key. Other legacy Health card text also stacks consistently. This changes rendering only and leaves all household medical records untouched. Production build and the extended Chromium Health layout test passed; the test verifies the person label below the title and responsive navigation at phone/desktop sizes.

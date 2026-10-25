@@ -92,6 +92,9 @@ test('new homework and tests counters open only their new records without rewrit
 });
 
  test('health icon navigation remains readable and usable on phone and desktop',async({page})=>{
+ await fixtureDatabase().doc('healthRecords/history-layout').set({title:'Wizyta kontrolna',person:'family',type:'history',date:'',privateToParents:false,createdBy:accounts.parent.uid,createdAt:Timestamp.now()});
  await login(page);await module(page,'Zdrowie');const nav=page.getByRole('navigation',{name:'Sekcje zdrowia'});await expect(nav.getByRole('button')).toHaveCount(6);await expect(nav.locator('svg')).toHaveCount(6);
+ const historyRow=page.locator('.timeline-health-row').filter({hasText:'Wizyta kontrolna'});await expect(historyRow).toContainText('Cała rodzina');await expect(historyRow).toContainText('Bez daty');await expect(historyRow).not.toContainText('family');
+ const titleBox=await historyRow.locator('strong').boundingBox(), personBox=await historyRow.locator('small').boundingBox();expect(personBox!.y).toBeGreaterThanOrEqual(titleBox!.y+titleBox!.height);
  for(const size of [{width:390,height:844},{width:1440,height:900}]){await page.setViewportSize(size);await nav.getByRole('button',{name:'Wizyty',exact:true}).click();await expect(nav.getByRole('button',{name:'Wizyty',exact:true})).toHaveAttribute('aria-pressed','true');await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth-document.documentElement.clientWidth)).toBeLessThanOrEqual(1);await nav.getByRole('button',{name:'Przegląd',exact:true}).click();}
 });

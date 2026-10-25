@@ -48,3 +48,13 @@
 .health-section-navigation > button:focus-visible { outline:3px solid #8b78df; outline-offset:2px; }
 @media(max-width:600px) { .health-section-navigation { gap:6px; padding:6px; border-radius:18px; } .health-section-navigation > button { flex:1 1 calc(33% - 6px); flex-direction:column; gap:5px; padding:9px 4px; font-size:11px; min-width:0; } }
 @media(prefers-reduced-motion:reduce) { .health-section-navigation > button { transition:none; } }
+
+.health-card .timeline-health-row { display:grid; grid-template-columns:78px 8px minmax(0,1fr); align-items:start; gap:12px; padding:16px 0; }
+.health-card .timeline-health-row > time { padding-top:3px; font-size:11px; line-height:1.5; color:#72809b; }
+.health-card .health-timeline-dot { display:block; width:8px; height:8px; margin-top:7px; border-radius:50%; }
+.health-card .timeline-health-row > div, .health-card .health-list-row > div, .health-card .document-row > div, .health-card .contact-row > div { display:grid; gap:5px; min-width:0; }
+.health-card .timeline-health-row strong, .health-card .timeline-health-row small { display:block; line-height:1.5; overflow-wrap:anywhere; }
+.health-card .timeline-health-row small { color:#72809b; font-size:12px; }
+.health-card .timeline-health-row p { margin:0; }
+.health-card .timeline-health-row p:empty { display:none; }
+@media(max-width:600px) { .health-card .timeline-health-row { grid-template-columns:62px 8px minmax(0,1fr); gap:9px; } }
