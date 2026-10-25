@@ -22,4 +22,8 @@
 .school-module .school-important-toggle[aria-pressed='true'] { background: #fff0c2; }
 .school-module .school-important-toggle:focus-visible { outline: 3px solid var(--family-primary); outline-offset: 2px; }
 
-.school-new-counters{display:flex;flex-wrap:wrap;gap:12px;margin:20px 0}.school-new-counters>button{flex:1;min-width:150px}.school-new-badge{display:inline-block;background:#e5f4ec;color:#1d6043;border-radius:12px;padding:3px 8px;font-size:12px;font-weight:700}.school-important-section,.school-recent-grades{margin:20px 0;padding:18px;border-radius:22px;background:var(--brand-card,#fff)}
+.school-important-section,.school-recent-grades{margin:20px 0;padding:18px;border-radius:22px;background:var(--brand-card,#fff)}
+
+.school-entry, .school-grade-subject-card { position:relative; }
+.school-module .has-new-badge { padding-top:31px; }
+.school-module .school-new-badge { position:absolute; top:8px; right:10px; display:inline-block; padding:3px 6px; border:1px solid #c8e8dc; border-radius:4px; background:#e6f6ef; color:#24634d; font-size:9px; font-weight:800; line-height:1; letter-spacing:.06em; white-space:nowrap; }

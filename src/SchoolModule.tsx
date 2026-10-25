@@ -160,7 +160,6 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
   const [form, setForm] = useState<SchoolForm | null>(null);
   const [editing, setEditing] = useState<SchoolRecord | null>(null);
   const {isNew, markSeen, error: newnessError} = useSchoolNewness(user.uid);
-  const [onlyNew, setOnlyNew] = useState(false);
   const [detail, setDetail] = useState<SchoolRecord | null>(null);
   const [deleting, setDeleting] = useState<SchoolRecord | null>(null);
   const [actionError, setActionError] = useState('');
@@ -234,7 +233,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
   const listTypeOrder: SchoolType[] = ['lesson', 'activity', 'test', 'homework', 'grade', 'message'];
   // Authorization and the selected student's scope are applied before grouping or limiting.
   const recordGroups = listTypeOrder.filter(type => filter === 'all' || filter === type).map(type => {
-    let rows = sortGradesNewest(ownRecords.filter(row => row.type === type && (!onlyNew || isNew(row))));
+    let rows = sortGradesNewest(ownRecords.filter(row => row.type === type));
     const newestPosition = new Map(rows.map((row, index) => [row.id, index]));
     if (type === 'message') rows.sort((a, b) => Number(parent && isImportant(importantMessageId(b))) - Number(parent && isImportant(importantMessageId(a))) || newestPosition.get(a.id)! - newestPosition.get(b.id)!);
     if (type === 'lesson' || type === 'activity') rows.sort((a, b) => a.weekday - b.weekday || a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.id.localeCompare(b.id));
@@ -248,7 +247,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
     return { type, rows };
   }).filter(group => group.rows.length);
   const filteredRecords = recordGroups.flatMap(group => group.rows);
-  const listResetKey = `${identity}:${person}:${filter}:${onlyNew}`;
+  const listResetKey = `${identity}:${person}:${filter}`;
   const todaySessions = ownRecords.filter((row) => (row.type === 'lesson' || row.type === 'activity') && matchesDay(row, today)).sort((a, b) => a.time.localeCompare(b.time));
   const todayDeadlines = ownRecords.filter((row) => (row.type === 'homework' || row.type === 'test') && row.date === today);
   const visibleTypes = SCHOOL_TYPES.filter((type) => parent || type !== 'message');
@@ -265,7 +264,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
     target?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
   function openCategory(type: SchoolType) {
-    setFilter(type); setOnlyNew(false);
+    setFilter(type);
     focusSection(type === 'lesson' ? weekPanel : recordsPanel);
   }
   function previewFor(type: SchoolType): string {
@@ -410,10 +409,10 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
 
   function rowButton(row: SchoolRecord, inPlan = false) {
     const starVisible = row.type !== 'lesson';
-    return <div className={`school-entry-wrapper ${starVisible ? 'school-entry-with-star' : ''} ${starVisible && isImportant(importantMessageId(row)) ? 'is-important' : ''}`} key={row.id}><button type="button" className={`school-entry ${inPlan ? 'school-plan-entry' : ''}`} onClick={() => openDetail(row)}>
-      <span className={`school-entry-icon school-type-${row.type}`} aria-hidden="true"><Icon name={META[row.type].icon} /></span>
+    return <div className={`school-entry-wrapper ${starVisible ? 'school-entry-with-star' : ''} ${starVisible && isImportant(importantMessageId(row)) ? 'is-important' : ''}`} key={row.id}><button type="button" className={`school-entry ${inPlan ? 'school-plan-entry' : ''} ${isNew(row) ? 'has-new-badge' : ''}`} onClick={() => openDetail(row)}>
+      {isNew(row) && <small className="school-new-badge">NOWE</small>}<span className={`school-entry-icon school-type-${row.type}`} aria-hidden="true"><Icon name={META[row.type].icon} /></span>
       {inPlan && <time>{row.time}<small>{row.endTime}</small></time>}
-      <span className="school-entry-copy"><strong>{row.title} {isNew(row) && <small className="school-new-badge">{row.type === 'grade' ? 'Nowa ocena' : 'Nowe'}</small>}</strong><span>{[row.subject, inPlan ? row.note : row.date ? shortDate(row.date) : row.weekday ? WEEKDAYS[row.weekday - 1] : '', !inPlan && row.time ? `${row.time}${row.endTime ? `–${row.endTime}` : ''}` : ''].filter(Boolean).join(' · ') || META[row.type].singular}</span>{row.source === 'eduvulcan' && <small className="school-source-badge">eduVULCAN · {row.parentOnly ? 'dla rodzica' : 'tylko odczyt'}</small>}</span>
+      <span className="school-entry-copy"><strong>{row.title}</strong><span>{[row.subject, inPlan ? row.note : row.date ? shortDate(row.date) : row.weekday ? WEEKDAYS[row.weekday - 1] : '', !inPlan && row.time ? `${row.time}${row.endTime ? `–${row.endTime}` : ''}` : ''].filter(Boolean).join(' · ') || META[row.type].singular}</span>{row.source === 'eduvulcan' && <small className="school-source-badge">eduVULCAN · {row.parentOnly ? 'dla rodzica' : 'tylko odczyt'}</small>}</span>
       {!inPlan && <span className="school-entry-type">{META[row.type].singular}</span>}
       <span className="school-entry-arrow" aria-hidden="true"><Icon name="chevron-right" /></span>
     </button>{starVisible && <button type="button" className="school-important-toggle" aria-label={isImportant(importantMessageId(row)) ? 'Usuń z ważnych' : 'Oznacz jako ważne'} aria-pressed={isImportant(importantMessageId(row))} onClick={() => { void toggleImportant(importantMessageId(row)).catch((error) => setNotice(errorText(error))); }}><span aria-hidden="true">📌</span></button>}</div>;
@@ -433,7 +432,6 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
     {person && sourceView === 'okruszek' && <OkruszekPlan key={`${identity}:${person}:${ownerProfileId}`} user={user} parent={parent} person={person} ownerProfileId={ownerProfileId} />}
     {sources.includes('sp4') && <div className="school-sp4-content" data-testid="school-sp4-content" hidden={sourceView !== 'sp4'}>
     {newnessError && <p role="alert">{newnessError}</p>}
-    <section className="school-new-counters" aria-label="Nowe informacje">{(['grade', 'test', 'homework'] as const).map(type => <button type="button" className="secondary-button" key={type} aria-pressed={onlyNew && filter === type} onClick={() => {setFilter(type); setOnlyNew(true); focusSection(recordsPanel);}}><strong>{ownRecords.filter(row => row.type === type && isNew(row)).length}</strong> {type === 'grade' ? 'Nowe oceny' : type === 'test' ? 'Nowe sprawdziany' : 'Nowe zadania'}</button>)}{onlyNew && <button type="button" className="secondary-button" onClick={() => setOnlyNew(false)}>Pokaż także przeczytane</button>}</section>
     <section className="school-important-section"><h2>⭐ Najważniejsze</h2>{ownRecords.filter(row => isImportant(importantMessageId(row))).map(row => rowButton(row))}{!ownRecords.some(row => isImportant(importantMessageId(row))) && <p>Przypnij ważny wpis za pomocą pinezki.</p>}</section>
     <section className="school-recent-grades"><h2>Ostatnie oceny</h2>{sortGradesNewest(ownRecords.filter(row => row.type === 'grade' && !isPeriodGrade(row))).slice(0, 5).map(row => rowButton(row))}</section>
     {notice && <div className="school-notice" role="status"><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Zamknij komunikat"><Icon name="close" /></button></div>}
@@ -467,7 +465,7 @@ export function SchoolModule({ user, member, familyMembers }: { user: User; memb
         </section>
         <section ref={recordsPanel} tabIndex={-1} className="school-panel school-records-panel" aria-labelledby="school-records-title">
           <SectionHeader id="school-records-title" level={2} title="Wpisy szkolne" description={`Wszystkie zapisane informacje · ${ownRecords.length} wpisów`} icon="book" className="school-panel-heading" />
-          <div className="school-filters" role="group" aria-label="Rodzaj wpisów"><button type="button" className={filter === 'all' ? 'active' : ''} aria-pressed={filter === 'all'} onClick={() => {setFilter('all'); setOnlyNew(false);}}>Wszystkie <span>{ownRecords.length}</span></button>{visibleTypes.map((type) => <button type="button" key={type} className={filter === type ? 'active' : ''} aria-pressed={filter === type} onClick={() => {setFilter(type); setOnlyNew(false);}}><Icon name={META[type].icon} />{META[type].title}<span>{ownRecords.filter((row) => row.type === type).length}</span></button>)}</div>
+          <div className="school-filters" role="group" aria-label="Rodzaj wpisów"><button type="button" className={filter === 'all' ? 'active' : ''} aria-pressed={filter === 'all'} onClick={() => {setFilter('all'); }}>Wszystkie <span>{ownRecords.length}</span></button>{visibleTypes.map((type) => <button type="button" key={type} className={filter === type ? 'active' : ''} aria-pressed={filter === type} onClick={() => {setFilter(type); }}><Icon name={META[type].icon} />{META[type].title}<span>{ownRecords.filter((row) => row.type === type).length}</span></button>)}</div>
           <div className="school-record-list">{filter === 'grade' ? <SchoolGrades isNew={isNew} renderAction={row => <button type="button" className="secondary-button" aria-pressed={isImportant(importantMessageId(row))} onClick={() => {void toggleImportant(importantMessageId(row)).catch(error => setNotice(errorText(error)));}}>📌 {isImportant(importantMessageId(row)) ? 'Odepnij' : 'Przypnij'}</button>} key={listResetKey} records={filteredRecords} resetKey={listResetKey} onOpen={openDetail} /> : filteredRecords.length ? recordGroups.map(group => <SchoolExpandableList key={`${listResetKey}:${group.type}`} items={group.rows} title={META[group.type].title} resetKey={`${listResetKey}:${group.type}`} renderItem={row => rowButton(row)} testId={`school-list-${group.type}`} />) : <div className="school-empty-state"><strong>Brak wpisów w tej kategorii.</strong>{(filter === 'all' || parent || CHILD_TYPES.includes(filter)) && <SecondaryButton onClick={() => openAdd(filter === 'all' ? 'homework' : filter)}>Dodaj pierwszy wpis</SecondaryButton>}</div>}</div>
         </section>
       </div>

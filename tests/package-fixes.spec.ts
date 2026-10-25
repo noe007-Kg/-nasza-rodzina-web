@@ -50,19 +50,19 @@ test('school new grades, personal read state, pin survives re-sync and reload',a
  await expect.poll(async()=> (await db.doc(`userPreferences/${accounts.parent.uid}/schoolState/baseline`).get()).exists).toBe(true);
  const entry={person:'Nikodem',type:'grade',title:'5',subject:'Matematyka testowa',date:todayKey(),time:'',endTime:'',weekday:0,note:'Test',source:'eduvulcan',sourceRecordId:'grade-package',sourceProfileId:'package',createdBy:accounts.parent.uid,createdAt:Timestamp.now(),syncedAt:Timestamp.now()};
  await db.doc('schoolItems/package-grade').set(entry);
- await expect(page.locator('.school-new-counters').getByRole('button',{name:/Nowe oceny/})).toContainText('1');
- const row=page.locator('.school-recent-grades .school-entry-wrapper').filter({hasText:'Matematyka testowa'});await expect(row).toContainText('Nowa ocena');await row.getByRole('button',{name:'Oznacz jako ważne',exact:true}).click();
+ await expect(page.locator('.school-new-counters')).toHaveCount(0);
+ const row=page.locator('.school-recent-grades .school-entry-wrapper').filter({hasText:'Matematyka testowa'});await expect(row.locator('.school-new-badge')).toHaveText('NOWE'); const badgeBox=await row.locator('.school-new-badge').boundingBox(), rowBox=await row.locator('.school-entry').boundingBox();expect(badgeBox!.y-rowBox!.y).toBeLessThan(14);expect(rowBox!.x+rowBox!.width-badgeBox!.x-badgeBox!.width).toBeLessThan(16);await row.getByRole('button',{name:'Oznacz jako ważne',exact:true}).click();
  await expect(page.locator('.school-important-section')).toContainText('Matematyka testowa');
  await expect.poll(async()=> (await db.doc(`userPreferences/${accounts.parent.uid}`).get()).data()?.importantItems || []).toContain('school:entry:package-grade');
  await db.doc('schoolItems/package-grade').update({syncedAt:Timestamp.now()});await page.reload();await expect(page.locator('.app-shell')).toBeVisible();await module(page,'Szkoła');await page.locator('.school-students').getByRole('button',{name:'Nikodem',exact:true}).click();await expect(page.locator('.school-important-section')).toContainText('Matematyka testowa');
  await page.locator('.school-important-section .school-entry').click();await expect.poll(async()=> (await db.doc(`userPreferences/${accounts.parent.uid}/schoolSeen/package-grade`).get()).exists).toBe(true);
- await expect(page.locator('.school-new-counters').getByRole('button',{name:/Nowe oceny/})).toContainText('0');
+ await expect(page.locator('.school-new-badge')).toHaveCount(0);
  await page.keyboard.press('Escape');
  await page.locator('.school-important-section .school-important-toggle').click();
  await expect.poll(async()=> (await db.doc(`userPreferences/${accounts.parent.uid}`).get()).data()?.importantItems || []).not.toContain('school:entry:package-grade');
  await db.doc('schoolItems/package-grade').update({syncedAt:Timestamp.now()});
  await page.reload();await expect(page.locator('.app-shell')).toBeVisible();await module(page,'Szkoła');await page.locator('.school-students').getByRole('button',{name:'Nikodem',exact:true}).click();
- await expect(page.locator('.school-new-counters').getByRole('button',{name:/Nowe oceny/})).toContainText('0');
+ await expect(page.locator('.school-new-badge')).toHaveCount(0);
  await expect(page.locator('.school-important-section')).not.toContainText('Matematyka testowa');
 });
 test('opening a short private conversation clears only its badge and notification, persistently',async({page})=>{
@@ -89,4 +89,12 @@ test('new homework and tests counters open only their new records without rewrit
   await page.locator('.school-record-list .school-entry').click();await expect(page.getByRole('dialog')).toContainText('Przygotuj zeszyt');await page.getByRole('button',{name:'Zamknij okno',exact:true}).click();await expect(counter).toContainText('0');
  }
  expect((await db.doc('schoolItems/package-homework').get()).data()).toEqual(original);
+});
+
+ test('health icon navigation remains readable and usable on phone and desktop',async({page})=>{
+ await fixtureDatabase().doc('healthRecords/history-layout').set({title:'Wizyta kontrolna',person:'family',type:'history',date:'',privateToParents:false,createdBy:accounts.parent.uid,createdAt:Timestamp.now()});
+ await login(page);await module(page,'Zdrowie');const nav=page.getByRole('navigation',{name:'Sekcje zdrowia'});await expect(nav.getByRole('button')).toHaveCount(6);await expect(nav.locator('svg')).toHaveCount(6);
+ const historyRow=page.locator('.timeline-health-row').filter({hasText:'Wizyta kontrolna'});await expect(historyRow).toContainText('Cała rodzina');await expect(historyRow).toContainText('Bez daty');await expect(historyRow).not.toContainText('family');
+ const titleBox=await historyRow.locator('strong').boundingBox(), personBox=await historyRow.locator('small').boundingBox();expect(personBox!.y).toBeGreaterThanOrEqual(titleBox!.y+titleBox!.height);
+ for(const size of [{width:390,height:844},{width:1440,height:900}]){await page.setViewportSize(size);await nav.getByRole('button',{name:'Wizyty',exact:true}).click();await expect(nav.getByRole('button',{name:'Wizyty',exact:true})).toHaveAttribute('aria-pressed','true');await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth-document.documentElement.clientWidth)).toBeLessThanOrEqual(1);await nav.getByRole('button',{name:'Przegląd',exact:true}).click();}
 });
