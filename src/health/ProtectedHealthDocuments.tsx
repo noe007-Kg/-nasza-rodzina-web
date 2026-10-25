@@ -16,13 +16,16 @@ import { familyV2WritesAllowed } from '../family-v2-client';
 import { useProtectedHealthDocuments } from './useProtectedHealthDocuments';
 import './health-documents.css';
 
-export function ProtectedHealthDocuments({ user, member, person }: { user: User; member: Member | null; person: PersonKey }) {
+export function ProtectedHealthDocuments({ user, member, person, onSelectPerson }: { user: User; member: Member | null; person: PersonKey; onSelectPerson?: (person: PersonKey) => void }) {
   const directory = useFamilyDirectory();
   const profiles = directory.filter(profile => profile.active !== false && !profile.archived && !profile.disabled && !profile.id.startsWith('legacy:'));
   const own = profiles.find(profile => profile.id === user.uid);
   const selectedProfile = profiles.find(profile => memberPersonKey(profile) === person);
   const documentState = useProtectedHealthDocuments(user.uid);
   const documents = documentState.rows;
+  const folder = documentState.copyFolders.find(value => value.ownerPersonKey === person);
+  const [sharing, setSharing] = useState<ProtectedHealthDocument | null>(null);
+  const [extraReaders, setExtraReaders] = useState<string[]>([]);
   const accessError = documentState.error;
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<ProtectedHealthDocument | null>(null);
@@ -53,6 +56,7 @@ export function ProtectedHealthDocuments({ user, member, person }: { user: User;
   }, [showConsent, user.uid]);
 
   const visible = documents.filter(document => person === 'family' || document.ownerPersonKey === person);
+  const uploadFolder = documentState.copyFolders.find(value => value.ownerProfileId === ownerProfileId);
   const owner = profiles.find(profile => profile.id === ownerProfileId);
   const ownerName = owner?.name || owner?.personKey || 'właścicielowi';
   const importantKinds = Object.entries(HEALTH_DOCUMENT_KINDS).filter(([kind]) => kind !== 'general') as Array<[HealthDocumentKind, string]>;
@@ -78,7 +82,7 @@ export function ProtectedHealthDocuments({ user, member, person }: { user: User;
         if (!completed) {
           setStage('Przygotowywanie dokumentu');
           const file = await documentPagesFile(pages, setStage);
-          const ticket = await prepareHealthDocument(ownerProfileId, metadata, file);
+          const ticket = await prepareHealthDocument(ownerProfileId, metadata, file, !!uploadFolder);
           setStage('Przesyłanie dokumentu');
           await observeHealthUpload(uploadBytesResumable(ref(storage, ticket.storagePath), file, { contentType: file.type }), setProgress);
           completed = { ...ticket, file }; uploaded.current = completed;
@@ -113,6 +117,8 @@ export function ProtectedHealthDocuments({ user, member, person }: { user: User;
   }
   return <section className="health-protected-documents" aria-label="Chronione dokumenty zdrowotne">
     <header><div><strong>📌 Ważne dokumenty</strong><small>Osobne uprawnienia dla każdego dokumentu.</small></div><button type="button" onClick={() => addDocument()}>Dodaj dokument +</button></header>
+    {documentState.copyFolders.map(value => <button type="button" key={value.ownerProfileId} onClick={() => onSelectPerson?.(value.ownerPersonKey as PersonKey)}>📌 Ważne dokumenty: {value.ownerPersonKey}</button>)}
+    {folder && <p className="health-doc-access-note">Dokumenty w tej kartotece są domyślnie widoczne tylko dla: {profiles.filter(value => folder.memberUids.includes(value.id)).map(value => value.name).join(', ')}. Pozostałym osobom możesz udostępnić wybrany dokument osobno.</p>}
     {accessError && <p className="health-doc-access-note" role="status">{accessError}</p>}
     {!writesEnabled && <p className="health-doc-access-note" role="status">{writeState.uid === user.uid && writeState.configured ? 'Podgląd 2.0: zapis dokumentów i zmiany upoważnień są wyłączone, aby chronić dane produkcyjne.' : 'Zapis chronionych dokumentów wymaga konfiguracji backendu i reguł Firebase 2.0. Możesz obejrzeć formularz bez zapisywania danych.'}</p>}
     <p className="health-doc-access-note">Dokumenty osoby dorosłej wymagają jej zgody lub potwierdzonego umocowania prawnego. Sama rola rodzica nie daje dostępu. Starsze dokumenty zachowują dotychczasowe uprawnienia i wymagają osobnego przeglądu zgód.</p>
@@ -127,7 +133,7 @@ export function ProtectedHealthDocuments({ user, member, person }: { user: User;
         <div><strong>{document.pinned ? '📌 ' : ''}{document.title}</strong><small>{document.ownerPersonKey} · {HEALTH_DOCUMENT_KINDS[document.documentType]}</small><span className={`health-document-status ${status.tone}`}>{status.label}</span>
           {document.expiresOn && !document.indefinite && <small>Ważny do: {document.expiresOn}</small>}
           <details><summary>Szczegóły dokumentu</summary>{document.issuedOn && <p>Data wydania: {document.issuedOn}</p>}{document.number && <p>Numer: {document.number}</p>}{document.note && <p>{document.note}</p>}<small>Plik: {document.fileName}</small></details></div>
-        <div className="health-document-row-actions"><button type="button" onClick={() => setPreview(document)}>Otwórz</button>{document.editors.includes(user.uid) && <><button type="button" onClick={() => edit(document)}>Edytuj</button><button type="button" disabled={!writesEnabled} onClick={() => void remove(document)}>Usuń</button></>}</div>
+        <div className="health-document-row-actions"><button type="button" onClick={() => setPreview(document)}>Otwórz</button>{document.editors.includes(user.uid) && <><button type="button" onClick={() => edit(document)}>Edytuj</button>{document.accessScope === 'shared-copies' && <button type="button" disabled={!writesEnabled} onClick={() => { setSharing(document); const base = documentState.copyFolders.find(value => value.ownerProfileId === document.ownerProfileId)?.memberUids || []; setExtraReaders(document.readers.filter(uid => !base.includes(uid))); }}>Udostępnij</button>}<button type="button" disabled={!writesEnabled} onClick={() => void remove(document)}>Usuń</button></>}</div>
       </article>;
     })}</div>
     {own && <details className="health-consent-settings" onToggle={event => setShowConsent(event.currentTarget.open)}><summary>Moje upoważnienia do dokumentów</summary>
@@ -136,6 +142,12 @@ export function ProtectedHealthDocuments({ user, member, person }: { user: User;
       <button type="button" disabled={!grantee || saving || !writesEnabled} onClick={() => void changeConsent(grantee, false)}>Upoważnij za moją zgodą</button>
       {grantUIDs.map(uid => <div key={uid}><span>{profiles.find(profile => profile.id === uid)?.name || 'Upoważniona osoba'}</span><button type="button" disabled={saving || !writesEnabled} onClick={() => void changeConsent(uid, true)}>Wycofaj upoważnienie</button></div>)}
     </details>}
+    {sharing && <Modal title="Udostępnij dokument" onClose={() => { if (!saving) setSharing(null); }}>
+      <p>Stały dostęp mają właściciel kartoteki oraz Sebastian i Dominika. Zaznacz dodatkowe osoby, które mogą zobaczyć ten dokument.</p>
+      {profiles.filter(profile => profile.canLogin === true && !documentState.copyFolders.find(value => value.ownerProfileId === sharing.ownerProfileId)?.memberUids.includes(profile.id)).map(profile => <label className="checkbox-field" key={profile.id}><input type="checkbox" checked={extraReaders.includes(profile.id)} onChange={event => setExtraReaders(value => event.target.checked ? [...value, profile.id] : value.filter(uid => uid !== profile.id))}/><span>{profile.name}</span></label>)}
+      {error && <p role="alert">{error}</p>}
+      <button type="button" disabled={saving || !writesEnabled} onClick={async () => { if (savingRef.current) return; savingRef.current = true; setSaving(true); setError(''); try { await healthDocumentAction({ operation: 'share-copy', documentId: sharing.id, readerUids: extraReaders }); setSharing(null); setSuccess('Zapisano dostęp do dokumentu.'); } catch (value) { setError(value instanceof Error ? value.message : 'Nie udało się zapisać dostępu.'); } finally { savingRef.current = false; setSaving(false); } }}>Zapisz udostępnienie</button>
+    </Modal>}
     {showForm && <Modal title={editing ? 'Edytuj dokument' : 'Nowy chroniony dokument'} wide onClose={() => { if (!saving) setShowForm(false); }}>
       <form className="form-grid health-protected-document-form" onSubmit={event => void save(event)}>
         <fieldset disabled={saving} className="health-document-fields field-wide">
@@ -147,8 +159,8 @@ export function ProtectedHealthDocuments({ user, member, person }: { user: User;
           <label className="checkbox-field field-wide"><input type="checkbox" checked={metadata.indefinite} onChange={event => setMetadata(value => ({ ...value, indefinite: event.target.checked, expiresOn: event.target.checked ? '' : value.expiresOn }))} /><span>Bezterminowy — bez przypomnień o wygaśnięciu</span></label>
           <label className="field"><span>Numer dokumentu — opcjonalnie</span><input maxLength={200} value={metadata.number} onChange={event => setMetadata(value => ({ ...value, number: event.target.value }))} /></label>
           <label className="field field-wide"><span>Uwagi</span><textarea maxLength={4000} rows={2} value={metadata.note} onChange={event => setMetadata(value => ({ ...value, note: event.target.value }))} /></label>
-          <label className="checkbox-field field-wide"><input type="checkbox" checked={metadata.pinned} onChange={event => setMetadata(value => ({ ...value, pinned: event.target.checked }))} /><span>Przypnij dokument</span></label>
-          {ownerProfileId !== user.uid && owner?.canLogin === true && <label className="checkbox-field field-wide"><input type="checkbox" checked={metadata.shareOwner} onChange={event => setMetadata(value => ({ ...value, shareOwner: event.target.checked }))} /><span>Udostępnij dokument osobie: {ownerName}</span></label>}
+          <label className="checkbox-field field-wide"><input type="checkbox" checked={!!uploadFolder || metadata.pinned} disabled={!!uploadFolder} onChange={event => setMetadata(value => ({ ...value, pinned: event.target.checked }))} /><span>Przypnij dokument</span></label>
+          {ownerProfileId !== user.uid && owner?.canLogin === true && <label className="checkbox-field field-wide"><input type="checkbox" checked={!!uploadFolder || metadata.shareOwner} disabled={!!uploadFolder} onChange={event => setMetadata(value => ({ ...value, shareOwner: event.target.checked }))} /><span>Udostępnij dokument osobie: {ownerName}</span></label>}
           {!editing && <><label className="field field-wide"><span>PDF lub strony JPG / PNG / WebP</span><input type="file" multiple accept="application/pdf,image/jpeg,image/png,image/webp" disabled={!!uploaded.current} onChange={event => { uploaded.current = null; setProgress({ phase: 'idle', percent: 0 }); setPages(Array.from(event.target.files || [])); }} /></label>
             <label className="field field-wide"><span>Sfotografuj kolejną stronę / tył dokumentu</span><input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={!!uploaded.current} onChange={event => { const file = event.target.files?.[0]; if (file) setPages(value => [...value, file]); event.target.value = ''; }} /></label>
             <ol className="health-document-pages field-wide">{pages.map((file, index) => <li key={`${index}:${file.name}`}><span>{index + 1}. {file.name}</span><button type="button" disabled={index === 0 || !!uploaded.current} aria-label={`Przesuń stronę ${index + 1} wyżej`} onClick={() => setPages(value => { const copy = [...value]; [copy[index - 1], copy[index]] = [copy[index], copy[index - 1]]; return copy; })}>↑</button><button type="button" disabled={!!uploaded.current} onClick={() => setPages(value => value.filter((_, current) => current !== index))}>Usuń stronę</button></li>)}</ol>

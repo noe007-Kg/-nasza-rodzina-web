@@ -10,6 +10,16 @@ const bill = (context, id = 'bill-first') => context.rows.get(`financeBills/${id
 const count = (context, collection) => [...context.rows.keys()].filter(path => path.startsWith(`${collection}/`)).length;
 const rejects = code => error => error?.code === code;
 
+test('disabled members lose read and mutation access even with a stale authenticated parent profile', async () => {
+  const context = familyMemoryContext();
+  await manageFinanceAction(context, draft());
+  context.rows.set('members/parent', { ...fixtureParent, disabled: true });
+  for (const action of [{ action: 'state' }, draft(), { action: 'markPaid', billId: 'bill-first' }]) {
+    await assert.rejects(manageFinanceAction(context, action), rejects('FINANCE_MEMBER_REQUIRED'));
+  }
+  assert.equal(bill(context).status, 'unpaid');
+});
+
 test('parent creates a stable bill once on retried save and receives complete transfer data', async () => {
   const context = familyMemoryContext();
   await Promise.all([manageFinanceAction(context, draft()), manageFinanceAction(context, draft())]);

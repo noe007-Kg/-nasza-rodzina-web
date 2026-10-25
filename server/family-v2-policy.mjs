@@ -11,7 +11,8 @@ export function familyV2WritesAllowed(context, env = process.env, domain) {
   if (localDemo) return true;
   if (env.FIREBASE_AUTH_EMULATOR_HOST || env.FIRESTORE_EMULATOR_HOST || env.FIREBASE_STORAGE_EMULATOR_HOST || String(projectId || '').startsWith('demo-')) return false;
   return env.FAMILY_V2_WRITES_ENABLED === 'true' || domain === 'tasks' && env.TASKS_WRITES_ENABLED === 'true'
-    || domain === 'health' && env.HEALTH_WRITES_ENABLED === 'true';
+    || domain === 'health' && env.HEALTH_WRITES_ENABLED === 'true'
+    || domain === 'finance' && env.FINANCE_WRITES_ENABLED === 'true';
 }
 
 export function assertFamilyV2WriteAllowed(context, env = process.env, domain) {

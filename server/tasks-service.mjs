@@ -390,6 +390,39 @@ async function decideReward(context, body) {
   return { requestId: ref.id, approved: accepted };
 }
 
+async function correctPoints(context, body) {
+  fields(body, ['entryId', 'amount', 'reason', 'requestId', 'revision']);
+  const entryId = taskId(body.entryId), requestId = taskId(body.requestId);
+  const amount = integer(body.amount, 10000), revision = integer(body.revision, 1000000);
+  const reason = text(body.reason, 500);
+  await context.db.runTransaction(async transaction => {
+    const actor = await freshActor(transaction, context); requireParent(actor);
+    const originalRef = context.db.collection('taskPointLedger').doc(entryId);
+    const correctionRef = context.db.collection('taskPointLedger').doc(hash(`correction:${requestId}`));
+    const [original, prior] = await Promise.all([transaction.get(originalRef), transaction.get(correctionRef)]);
+    const entry = original.data();
+    if (!original.exists || entry.kind !== 'earned' || !sameFamily(actor, entry)) fail('TASK_ENTRY_NOT_FOUND', 404, 'Nie znaleziono przyznanych punktów do poprawy.');
+    if (prior.exists) {
+      const p = prior.data();
+      if (p.targetEntryId !== entryId || p.amount !== amount || p.reason !== reason || p.actorUid !== context.uid) fail('TASK_CORRECTION_CONFLICT', 409, 'To potwierdzenie dotyczy innej korekty. Otwórz wpis ponownie.');
+      return;
+    }
+    if ((entry.correctionRevision || 0) !== revision) fail('TASK_CORRECTION_CONFLICT', 409, 'Punkty zmieniły się w międzyczasie. Odśwież historię i otwórz wpis ponownie.');
+    const before = entry.correctedAmount ?? entry.delta;
+    if (!Number.isInteger(before) || before < 0 || before > 10000) fail('TASK_INVALID_REQUEST', 409, 'Wpis punktów wymaga sprawdzenia.');
+    const balanceRef = context.db.collection('taskPointBalances').doc(personId(entry.person));
+    const balance = await transaction.get(balanceRef), current = balance.data();
+    if (!balance.exists || !sameFamily(actor, current) || !Number.isInteger(current.balance) || !Number.isInteger(current.earned)) fail('TASK_INVALID_REQUEST', 409, 'Nie potwierdzono salda punktów.');
+    const delta = amount - before;
+    if (current.balance + delta < 0 || current.earned + delta < 0) fail('TASK_POINTS_ALREADY_SPENT', 409, 'Te punkty zostały już wykorzystane. Korekta nie może ustawić ujemnego salda.');
+    transaction.update(balanceRef, { balance: current.balance + delta, earned: current.earned + delta, updatedAt: stamp() });
+    transaction.update(originalRef, { correctedAmount: amount, correctionRevision: revision + 1 });
+    transaction.create(correctionRef, { person: entry.person, familyId: actor.familyId, kind: 'correction', delta,
+      targetEntryId: entryId, amount, previousAmount: before, reason, title: `Korekta: ${entry.title}`, actorUid: context.uid, createdAt: stamp() });
+  });
+  return { corrected: true };
+}
+
 const millis = value => typeof value?.toMillis === 'function' ? value.toMillis() : 0;
 async function state(context, body) {
   fields(body, []);
@@ -416,7 +449,8 @@ async function state(context, body) {
     .sort((a, b) => millis(b.requestedAt) - millis(a.requestedAt)).slice(0, 100).map(request => ({ id: request.id, rewardId: request.rewardId, person: request.person,
       title: request.title, cost: request.cost, state: request.state, requestedAt: millis(request.requestedAt), decidedAt: millis(request.decidedAt) })),
   history: ledger.docs.map(item => ({ id: item.id, ...item.data() })).filter(entry => sameFamily(actor, entry) && familyPeople.has(entry.person) && (parent(actor) || entry.person === own))
-    .sort((a, b) => millis(b.createdAt) - millis(a.createdAt)).slice(0, 100).map(entry => ({ id: entry.id, person: entry.person, delta: entry.delta, kind: entry.kind, title: entry.title, createdAt: millis(entry.createdAt) })) };
+    .sort((a, b) => millis(b.createdAt) - millis(a.createdAt)).slice(0, 100).map(entry => ({ id: entry.id, person: entry.person, delta: entry.delta, kind: entry.kind, title: entry.title,
+      correctedAmount: entry.correctedAmount ?? null, revision: entry.correctionRevision || 0, reason: entry.reason || '', createdAt: millis(entry.createdAt) })) };
 }
 
 /** Called only after the shared family endpoint verifies the current Firebase UID. */
@@ -434,6 +468,7 @@ export async function manageTasksAction(context, body, { now = new Date() } = {}
     case 'save-reward': return saveReward(context, body, now);
     case 'request-reward': return requestReward(context, body);
     case 'decide-reward': return decideReward(context, body);
+    case 'correct-points': return correctPoints(context, body);
     default: fail('TASK_INVALID_REQUEST', 400, 'Wybierz poprawną operację zadań.');
   }
 }
