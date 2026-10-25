@@ -20,6 +20,8 @@ const app = getApps()[0] || initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+export const taskProofStorage = usingEmulators || !env.VITE_TASK_PROOF_BUCKET
+  ? storage : getStorage(app, `gs://${env.VITE_TASK_PROOF_BUCKET}`);
 
 if (usingEmulators) {
   const host = env.VITE_EMULATOR_HOST || '127.0.0.1';

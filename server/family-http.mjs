@@ -73,12 +73,12 @@ export function createFamilyRouter({ services = getServerFirebase, memberGuard =
       const operation = body.operation || body.action;
       if (!['state', 'status'].includes(operation)) {
         if (domain === 'music-school') assertMusicWrites(env);
-        else assertFamilyV2WriteAllowed(context, env);
+        else assertFamilyV2WriteAllowed(context, env, domain);
       }
       const result = domain === 'music-school' ? await musicAction(context, body, { env })
         : await ({ tasks: tasksAction, health: healthAction, finance: financeAction })[domain](context, body);
       response.statusCode = 200;
-      response.end(JSON.stringify({ ok: true, ...result, writesEnabled: domain === 'music-school' ? musicWritesAllowed(env) : familyV2WritesAllowed(context, env) }));
+      response.end(JSON.stringify({ ok: true, ...result, writesEnabled: domain === 'music-school' ? musicWritesAllowed(env) : familyV2WritesAllowed(context, env, domain) }));
     } catch (error) {
       const known = error instanceof EduServerError;
       response.statusCode = known ? error.status : 500;

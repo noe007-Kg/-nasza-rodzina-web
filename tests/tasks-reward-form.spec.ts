@@ -4,6 +4,7 @@ import { expect, test } from '@playwright/test';
 import { accounts, fixtureDatabase, password, seedEmulators } from './emulator-fixtures';
 
 test('parent reward form requires description and preserves the uploaded image and fields when saving fails', async ({ page }) => {
+  page.on('pageerror', error => console.error('Local application error:', error.message));
   await seedEmulators(); // Refuses any database except guarded local demo emulators.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route('https://api.open-meteo.com/**', route => route.fulfill({ contentType: 'application/json', body: '{}' }));

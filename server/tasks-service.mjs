@@ -6,10 +6,10 @@ import { verifyRewardImage, revokeRewardImage, deleteQueuedRewardImage } from '.
 export { runTaskPhotoCleanup } from './tasks-photos.mjs';
 
 const fail = (code, status, message) => { throw new EduServerError(code, status, message); };
-const active = profile => profile?.active === true && profile.canLogin === true && profile.archived !== true && ['parent', 'adult', 'child'].includes(profile.role);
+const active = profile => profile?.active === true && profile.canLogin === true && profile.archived !== true && profile.disabled !== true && ['parent', 'adult', 'child'].includes(profile.role);
 const parent = profile => active(profile) && profile.role === 'parent';
 const profilePerson = profile => String(profile?.personKey || profile?.name || '');
-const usableProfile = profile => profile?.active === true && profile.archived !== true;
+const usableProfile = profile => profile?.active === true && profile.archived !== true && profile.disabled !== true;
 const id = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const stamp = () => FieldValue.serverTimestamp();
@@ -27,7 +27,11 @@ function text(value, maximum, required = true) {
 function taskId(value) { if (!id(value)) fail('TASK_INVALID_REQUEST', 400, 'Nieprawidłowe zadanie.'); return value; }
 function integer(value, maximum) { if (!Number.isInteger(value) || value < 0 || value > maximum) fail('TASK_INVALID_REQUEST', 400, 'Nieprawidłowa liczba punktów.'); return value; }
 function taskMode(data) { return ['trust', 'parent', 'photo'].includes(data.verificationMode) ? data.verificationMode : data.requireApproval === true ? 'parent' : 'trust'; }
-function sameFamily(actor, record) { return !record?.familyId || typeof actor?.familyId === 'string' && actor.familyId === record.familyId; }
+function sameFamily(actor, record) {
+  return typeof actor?.familyId === 'string' && !!actor.familyId
+    && (record?.familyId ? actor.familyId === record.familyId
+      : actor.familyId === process.env.TASKS_LEGACY_FAMILY_ID);
+}
 
 async function freshActor(transaction, context) {
   const snapshot = await transaction.get(context.db.collection('members').doc(context.uid));

@@ -112,13 +112,13 @@ function localApiNotice(): Plugin {
 function publicGoogleRecurrence(): Plugin {
   const id = '\0family-public-google-recurrence';
   const sourceFile = resolve('server/google-recurrence.mjs');
-  const frontendImporter = resolve('src/calendars/google-occurrences.ts');
+  const frontendImporter = resolve('src/calendars/google-occurrences.ts').replace(/\\/g, '/');
   return {
     name: 'family-public-google-recurrence',
     enforce: 'pre',
     resolveId(source, importer) {
       if (source === id) return id;
-      if (source === '../../server/google-recurrence.mjs' && importer?.split('?')[0] === frontendImporter) return id;
+      if (source === '../../server/google-recurrence.mjs' && importer?.split('?')[0].replace(/\\/g, '/') === frontendImporter) return id;
       return null;
     },
     load(moduleId) { return moduleId === id ? readFileSync(sourceFile, 'utf8') : null; },

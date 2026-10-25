@@ -1,5 +1,6 @@
 import { collection, db, EmptyState, errorMessage, formatDateInput, formatShortDate, getBlob, isParent, isPersonKey, type Member, memberEmoji, Modal, ModuleHeader, notify, onSnapshot, ownPerson, type PersonKey, personLabel, PersonSelect, React, storage, storageRef, type TaskItem, type TaskPriority, type TaskRepeat, Timestamp, useEffect, useMemo, type User, useRef, useState } from '../app-shared';
 import { uploadBytesResumable } from 'firebase/storage';
+import { taskProofStorage } from '../firebase';
 import { familyAction, familyV2WritesAllowed } from '../family-v2-client';
 import { useFamilyDirectory } from '../family-directory';
 import { memberPersonKey } from '../family-members';
@@ -139,7 +140,7 @@ export function TasksPage({ user, member }: { user: User; member: Member | null 
       let proof = uploadedProof.current;
       if (!proof || proof.file !== photoFile || proof.taskId !== photoTask.id) {
         const ticket = await familyAction<{ uploadId: string; path: string }>('tasks', { action: 'begin-photo', taskId: photoTask.id, contentType: photoFile.type, size: photoFile.size });
-        await uploadTaskPhoto(uploadBytesResumable(storageRef(storage, ticket.path), photoFile, { contentType: photoFile.type,
+        await uploadTaskPhoto(uploadBytesResumable(storageRef(taskProofStorage, ticket.path), photoFile, { contentType: photoFile.type,
           customMetadata: { taskId: photoTask.id, uploadId: ticket.uploadId, uploaderUid: user.uid } }), setPhotoProgress);
         proof = { file: photoFile, taskId: photoTask.id, ...ticket }; uploadedProof.current = proof;
       }
@@ -151,7 +152,7 @@ export function TasksPage({ user, member }: { user: User; member: Member | null 
   }
   async function openProof(item: ManagedTask) {
     if (!item.proofPath) return;
-    try { const blob = await getBlob(storageRef(storage, item.proofPath), TASK_PHOTO_LIMIT); setProofPreview({ title: item.title, url: URL.createObjectURL(blob) }); }
+    try { const blob = await getBlob(storageRef(taskProofStorage, item.proofPath), TASK_PHOTO_LIMIT); setProofPreview({ title: item.title, url: URL.createObjectURL(blob) }); }
     catch (error) { notify(errorMessage(error), 'error'); }
   }
   function openRewardForm(reward?: Reward) {

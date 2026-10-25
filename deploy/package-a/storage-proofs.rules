@@ -1,0 +1,46 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function profile() { return firestore.get(/databases/(default)/documents/members/$(request.auth.uid)).data; }
+    function member() {
+      return signedIn() && firestore.exists(/databases/(default)/documents/members/$(request.auth.uid))
+        && profile().active == true && profile().canLogin == true
+        && profile().get('archived', false) == false
+        && profile().role in ['parent', 'adult', 'child'];
+    }
+    function parent() { return member() && profile().role == 'parent'; }
+    function ownPerson() { return profile().personKey; }
+    function taskUpload(filename) {
+      return firestore.get(/databases/(default)/documents/_taskPhotoUploads/$(filename.split('[.]')[0])).data;
+    }
+    function proofFilename(filename) {
+      return filename.matches('[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\\.(jpg|png|webp)');
+    }
+    // Storage permits at most two distinct Firestore documents per evaluation:
+    // the current member and this Admin-issued, atomically revoked upload ticket.
+    function proofTicketAccess(taskId, uid, filename) {
+      let ticket = taskUpload(filename);
+      return ticket.get('familyId', null) == profile().get('familyId', null)
+        && ticket.taskId == taskId && ticket.uid == uid
+        && ticket.path == 'taskProof/' + taskId + '/' + uid + '/' + filename
+        && ticket.state in ['open', 'submitted']
+        && (parent() || (uid == request.auth.uid && (ticket.person == ownPerson() || ticket.person == 'family')));
+    }
+    function proofAccess(taskId, uid, filename) {
+      return member() && proofFilename(filename) && proofTicketAccess(taskId, uid, filename);
+    }
+    match /taskProof/{taskId}/{uid}/{filename} {
+      allow read: if proofAccess(taskId, uid, filename);
+      allow create: if resource == null && proofAccess(taskId, uid, filename) && uid == request.auth.uid
+        && taskUpload(filename).state == 'open' && taskUpload(filename).expiresAt > request.time
+        && request.resource.size > 0 && request.resource.size <= 8 * 1024 * 1024
+        && request.resource.size == taskUpload(filename).size
+        && request.resource.contentType == taskUpload(filename).contentType
+        && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
+      allow update, delete: if false;
+    }
+
+    match /{path=**} { allow read, write: if false; }
+  }
+}

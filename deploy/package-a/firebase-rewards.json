@@ -1,0 +1,8 @@
+{
+  "storage": [
+    {
+      "bucket": "nasza-rodzina.firebasestorage.app",
+      "rules": "storage-default.rules"
+    }
+  ]
+}

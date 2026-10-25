@@ -7,13 +7,21 @@ export const TASK_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
 export const TASK_PHOTO_TYPES = Object.freeze({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' });
 const proofPath = /^taskProof\/[A-Za-z0-9_-]{1,128}\/[A-Za-z0-9_-]{1,128}\/[a-f0-9-]{36}\.(jpg|png|webp)$/;
 
-export function taskPhotoBucket(context) {
+export function taskPhotoBucket(context, explicitName) {
   if (context.bucket) return context.bucket;
-  const name = process.env.FIREBASE_STORAGE_BUCKET || context.app?.options?.storageBucket;
+  const name = explicitName || process.env.FIREBASE_STORAGE_BUCKET || context.app?.options?.storageBucket;
   if (!name || typeof name !== 'string' || !/^[a-z0-9][a-z0-9._-]{2,221}[a-z0-9]$/.test(name)) {
     throw new EduServerError('TASK_STORAGE_NOT_CONFIGURED', 503, 'Zdjęcia zadań wymagają skonfigurowania chronionego magazynu przez administratora.');
   }
   return getStorage(context.app).bucket(name);
+}
+
+// Evidence uses its own bucket without recoverable deleted versions. Reward
+// illustrations and other family files keep their existing retention policy.
+export function taskProofBucket(context) {
+  if (context.proofBucket) return context.proofBucket;
+  if (process.env.TASK_PROOF_BUCKET) return taskPhotoBucket({ ...context, bucket: null }, process.env.TASK_PROOF_BUCKET);
+  return taskPhotoBucket(context);
 }
 
 export function validTaskPhotoMetadata(type, size) {
@@ -33,7 +41,7 @@ export async function verifyTaskPhoto(context, ticket) {
     throw new EduServerError('TASK_PHOTO_INVALID', 400, 'Zdjęcie zgłoszenia ma nieprawidłowy format. Dodaj je ponownie.');
   }
   try {
-    const file = taskPhotoBucket(context).file(ticket.path);
+    const file = taskProofBucket(context).file(ticket.path);
     const [metadata] = await file.getMetadata();
     if (Number(metadata.size) !== ticket.size || metadata.contentType !== ticket.contentType
       || metadata.metadata?.taskId !== ticket.taskId || metadata.metadata?.uploadId !== ticket.id
@@ -65,7 +73,7 @@ export async function deleteQueuedTaskPhoto(context, job, now = new Date()) {
   if (!job?.path || !proofPath.test(job.path)) return false;
   const cleanupRef = context.db.collection('_taskPhotoCleanup').doc(taskPhotoCleanupId(job.path));
   try {
-    await taskPhotoBucket(context).file(job.path).delete({ ignoreNotFound: true });
+    await taskProofBucket(context).file(job.path).delete({ ignoreNotFound: true });
     // No live task keeps an attachment after approval/rework. The ticket is
     // retained as a small deletion receipt, without a usable file reference.
     const batch = context.db.batch();
@@ -79,8 +87,14 @@ export async function deleteQueuedTaskPhoto(context, job, now = new Date()) {
   } catch {
     const attempts = Math.min(30, Number(job.attempts || 0) + 1);
     const delay = Math.min(24 * 60 * 60 * 1000, 60_000 * 2 ** Math.min(attempts, 10));
-    await cleanupRef.set({ attempts, state: 'pending', lastErrorCode: 'TASK_PHOTO_DELETE_FAILED',
-      nextAttemptAt: Timestamp.fromMillis(now.getTime() + delay), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    try {
+      await cleanupRef.set({ attempts, state: 'pending', lastErrorCode: 'TASK_PHOTO_DELETE_FAILED',
+        nextAttemptAt: Timestamp.fromMillis(now.getTime() + delay), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    } catch {
+      // The pending job was committed with approval/rework before Storage was
+      // touched. Preserve that durable retry even when Firestore is unavailable;
+      // a cleanup bookkeeping failure must not turn awarded points into an API error.
+    }
     return false;
   }
 }
