@@ -42,6 +42,8 @@ export function FinancePage({ user, member }: { user: User; member: Member | nul
   const selected = selection?.scope === accessScope ? bills.find(bill => bill.id === selection.id) || null : null;
   const [formState, setFormState] = useState<{ scope: string; id: string; editing: boolean; fields: FinanceForm } | null>(null);
   const currentForm = formState?.scope === accessScope ? formState : null;
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  useEffect(() => setConfirmDelete(false), [selection?.id, accessScope]);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [feedback, setFeedback] = useState<{ scope: string; text: string; error: boolean } | null>(null);
@@ -60,7 +62,7 @@ export function FinancePage({ user, member }: { user: User; member: Member | nul
 
   function message(text: string, error = false) { setFeedback({ scope: accessScope, text, error }); }
   function openNew() { setFeedback(null); setFormState({ scope: accessScope, id: crypto.randomUUID(), editing: false, fields: emptyForm() }); }
-  function openEdit(bill: FinanceBill) { if (!parent || bill.status === 'paid') return; setFeedback(null);
+  function openEdit(bill: FinanceBill) { if (!parent) return; setFeedback(null);
     const { amountGrosze, ...fields } = fieldsFromBill(bill);
     setFormState({ scope: accessScope, id: bill.id, editing: true, fields: { ...fields, amount: financeAmountInput(amountGrosze) } }); }
   function changeForm(patch: Partial<FinanceForm>) { setFormState(previous => previous?.scope === accessScope ? { ...previous, fields: { ...previous.fields, ...patch } } : previous); }
@@ -109,7 +111,10 @@ export function FinancePage({ user, member }: { user: User; member: Member | nul
     </div>}
     {currentFeedback && !currentForm && <p className={`finance-feedback ${currentFeedback.error ? 'is-error' : ''}`} role={currentFeedback.error ? 'alert' : 'status'}>{currentFeedback.text}</p>}
     {parent && <div className="finance-detail-actions">
-      {selected.status !== 'paid' && <><PrimaryButton icon="check" disabled={!writesEnabled || busy} onClick={() => void mutate({ action: 'markPaid', billId: selected.id }, '✓ Opłata oznaczona jako opłacona. Przypomnienia tego terminu zakończone.')}>Oznacz jako opłacone</PrimaryButton><SecondaryButton disabled={busy} onClick={() => openEdit(selected)}>Edytuj opłatę</SecondaryButton></>}
+      <SecondaryButton disabled={!writesEnabled || busy} onClick={() => openEdit(selected)}>Edytuj opłatę</SecondaryButton>
+      <SecondaryButton disabled={!writesEnabled || busy} onClick={() => setConfirmDelete(true)}>Usuń opłatę</SecondaryButton>
+      {confirmDelete && <Modal title="Usunąć opłatę?" onClose={() => setConfirmDelete(false)}><p>{selected.title} — {formatFinanceMoney(selected.amountGrosze)}. Usunięcie dotyczy tego okresu. Podsumowania zostaną przeliczone.</p><div className="modal-actions"><SecondaryButton disabled={busy} onClick={() => setConfirmDelete(false)}>Anuluj</SecondaryButton><button className="danger-button" disabled={!writesEnabled || busy} onClick={async () => { if (await mutate({action:'delete',billId:selected.id}, 'Usunięto opłatę.')) { setSelection(null); setConfirmDelete(false); } }}>Potwierdź usunięcie</button></div></Modal>}
+      {selected.status !== 'paid' && <><PrimaryButton icon="check" disabled={!writesEnabled || busy} onClick={() => void mutate({ action: 'markPaid', billId: selected.id }, '✓ Opłata oznaczona jako opłacona. Przypomnienia tego terminu zakończone.')}>Oznacz jako opłacone</PrimaryButton></>}
       {selected.recurrence !== 'none' && <SecondaryButton icon="refresh" disabled={!writesEnabled || busy} onClick={() => void mutate({ action: 'generatePeriods', billId: selected.id, count: 2 }, 'Przygotowano dwa kolejne okresy. Ich statusy są niezależne.')}>Utwórz dwa kolejne okresy</SecondaryButton>}
       {selected.status === 'paid' && <p className="finance-paid-note"><Icon name="check" size={18}/> Opłacony okres pozostaje w historii; nie zmienia statusu kolejnych okresów.</p>}
     </div>}

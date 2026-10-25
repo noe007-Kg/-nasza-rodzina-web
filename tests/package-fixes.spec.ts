@@ -13,12 +13,22 @@ async function protect(page:Page){
  await page.route('**/api/**',r=>r.fulfill({contentType:'application/json',body:JSON.stringify({ok:true,status:{configured:false,state:'disconnected',profiles:[]},connections:[],items:[],plans:[],bills:[],documents:[]})}));
 }
 test.beforeEach(async({page})=>{await seedEmulators(); await protect(page);});
-for(const [label,width,height] of [['phone',390,844],['ipad',1024,768],['desktop',1440,1000]] as const){
+for(const [label,width,height] of [['phone',390,844],['ipad',1024,768],['ipad portrait',900,1440],['desktop',1440,1000]] as const){
  test(`schedule ${label}: overlap, native page scroll and event details`,async({page})=>{
   await page.setViewportSize({width,height});
   const day=todayKey();const db=fixtureDatabase();
   for(let i=0;i<2;i++) await db.doc(`calendarEvents/package-overlap-${i}`).set({title:`Pakiet termin ${i}`,person:'Sebastian',date:Timestamp.fromDate(new Date(`${day}T10:00:00+02:00`)),endDate:Timestamp.fromDate(new Date(`${day}T11:00:00+02:00`)),allDay:false,description:'Opis testowy',location:'Sala 10',repeat:'none',repeatUntil:null,createdBy:accounts.parent.uid,createdAt:Timestamp.now()});
-  await login(page);await module(page,'Kalendarz');
+  await login(page);
+  await expect(page.locator('.home-person')).toHaveCount(5);
+  if(width>=768 && width<=1366) {
+    const container=await page.locator('.home-people').boundingBox();
+    for(const profile of await page.locator('.home-person').all()) { const box=await profile.boundingBox(); expect(box!.x).toBeGreaterThanOrEqual(container!.x); expect(box!.x+box!.width).toBeLessThanOrEqual(container!.x+container!.width+1); }
+  }
+  await module(page,'Kalendarz');
+  await expect(page.locator('.person-filters button.active')).toHaveText('Cała rodzina');
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  await expect(page.getByTestId('family-profile')).toHaveCount(5);
+  await expect(page.locator('.calendar-schedule-day .nr-calendar-time-canvas')).toHaveCSS('height','960px');
   await expect(page.getByRole('button',{name:'Harmonogram',exact:true})).toHaveClass(/active/);
   await expect(page.locator('.calendar-schedule-day .nr-calendar-time-ruler')).toContainText('22:00');
   const events=page.locator('.calendar-schedule-day [data-event-id^="package-overlap-"]');await expect(events).toHaveCount(2);
@@ -27,10 +37,9 @@ for(const [label,width,height] of [['phone',390,844],['ipad',1024,768],['desktop
   await page.mouse.move(width / 3, height / 2);await page.mouse.wheel(0, 240);
   await expect.poll(async()=> (await events.first().boundingBox())!.y).toBeLessThan(beforeScroll);
   await events.first().click();
-  if(width>=768){await expect(page.locator('.calendar-schedule-details')).toContainText('Sala 10');const d=await page.locator('.calendar-schedule-details').boundingBox(),axis=await page.locator('.calendar-schedule-day').boundingBox();expect(d!.x).toBeGreaterThan(axis!.x+axis!.width-1);}
-  else {await expect(page.getByRole('dialog')).toContainText('Sala 10');await page.getByRole('dialog').getByRole('button',{name:'Zamknij',exact:true}).click();}
+  await expect(page.getByRole('dialog')).toContainText('Sala 10');await page.getByRole('dialog').getByRole('button',{name:'Zamknij',exact:true}).click();
   await page.getByRole('button',{name:'Dzisiaj',exact:true}).click();
-  if(width>=768)await expect(page.locator('.calendar-schedule-details')).toContainText('Wybierz wydarzenie');
+  await expect(page.locator('.calendar-schedule-details')).toHaveCount(0);
   for(const [label,selector] of [['Dzień','.calendar-day-view'],['Tydzień','.nr-calendar-week-content'],['Miesiąc','.calendar-month-card']]){await page.getByRole('button',{name:label,exact:true}).click();await expect(page.locator(selector)).toBeVisible();}
 
  });
@@ -67,6 +76,7 @@ test('school new grades, personal read state, pin survives re-sync and reload',a
 });
 test('opening a short private conversation clears only its badge and notification, persistently',async({page})=>{
  const db=fixtureDatabase();
+ await db.doc(`userPreferences/${accounts.parent.uid}`).set({importantItems:['chat:message:parents-private']},{merge:true});
  await db.doc(`notificationInbox/${accounts.parent.uid}/items/private-unread`).set({eventId:'receipt-private',category:'privateChat',module:'Czat',title:'Wiadomość',body:'Test',recordId:'parents-private',read:false,starred:false,createdAt:Timestamp.now()});
  await db.doc(`notificationInbox/${accounts.parent.uid}/items/other-unread`).set({eventId:'receipt-other',category:'school',module:'Szkoła',title:'Sprawdzian',body:'Test',recordId:'other-school',read:false,starred:false,createdAt:Timestamp.now()});
  await login(page);await module(page,'Czat');await page.getByRole('button',{name:/Prywatne/}).click();
@@ -76,6 +86,7 @@ test('opening a short private conversation clears only its badge and notificatio
  await expect.poll(async()=> (await db.doc(`notificationInbox/${accounts.parent.uid}/items/private-unread`).get()).data()?.read).toBe(true);
  expect((await db.doc(`notificationInbox/${accounts.parent.uid}/items/other-unread`).get()).data()?.read).toBe(false);
  expect((await db.doc(`chatReadStates/${accounts.mother.uid}/messages/parents-private`).get()).exists).toBe(false);
+ expect((await db.doc(`userPreferences/${accounts.parent.uid}`).get()).data()?.importantItems).toContain('chat:message:parents-private');
  await page.reload();await expect(page.locator('.app-shell')).toBeVisible();await module(page,'Czat');await page.getByRole('button',{name:/Prywatne/}).click();await expect(page.locator('.private-list .conversation-row').filter({hasText:'Dominika'}).locator('.chat-unread-badge')).toHaveCount(0);
 });
 test('new homework and tests counters open only their new records without rewriting source data',async({page})=>{

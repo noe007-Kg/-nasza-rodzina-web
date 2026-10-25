@@ -4,7 +4,7 @@
   gap: 20px;
   align-items: start;
 }
-.calendar-schedule-day, .calendar-schedule-details {
+.calendar-schedule-day {
   background: var(--brand-card, #fff);
   border: 1px solid var(--brand-border, #e8e4f0);
   border-radius: 24px;
@@ -15,13 +15,3 @@
 .calendar-schedule-day { touch-action: pan-y; overflow: visible; }
 .calendar-schedule-day .nr-calendar-axis,
 .calendar-schedule-day .nr-calendar-time-canvas { min-width: 0; }
-.calendar-schedule-details .details-grid { grid-template-columns: 1fr; }
-.calendar-schedule-details h2 { overflow-wrap: anywhere; }
-.calendar-schedule-detail-slot { min-width: 0; }
-@media (min-width: 768px) {
-  .calendar-schedule-layout { grid-template-columns: minmax(0, 1.2fr) minmax(270px, 1fr); }
-  .calendar-schedule-detail-slot { position: sticky; top: 100px; }
-}
-@media (max-width: 767px) {
-  .calendar-schedule-detail-slot:has(> aside) { display: none; }
-}

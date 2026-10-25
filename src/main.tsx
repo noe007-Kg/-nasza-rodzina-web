@@ -67,6 +67,7 @@ function FamilyApp({ user }: { user: User }) {
   const [profileError, setProfileError] = useState('');
   const [member, setMember] = useState<Member | null>(null);
   const accountAccent = useAccountAccent(user.uid, member);
+  const [directoryError, setDirectoryError] = useState('');
   const [familyMembers, setFamilyMembers] = useState<FamilyMemberProfile[]>([]);
   const [aggregateProfile, setAggregateProfile] = useState<FamilyAggregateProfile>({ emoji: '👨‍👩‍👧‍👦' });
   const [calendarSelection, setCalendarSelection] = useState<{ person: PersonKey; requestId: number }>();
@@ -110,8 +111,9 @@ function FamilyApp({ user }: { user: User }) {
   useEffect(() => {
     if (!authorized) { setFamilyMembers([]); return; }
     return onSnapshot(collection(db, 'members'), snapshot => {
+      setDirectoryError('');
       setFamilyMembers(snapshot.docs.map(row => ({ ...row.data(), id: row.id }) as FamilyMemberProfile));
-    }, () => setFamilyMembers(member ? [{ ...member, id: user.uid }] : []));
+    }, () => { setFamilyMembers([]); setDirectoryError('Nie udało się odczytać listy rodziny. Sprawdź połączenie i uprawnienia Firebase.'); });
   }, [user.uid, authorized]);
   useEffect(() => {
     if (!authorized) { setAggregateProfile({ emoji: '👨‍👩‍👧‍👦' }); return; }
@@ -136,7 +138,7 @@ function FamilyApp({ user }: { user: User }) {
     setPage(next);
     window.location.hash = encodeURIComponent(next);
     setMobileMoreOpen(false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' });
   }
 
   async function logout() {
@@ -171,6 +173,7 @@ function FamilyApp({ user }: { user: User }) {
       <main className="main-area">
         <CalendarCallbackCompletion user={user} onComplete={notice => { setCalendarNotice(notice); goTo('Ustawienia'); }} />
         <FamilyTopBar user={user} parent={member?.role === 'parent'} onSelect={profile => { setSelectedFamilyPerson(memberPersonKey(profile)); goTo('Rodzina'); }} onFamilySelect={() => { setCalendarSelection(current => ({ person: 'family', requestId: (current?.requestId || 0) + 1 })); goTo('Kalendarz'); }} />
+        {directoryError && <p className="family-directory-error" role="alert">{directoryError}</p>}
         {renderPage()}
       </main>
       <MobileNavigation page={page} goTo={goTo} moreOpen={mobileMoreOpen} onMore={() => setMobileMoreOpen(true)} />

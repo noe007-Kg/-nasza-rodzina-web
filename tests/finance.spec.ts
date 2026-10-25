@@ -121,6 +121,22 @@ test('a parent creates, copies, edits and pays a real emulator bill; recurring p
   await finance.locator('.finance-history summary').click();
   await expect(finance.getByRole('table', { name: 'Historia terminów i płatności', exact: true })).toContainText('139,01');
   for (const viewport of viewports) { await page.setViewportSize(viewport); await noOverflow(page); }
+  await detail.getByRole('button', { name: 'Edytuj opłatę', exact: true }).click();
+  await page.getByRole('dialog').getByLabel('Kwota w PLN', {exact:true}).fill('150,00');
+  await page.getByRole('dialog').getByRole('button', {name:'Zapisz opłatę',exact:true}).click();
+  await expect.poll(async () => (await root.ref.get()).data()?.amountGrosze).toBe(15000);
+  expect((await root.ref.get()).data()?.status).toBe('paid');
+  await detail.getByRole('button', {name:'Usuń opłatę',exact:true}).click();
+  await page.getByRole('dialog').getByRole('button', {name:'Anuluj',exact:true}).click();
+  expect((await root.ref.get()).data()?.archived).toBe(false);
+  await detail.getByRole('button', {name:'Usuń opłatę',exact:true}).click();
+  await page.getByRole('dialog').getByRole('button', {name:'Potwierdź usunięcie',exact:true}).click();
+  await expect.poll(async () => (await root.ref.get()).data()?.archived).toBe(true);
+  await expect(finance.locator('.finance-bill-row')).toHaveCount(0);
+  await finance.getByRole('combobox', {name:'Okres historii opłat',exact:true}).selectOption('all');
+  await expect(finance.locator('.finance-bill-row')).toHaveCount(2);
+  await expect(totals).toContainText('278,02');
+  await expect(totals).not.toContainText('150,00');
 });
 
 test('a child receives only a specific shared bill through the real service and direct Firebase/API attempts remain denied', async ({ page }) => {

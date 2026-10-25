@@ -5,7 +5,7 @@ import {initializeTestEnvironment, assertSucceeds, assertFails} from '@firebase/
 import {doc, getDoc, setDoc, deleteDoc, serverTimestamp, collection, getDocs} from 'firebase/firestore';
 let env;
 before(async () => {
-  env = await initializeTestEnvironment({projectId:'demo-nr-package-rules', firestore:{host:'127.0.0.1',port:8080,rules:await readFile('firestore.rules','utf8')}});
+  env = await initializeTestEnvironment({projectId:'demo-nr-package-rules', firestore:{host:'127.0.0.1',port:8080,rules:await readFile(process.env.H1_RULES || 'firestore.rules','utf8')}});
   await env.withSecurityRulesDisabled(async context => {
     const db = context.firestore();
     for (const [uid, familyId] of [['a','home'],['b','home'],['c','other']]) await setDoc(doc(db,'members',uid), {name:uid, role:'parent', active:true, canLogin:true, familyId});

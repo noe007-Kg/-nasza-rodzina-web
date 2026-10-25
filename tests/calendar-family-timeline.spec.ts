@@ -30,6 +30,9 @@ function calendarEntry(day: string, title: string, person: string, start: string
 
 async function seedSchedules(day: string) {
   const db = fixtureDatabase(); // Existing guard prevents writes to real Firebase.
+  // This scenario owns its timetable; the shared fixture also has Monday lessons.
+  const previous = await db.collection('schoolItems').get();
+  const cleanup = db.batch(); previous.docs.forEach(row => cleanup.delete(row.ref)); await cleanup.commit();
   const batch = db.batch();
   batch.update(db.doc(`members/${accounts.sibling.uid}`), { calendarColor: '#4a36d9' });
   batch.set(db.doc('calendarEvents/timeline-work'), calendarEntry(day, 'Praca testowa', 'Sebastian', '08:00', '16:00'));
@@ -60,12 +63,13 @@ async function login(page: Page, module: 'Start' | 'Kalendarz') {
   await page.getByRole('button', { name: 'Zaloguj się', exact: true }).click();
   await expect(page.locator('.app-shell')).toBeVisible();
   await page.evaluate(name => { location.hash = encodeURIComponent(name); }, module);
+  if (module === 'Kalendarz') await page.getByRole('button', {name:'Dzień',exact:true}).click();
 }
 
 async function showModule(page: Page, module: 'Start' | 'Kalendarz') {
   await page.evaluate(name => { location.hash = encodeURIComponent(name); }, module);
-  if (module === 'Kalendarz') await expect(page.locator('.page-header h1')).toHaveText(module);
-  else await expect(page.getByTestId('start-card-family-time')).toBeVisible();
+  if (module === 'Kalendarz') await page.getByRole('button', {name:'Dzień',exact:true}).click();
+  else await expect(page.getByTestId('start-dashboard')).toBeVisible();
 }
 
 async function selectPerson(page: Page, person: string) {
@@ -74,7 +78,7 @@ async function selectPerson(page: Page, person: string) {
 
 const axis = (page: Page) => page.getByTestId('calendar-day-time-axis');
 const timed = (page: Page, id: string) => axis(page).locator(`.nr-calendar-timed-event[data-event-id="${id}"]`);
-const currentStatus = (page: Page, uid: string) => page.locator(`.start-family-mini-profile[data-profile-id="${uid}"] .start-family-current-status`);
+const currentStatus = (page: Page, uid: string) => page.locator(`.home-person[data-profile-id="${uid}"] .home-person-status`);
 
 async function geometry(row: Locator) {
   return row.evaluate(element => {
@@ -103,6 +107,8 @@ test('wspólna oś zachowuje pełną pracę, każdą lekcję i prawdziwe nakład
   const before = await preservedDocuments();
   await login(page, 'Kalendarz');
   await expect(axis(page)).toBeVisible();
+  await expect(axis(page)).not.toContainText('Prywatny czas Sebastiana');
+  await selectPerson(page, 'Sebastian');
   await expect(axis(page)).toContainText('Prywatny czas Sebastiana');
   await expect(page.locator('body')).not.toContainText('Poufny czas Dominiki');
   await selectPerson(page, 'Cała rodzina');
@@ -117,8 +123,8 @@ test('wspólna oś zachowuje pełną pracę, każdą lekcję i prawdziwe nakład
   await expect(lessons.filter({ hasText: /^—/ })).toHaveCount(0);
   await expect(lessons.first()).toContainText('Godziny orientacyjne');
   await expect(maths).toHaveCount(1);
-  expect((await geometry(work))).toMatchObject({ start: 480, end: 960, height: 960 });
-  expect((await geometry(maths))).toMatchObject({ start: 535, end: 580, height: 90 });
+  expect((await geometry(work))).toMatchObject({ start: 480, end: 960, height: 480 });
+  expect((await geometry(maths))).toMatchObject({ start: 535, end: 580, height: 45 });
   expect((await geometry(lessons.first())).ownerColor).toBe('#4a36d9');
   const familyIDs = await lessons.evaluateAll(elements => elements.map(element => (element as HTMLElement).dataset.eventId));
   for (const [width, height] of [[390, 844], [844, 390], [900, 1440], [1024, 768], [1440, 900]]) {
@@ -126,8 +132,8 @@ test('wspólna oś zachowuje pełną pracę, każdą lekcję i prawdziwe nakład
     await expect(work).toBeVisible();
     const workGeometry = await geometry(work), mathsGeometry = await geometry(maths), firstLesson = await geometry(lessons.first());
     expect(workGeometry.height / mathsGeometry.height).toBeCloseTo(480 / 45);
-    expect(mathsGeometry.top - workGeometry.top).toBe(55 * 2);
-    expect(mathsGeometry.top - firstLesson.top).toBe(5 * 2);
+    expect(mathsGeometry.top - workGeometry.top).toBe(55);
+    expect(mathsGeometry.top - firstLesson.top).toBe(5);
     expect(mathsGeometry.left).not.toBe(workGeometry.left);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   }
@@ -141,7 +147,7 @@ test('wspólna oś zachowuje pełną pracę, każdą lekcję i prawdziwe nakład
   await selectPerson(page, 'Cała rodzina');
   await page.getByRole('button', { name: 'Tydzień', exact: true }).click();
   const weekCanvas = page.getByTestId('calendar-week-time-axis').locator(`.nr-calendar-time-canvas[data-day="${weekDay}"]`);
-  expect(await geometry(weekCanvas.locator('[data-event-id="timeline-work"]'))).toMatchObject({ start: 480, end: 960, height: 960 });
+  expect(await geometry(weekCanvas.locator('[data-event-id="timeline-work"]'))).toMatchObject({ start: 480, end: 960, height: 480 });
   await expect(weekCanvas.locator('[data-source="okruszek"][data-event-kind="lesson"]').filter({ hasText: /^WF/ })).toHaveCount(3);
   expect(await preservedDocuments()).toEqual(before);
 });
@@ -153,18 +159,18 @@ test('Start zmienia aktualne zajęcia i jawne przerwy automatycznie, zachowuje p
   const pawel = currentStatus(page, accounts.sibling.uid), nikodem = currentStatus(page, accounts.child.uid);
   const sebastian = currentStatus(page, accounts.parent.uid), dominika = currentStatus(page, accounts.mother.uid);
   await expect(pawel).toHaveAttribute('data-status-kind', 'active');
-  await expect(pawel).toHaveAttribute('data-status-estimated', 'false');
+  await expect(pawel).not.toContainText('Orientacyjnie');
   await expect(pawel).toHaveText('Rewalidacja — do 07:55');
   await expect(nikodem).toHaveAttribute('data-status-kind', 'idle');
   await expect(dominika).not.toContainText('Poufny czas Dominiki');
   await page.clock.fastForward(61_000);
   await expect(pawel).toHaveAttribute('data-status-kind', 'break');
-  await expect(pawel).toHaveAttribute('data-status-estimated', 'false');
+  await expect(pawel).not.toContainText('Orientacyjnie');
   await expect(pawel).toContainText('Przerwa');
   await expect(pawel).toContainText('08:00');
   await page.clock.fastForward(5 * 60_000);
   await expect(pawel).toHaveAttribute('data-status-kind', 'active');
-  await expect(pawel).toHaveAttribute('data-status-estimated', 'true');
+  await expect(pawel).toContainText('Orientacyjnie');
   await expect(pawel).toHaveText('Orientacyjnie: Rewalidacja — do 08:45');
   await expect(nikodem).toHaveText('Język polski testowy — do 08:45');
   await expect(sebastian).toHaveText('Praca testowa — do 16:00');
@@ -183,9 +189,9 @@ test('Start zmienia aktualne zajęcia i jawne przerwy automatycznie, zachowuje p
   await expect(sebastian).not.toContainText('Praca testowa');
   await showModule(page, 'Kalendarz');
   await expect(timed(page, 'timeline-work')).toContainText('Praca po zmianie grafiku');
-  expect(await geometry(timed(page, 'timeline-work'))).toMatchObject({ start: 540, end: 1020, height: 960 });
+  expect(await geometry(timed(page, 'timeline-work'))).toMatchObject({ start: 540, end: 1020, height: 480 });
   await selectPerson(page, 'Cała rodzina');
-  expect(await geometry(timed(page, 'timeline-work'))).toMatchObject({ start: 540, end: 1020, height: 960 });
+  expect(await geometry(timed(page, 'timeline-work'))).toMatchObject({ start: 540, end: 1020, height: 480 });
   await expect(axis(page)).not.toContainText('Prywatny czas Sebastiana');
   await showModule(page, 'Start');
   await page.clock.fastForward(5 * 60_000);

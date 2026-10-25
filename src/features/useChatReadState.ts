@@ -9,8 +9,19 @@ import { familyV2WritesAllowed } from '../family-v2-client';
 export function useChatReadState(uid: string, messages: readonly ChatMessage[], channel: string, _participants: readonly string[], displayed: readonly string[] = []) {
   const [state, setState] = useState<{uid: string; readAt: Record<string, number>; seen: Set<string>}>({uid, readAt: {}, seen: new Set()});
   const [retry, setRetry] = useState(0);
-  useEffect(() => {const wake = () => setRetry(value => value + 1); window.addEventListener('focus', wake); window.addEventListener('online', wake); return () => {window.removeEventListener('focus', wake); window.removeEventListener('online', wake);};}, []);
+  useEffect(() => {
+    const wake = () => { if (document.visibilityState === 'visible') setRetry(value => value + 1); };
+    window.addEventListener('focus', wake); window.addEventListener('online', wake);
+    document.addEventListener('visibilitychange', wake);
+    return () => { window.removeEventListener('focus', wake); window.removeEventListener('online', wake); document.removeEventListener('visibilitychange', wake); };
+  }, []);
   const [error, setError] = useState('');
+  // Retry rejected receipts even when the tablet stays focused after reconnecting.
+  useEffect(() => {
+    if (!error) return;
+    const timer = window.setInterval(() => { if (navigator.onLine && document.visibilityState === 'visible') setRetry(value => value + 1); }, 15000);
+    return () => window.clearInterval(timer);
+  }, [error]);
   const inflight = useRef(new Set<string>());
   useEffect(() => {
     setState({uid, readAt: {}, seen: new Set()}); setError('');

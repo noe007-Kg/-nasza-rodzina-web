@@ -73,8 +73,35 @@ test('mark paid retries atomically preserve one audit and history date with exac
   assert.equal(state.history.length, 1);
   assert.equal(state.history[0].paidAt, '2026-10-11T08:00:00.000Z');
   assert.deepEqual(state.totals, { paidGrosze: 12345, unpaidGrosze: 0, totalGrosze: 12345 });
-  await assert.rejects(manageFinanceAction(context, draft({ amountGrosze: 1 })), rejects('FINANCE_ALREADY_PAID'));
-  assert.equal(bill(context).amountGrosze, 12345);
+  await manageFinanceAction(context, draft({ amountGrosze: 1 }));
+  assert.equal(bill(context).amountGrosze, 1);
+  assert.equal(bill(context).status, 'paid');
+  assert.deepEqual((await manageFinanceAction(context, { action: 'state' })).totals, {paidGrosze:1,unpaidGrosze:0,totalGrosze:1});
+});
+
+test('deletion excludes a bill from totals, keeps an audit and cannot be performed by a child or another household', async () => {
+  const context = familyMemoryContext({'members/foreign-parent':{...fixtureParent,familyId:'other'}});
+  await manageFinanceAction(context, draft({sharedWith:['child']}));
+  await assert.rejects(manageFinanceAction(context.as('child'),{action:'delete',billId:'bill-first'}), rejects('FINANCE_PARENT_REQUIRED'));
+  await assert.rejects(manageFinanceAction(context.as('foreign-parent'),{action:'delete',billId:'bill-first'}), rejects('FINANCE_NOT_FOUND'));
+  await manageFinanceAction(context,{action:'delete',billId:'bill-first'});
+  await manageFinanceAction(context,{action:'delete',billId:'bill-first'});
+  const state=await manageFinanceAction(context,{action:'state'});
+  assert.equal(state.bills.length,0);
+  assert.deepEqual(state.totals,{paidGrosze:0,unpaidGrosze:0,totalGrosze:0});
+  assert.equal(count(context,'financeBillAudit'),2);
+  assert.equal(bill(context).archived,true);
+});
+
+test('maintenance never recreates a removed period or generates new periods from a removed root', async () => {
+  const context=familyMemoryContext();
+  await manageFinanceAction(context,draft({recurrence:'monthly'}));
+  const periods=await manageFinanceAction(context,{action:'generatePeriods',billId:'bill-first',count:2});
+  await manageFinanceAction(context,{action:'delete',billId:periods.billIds[0]});
+  await manageFinanceAction(context,{action:'generatePeriods',billId:'bill-first',count:2});
+  assert.equal(bill(context,periods.billIds[0]).archived,true);
+  await manageFinanceAction(context,{action:'delete',billId:'bill-first'});
+  assert.equal((await ensureFinancePeriods(context,new Date('2027-04-01T08:00:00Z'))).created,0);
 });
 test('recurring monthly periods are stable, independent and preserve a future amount edit', async () => {
   const context = familyMemoryContext();

@@ -84,7 +84,7 @@ async function save(context, body) {
       || !financeSameFamily(actor, member.data()))) fail('FINANCE_INVALID_RECIPIENT', 400, 'Udostępnienie dotyczy wyłącznie wybranego dziecka w Twojej rodzinie.');
     if (previous.exists) {
       const old = previous.data(); requireBill(old, actor);
-      if (old.status === 'paid') fail('FINANCE_ALREADY_PAID', 409, 'Opłacony rachunek pozostaje w historii bez zmiany kwoty i terminu.');
+
       if (old.recurrence !== draft.recurrence) fail('FINANCE_SERIES_CHANGED', 409, 'Częstotliwość istniejącej serii pozostaje bez zmian. Utwórz osobną serię.');
       if (Object.keys(draft).every(key => JSON.stringify(draft[key]) === JSON.stringify(old[key]))) return;
       transaction.update(ref, { ...draft, updatedAt: stamp() });
@@ -97,6 +97,21 @@ async function save(context, body) {
     }
   });
   return { billId: ref.id };
+}
+async function remove(context, body) {
+  fields(body, ['billId']);
+  const ref = context.db.collection('financeBills').doc(billId(body.billId));
+  await context.db.runTransaction(async transaction => {
+    const actor = await freshActor(transaction, context); requireParent(actor);
+    const record = await transaction.get(ref);
+    const value = record.exists ? record.data() : null;
+    // Retain the period ID so recurring maintenance cannot recreate a deleted bill.
+    if (value?.archived === true && financeSameFamily(actor, value)) return;
+    requireBill(value, actor);
+    transaction.update(ref, { archived: true, calendarEnabled: false, updatedAt: stamp() });
+    audit(transaction, context, randomUUID(), actor, 'deleted', { billId: ref.id, amountGrosze: value.amountGrosze, dueDate: value.dueDate });
+  });
+  return { billId: ref.id, deleted: true };
 }
 async function markPaid(context, body) {
   fields(body, ['billId']);
@@ -187,6 +202,7 @@ export async function manageFinanceAction(context, body) {
   const action = body?.operation || body?.action;
   if (action === 'state' || action === 'status') return state(context, body);
   if (action === 'save') return save(context, body);
+  if (action === 'delete') return remove(context, body);
   if (action === 'markPaid') return markPaid(context, body);
   if (action === 'generatePeriods') return generatePeriods(context, body);
   fail('FINANCE_INVALID_REQUEST', 400, 'Nieobsługiwana operacja rachunku.');
