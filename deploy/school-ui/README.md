@@ -11,3 +11,12 @@ After a fresh authorized provider read and a successful import, the encrypted se
 The scoped Firestore file adds only the two private `schoolState` and `schoolSeen` subcollection rules to the exact previous production Finance rules. All existing rules remain byte-identical. No other collection, Storage rule, existing school record, credential, grant or profile is migrated.
 
 Validation includes provider/scheduler/scoped-session tests, real emulator retention integration, exact-release private marker rules, browser read-marker persistence and corner positioning, responsive Health navigation and grade UI regression. See the production receipt after release for final results.
+
+## Production receipt — 2026-10-25
+
+- Production application source: `586700d537d1a4cdfe4e833a0124cf9c05614b90`, Vercel deployment `dpl_3Tid5UrH2MvMe9L5HBJatovDXTKj`, READY and assigned to `nasza-rodzina-web.vercel.app`.
+- Both school synchronization functions verified ACTIVE after their update on October 25; their Scheduler jobs are ENABLED with the original Warsaw schedules and existing encryption-secret reference. No secret value was read or changed.
+- Active Firestore rules verified byte-for-byte against this directory's release file.
+- Passed: 97 server/provider/scheduler tests, 34 grade/newness projection tests, six real emulator integration tests, one exact-release marker-rules test, 14 distinct Chromium UI cases (two badge/Health cases and 12 grade cases). Two pre-existing SP4 assertions for Paweł were corrected to use his current Okruszek region and successfully rerun.
+- Production build and Functions canonical source check passed. Existing bundle-size and Firebase SDK upgrade warnings remain outside this minimal change.
+- No password is stored, no expired provider session is revived, and no new permanent-login guarantee is claimed. Actual provider revocation still requires reconnecting. Automatic renewal depends on a successful authorized synchronization.
