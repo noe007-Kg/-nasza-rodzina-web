@@ -36,3 +36,14 @@ Testy przeglądarkowe używają wyłącznie lokalnych emulatorów. Test finansó
 - Nowy zestaw reguł: `51308b88-654a-44df-8508-74c62d0e8c88`.
 - Firebase potwierdził poprawną kompilację i zakończoną publikację. Ponowny odczyt aktywnych reguł potwierdził zgodność z plikiem H1.
 - Sprawdzono szerokości ekranów w Chromium; nie wykonano testu na fizycznym iPadzie ani w Safari.
+
+## Potwierdzenie publikacji Vercel — 26.10.2026
+
+- Źródło: `9319c59e44403ad5101e8e3706a6223204218f1a`, gałąź `fix/h1-family-ipad-chat-20261026`.
+- Istniejący projekt: `nasza-rodzina-web`, środowisko `production`, standardowe połączenie GitHub i istniejące ustawienia budowania/środowiska.
+- Wdrożenie `dpl_3uWMZ9CDLyhvXSE6brVoG21pW9N4`: potwierdzone `READY`, brak błędu przypisania adresów.
+- Adres główny: https://nasza-rodzina-web.vercel.app — odczyt Vercel potwierdził przypisanie do powyższego wdrożenia i commita.
+- Adres konkretnego wdrożenia: https://nasza-rodzina-6rw5fkuqo-noe007-kg.vercel.app.
+- Kontrola HTTP: strona i wskazane pliki JS/CSS zwracają 200. Opublikowany pakiet zawiera nowy dialog usuwania opłat i obsługę wydarzeń poza osią 06–22 oraz nie zawiera dawnej bocznej kolumny szczegółów.
+- Endpoint finansów bez zalogowania zwraca 401. Nie wykonywano operacji zmieniających prawdziwe opłaty rodziny ani testu zalogowanej sesji produkcyjnej; pełne scenariusze transakcji i odczytu czatu zweryfikowano w lokalnych emulatorach.
+- Łącznie potwierdzono 386 odrębnych przypadków: 327 jednostkowych, 45 serwerowych, trzy reguł i 11 przeglądarkowych. Końcowa kompilacja produkcyjna przeszła.
