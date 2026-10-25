@@ -39,6 +39,7 @@ korzystały ze starszej ścieżki plików, innej od chronionych załączników w
   i ponowienie, wynik PDF bez wydarzenia w kalendarzu, blokada zapisu.
 - Lokalne testy logiki obejmują zgody dorosłych, cofnięcie dostępu, walidację
   plików, atomowe powiązanie załącznika, sprzątanie szkiców i ochronę gotowych plików.
+- Końcowy zestaw serwera i kontraktów harmonogramów na Node 22: 52/52.
 - Budowanie i prepare/check Functions: poprawne. Kontrakt harmonogramów uzupełniono
   o nową, niezależną funkcję sprzątania.
 - Na jednorazowym syntetycznym pliku bez danych osobowych w Firebase potwierdzono
@@ -58,5 +59,26 @@ funkcje modułu nie wymagają zgadywania wieku i mogą być uruchomione oddzieln
 
 Nie zmieniano istniejących wizyt, leków, kontaktów, dokumentów ani zgód na potrzeby
 testów. Nie uruchomiono migracji ani rozbudowy backupów.
+
+## Potwierdzenie wydania
+
+- Produkcja https://nasza-rodzina-web.vercel.app/#Zdrowie — READY, bez błędu aliasu.
+- Wdrożenie `dpl_F2uJmV1VoSuGSV5u1MvEvXMHzCbJ`, kod
+  `87eeb795a8a095be5a0254ad78305dfc61fb0900`.
+- Potwierdzono zgodność aktywnych reguł z artefaktami, READY obu indeksów,
+  ACTIVE obu funkcji oraz ENABLED harmonogramów (08:00 i 15. minuta godziny,
+  Europe/Warsaw). Istniejąca funkcja leków pozostała bez zmian.
+- W istniejącej sesji rodzica potwierdzono brak komunikatu Podgląd 2.0,
+  aktywny zapis formularza wizyty oraz poprawny odczyt panelu upoważnień.
+  Nie wysyłano formularzy produkcyjnych ani nie nadawano testowych zgód.
+- Krótka kontrola logów wykazała ostrzeżenia zależności Node 24 `DEP0169`
+  dotyczące `url.parse()`, bez zaobserwowanego błędu działania Zdrowia.
+- Automatyczna kontrola odrzuciła ręczne uruchomienie konserwacji ze względu
+  na możliwe usuwanie wygasłych szkiców. Nie obchodzono odrzucenia; gotowość
+  potwierdzono bezpiecznym odczytem konfiguracji. Ręczne usuwanie nie było
+  warunkiem wdrożenia i nie zostało wykonane.
+- Brak dat urodzenia dzieci pozostaje otwarty do odpowiedzi użytkownika;
+  nie deklarujemy pełnego dostępu rodzica do ich dokumentów przed uzupełnieniem.
+- Ten dopisek dokumentacyjny powstał po wydaniu i nie zmienia kodu produkcji.
 
 I've set up prototype Security Rules to keep the data in Firestore safe. They are designed to be secure for explicit document ACLs, authenticated immutable uploads and server-only consent changes. However, you should review and verify them before broadly sharing your app. If you'd like, I can help you harden these rules.
