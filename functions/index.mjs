@@ -39,6 +39,8 @@ const familyV2WritesEnabled = defineString('FAMILY_V2_WRITES_ENABLED', { default
 const familyStorageBucket = defineString('FIREBASE_STORAGE_BUCKET', { default: '' });
 const tasksWritesEnabled = defineString('TASKS_WRITES_ENABLED', { default: 'false' });
 const taskProofBucket = defineString('TASK_PROOF_BUCKET', { default: '' });
+const healthWritesEnabled = defineString('HEALTH_WRITES_ENABLED', { default: 'false' });
+const healthStorageBucket = defineString('HEALTH_STORAGE_BUCKET', { default: '' });
 
 const notificationDependencies = {
   derive: deriveNotificationEvent, enqueue: enqueueInAppEvents,
@@ -156,12 +158,18 @@ export const taskPhotoCleanup = onSchedule({ ...familyJobOptions, schedule: '0 *
   info('Task photograph cleanup', result); // Aggregate counts only.
 });
 export const healthDocumentReminders = onSchedule({ ...familyJobOptions, schedule: '0 8 * * *' }, async () => {
-  const context = familyJobContext();
-  if (!context) return;
+  if (healthWritesEnabled.value() !== 'true' && familyV2WritesEnabled.value() !== 'true') return;
+  const bucket = healthStorageBucket.value() || familyStorageBucket.value();
+  if (!bucket) throw new Error('HEALTH_MAINTENANCE_NOT_CONFIGURED');
+  const context = { app, db, bucket: getStorage(app).bucket(bucket) };
   const reminders = await runHealthDocumentReminders(context);
   // Only explicitly requested deletions are retried; expiry never deletes a document.
   const deletions = await retryHealthDocumentDeletes(context);
   info('Protected health document maintenance', { ...reminders, ...deletions });
+});
+export const healthDocumentCleanup = onSchedule({ ...familyJobOptions, schedule: '15 * * * *' }, async () => {
+  if (healthWritesEnabled.value() !== 'true' || !healthStorageBucket.value()) return;
+  info('Protected document cleanup', await retryHealthDocumentDeletes({ app, db, bucket: getStorage(app).bucket(healthStorageBucket.value()) }));
 });
 
 // Prepared only: the existing deployment opt-in keeps this job inert until

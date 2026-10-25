@@ -10,7 +10,8 @@ export function familyV2WritesAllowed(context, env = process.env, domain) {
     && env.FIRESTORE_EMULATOR_HOST === '127.0.0.1:8080' && !env.VERCEL;
   if (localDemo) return true;
   if (env.FIREBASE_AUTH_EMULATOR_HOST || env.FIRESTORE_EMULATOR_HOST || env.FIREBASE_STORAGE_EMULATOR_HOST || String(projectId || '').startsWith('demo-')) return false;
-  return env.FAMILY_V2_WRITES_ENABLED === 'true' || domain === 'tasks' && env.TASKS_WRITES_ENABLED === 'true';
+  return env.FAMILY_V2_WRITES_ENABLED === 'true' || domain === 'tasks' && env.TASKS_WRITES_ENABLED === 'true'
+    || domain === 'health' && env.HEALTH_WRITES_ENABLED === 'true';
 }
 
 export function assertFamilyV2WriteAllowed(context, env = process.env, domain) {

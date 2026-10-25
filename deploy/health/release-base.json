@@ -1,0 +1,14 @@
+{
+  "firestore": {
+    "release": "cloud.firestore",
+    "ruleset": "projects/nasza-rodzina/rulesets/eabf0f23-9de0-41c7-aff3-9ff8fe7fac01",
+    "beforeSha256": "847980fc2bb5dde8fac120f0f850646c5e08034051620ca1048b16d9744863dc",
+    "afterSha256": "dead5e3305a84e887e4763c69ecefde0b99598c6432a077801a15f7555f4a1ff"
+  },
+  "storage": {
+    "release": "firebase.storage/nasza-rodzina.firebasestorage.app",
+    "ruleset": "projects/nasza-rodzina/rulesets/3d251443-9a87-4ca2-a0d8-a65b71a1a66a",
+    "beforeSha256": "0d2a36483316b42fbc04fdff7e53eea30cdc498f941c83ccbd41b45ccca17f2d",
+    "afterSha256": "5f6f1f446298174ee71fd92c7fa3bf8109b8e1e944c4633ad468bc661dfec2ee"
+  }
+}

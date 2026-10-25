@@ -166,13 +166,28 @@ test('0% Storage denial keeps the form and safe error code, then retries the sam
   expect((await fixtureDatabase().collection('healthRecords').where('title', '==', 'Przerwany upload testowy').get()).size).toBe(1);
 });
 
+test('a result PDF uses the protected document path and creates no calendar appointment', async ({ page }) => {
+  const controls: Controls = { writable: true, failFinalize: 0, preparations: 0, finalizations: 0 };
+  await localHealthApi(page, controls); await login(page);
+  const dialog = await form(page, await generatedPDF(), 'Wynik testowy bez danych medycznych');
+  await dialog.getByLabel('Rodzaj', { exact: true }).selectOption('result');
+  await dialog.getByRole('button', { name: /Zapisz$/ }).click();
+  await expect(dialog).toBeHidden();
+  const rows = await fixtureDatabase().collection('healthRecords').where('title', '==', 'Wynik testowy bez danych medycznych').get();
+  expect(rows.size).toBe(1);
+  const record = rows.docs[0].data(); expect(record.type).toBe('result'); expect(record.documentPath).toBe('');
+  const document = await fixtureDatabase().doc(`healthDocuments/${record.attachmentDocumentId}`).get();
+  expect(document.data()?.state).toBe('ready'); expect(document.data()?.storagePath).toMatch(/^healthDocuments\//);
+  expect((await fixtureDatabase().collection('calendarEvents').where('sourceRecordId', '==', rows.docs[0].id).get()).size).toBe(0);
+});
+
 test('backend read-only state blocks upload and visit writes without relying on a frontend Preview flag', async ({ page }) => {
   const controls = { writable: false, failFinalize: 0, preparations: 0, finalizations: 0 };
   await localHealthApi(page, controls); await login(page);
   const before = (await fixtureDatabase().collection('healthRecords').get()).size;
   const dialog = await form(page, await generatedPDF(), 'Read-only fixture');
-  await dialog.getByRole('button', { name: /Zapisz$/ }).click();
-  await expect(dialog).toContainText('Preview chroni dane produkcyjne');
+  await expect(dialog.getByRole('button', { name: /Zapisz$/ })).toBeDisabled();
+  await expect(dialog).toContainText('Zapisywanie jest wyłączone');
   await expect(dialog.getByLabel('Nazwa / opis', { exact: true })).toHaveValue('Read-only fixture');
   expect(controls.preparations).toBe(0); expect(controls.finalizations).toBe(0);
   expect((await fixtureDatabase().collection('healthRecords').get()).size).toBe(before);

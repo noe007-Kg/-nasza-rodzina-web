@@ -116,7 +116,7 @@ service firebase.storage {
       return firestore.get(/databases/(default)/documents/healthDocuments/$(id)).data;
     }
     function medicalDocumentFamily(id) {
-      return medicalDocument(id).get('attachmentKind', '') != 'health-record'
+      return (!medicalDocument(id).keys().hasAny(['familyId']) && medicalDocument(id).get('attachmentKind', '') != 'health-record')
         || medicalDocument(id).get('familyId', null) == profile().get('familyId', null);
     }
     match /healthDocuments/{documentId}/{uploaderUid}/{filename} {
