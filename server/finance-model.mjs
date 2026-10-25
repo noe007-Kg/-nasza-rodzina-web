@@ -3,7 +3,7 @@ export const FINANCE_LEGACY_FAMILY = '__legacy__';
 export const FINANCE_RECURRENCES = Object.freeze(['none', 'weekly', 'monthly', 'yearly']);
 export const FINANCE_MAX_AMOUNT_GROSZE = 100_000_000;
 export const financeActiveMember = value => value?.active === true && value.canLogin === true
-  && value.archived !== true && ['parent', 'adult', 'child'].includes(value.role);
+  && value.archived !== true && value.disabled !== true && ['parent', 'adult', 'child'].includes(value.role);
 export const financeParent = value => financeActiveMember(value) && value.role === 'parent';
 export const financeFamilyId = profile => typeof profile?.familyId === 'string' && profile.familyId.trim()
   ? profile.familyId : FINANCE_LEGACY_FAMILY;

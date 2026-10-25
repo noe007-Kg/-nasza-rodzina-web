@@ -8,7 +8,7 @@ export type HealthDocumentMetadata = {
   number: string; note: string; pinned: boolean; shareOwner: boolean;
 };
 export type ProtectedHealthDocument = HealthDocumentMetadata & {
-  id: string; ownerProfileId: string; ownerUid: string | null; ownerPersonKey: string;
+  accessScope?: 'shared-copies' | ''; id: string; ownerProfileId: string; ownerUid: string | null; ownerPersonKey: string;
   readers: string[]; editors: string[]; createdBy: string; state: 'ready';
   storagePath: string; mimeType: string; fileName: string; size: number;
 };
@@ -41,7 +41,7 @@ export function parseHealthDocument(id: string, value: Record<string, unknown>):
   const string = (name: string) => typeof value[name] === 'string' ? value[name] as string : '';
   return { id, title: string('title'), documentType: Object.hasOwn(HEALTH_DOCUMENT_KINDS, string('documentType')) ? string('documentType') as HealthDocumentKind : 'general',
     issuedOn: string('issuedOn'), expiresOn: string('expiresOn'), indefinite: value.indefinite === true, number: string('number'), note: string('note'),
-    pinned: value.pinned === true, shareOwner: value.shareOwner === true, ownerProfileId: value.ownerProfileId,
+    accessScope: value.accessScope === 'shared-copies' ? 'shared-copies' : '', pinned: value.pinned === true, shareOwner: value.shareOwner === true, ownerProfileId: value.ownerProfileId,
     ownerUid: typeof value.ownerUid === 'string' ? value.ownerUid : null, ownerPersonKey: string('ownerPersonKey'),
     readers: value.readers.filter((uid): uid is string => typeof uid === 'string'), editors: value.editors.filter((uid): uid is string => typeof uid === 'string'),
     createdBy: string('createdBy'), state: 'ready', storagePath: value.storagePath, mimeType: string('mimeType'), fileName: string('fileName'), size: Number(value.size) || 0 };

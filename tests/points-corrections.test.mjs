@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { manageTasksAction } from '../server/tasks-service.mjs';
+import { familyMemoryContext } from './family-v2-test-helpers.mjs';
+async function fixture(){const c=familyMemoryContext({'tasks/task':{title:'Test',person:'child-person',points:5,done:false,archived:false,approvalStatus:'none',verificationMode:'trust',repeat:'none',familyId:'fixture-family',createdBy:'parent'}});await manageTasksAction(c.as('child'),{action:'submit',taskId:'task'});return c;}
+const ledger=c=>[...c.rows.entries()].filter(([p,v])=>p.startsWith('taskPointLedger/')&&v.kind==='earned')[0];
+const balance=c=>[...c.rows.entries()].find(([p])=>p.startsWith('taskPointBalances/'));
+const body=c=>({action:'correct-points',entryId:ledger(c)[0].split('/')[1],amount:0,reason:'Test reversal',requestId:'request-one',revision:0});
+test('parent reverses test points once across concurrent retries and preserves original ledger and completion',async()=>{const c=await fixture();const b=body(c);await Promise.all([manageTasksAction(c,b),manageTasksAction(c,b)]);assert.equal(balance(c)[1].balance,0);assert.equal(balance(c)[1].earned,0);assert.equal(ledger(c)[1].delta,5);assert.equal(ledger(c)[1].correctedAmount,0);assert.equal(c.rows.get('tasks/task').done,true);assert.equal([...c.rows.values()].filter(v=>v.kind==='correction').length,1);await manageTasksAction(c,{...b,amount:3,requestId:'request-two',revision:1});assert.equal(balance(c)[1].balance,3);});
+test('child, stale revision and foreign family cannot alter points',async()=>{const c=await fixture();await assert.rejects(manageTasksAction(c.as('child'),body(c)));await manageTasksAction(c,body(c));await assert.rejects(manageTasksAction(c,{...body(c),requestId:'new-request'}),e=>e.code==='TASK_CORRECTION_CONFLICT');c.rows.set(ledger(c)[0],{...ledger(c)[1],familyId:'foreign'});await assert.rejects(manageTasksAction(c,{...body(c),requestId:'foreign-request',revision:1}));});
+test('spent points cannot be reversed into a negative balance',async()=>{const c=await fixture();c.rows.set(balance(c)[0],{...balance(c)[1],balance:1,spent:4});await assert.rejects(manageTasksAction(c,body(c)),e=>e.code==='TASK_POINTS_ALREADY_SPENT');assert.equal(balance(c)[1].balance,1);assert.equal(ledger(c)[1].correctedAmount,undefined);});

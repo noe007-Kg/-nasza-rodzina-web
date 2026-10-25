@@ -283,7 +283,7 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
         <label><span>Kartoteka</span><PersonSelect value={person} onChange={setPerson} allowed={parent ? undefined : ['family', ownPerson(member)]} /></label>
       </section>
       <nav className="health-section-navigation" aria-label="Sekcje zdrowia">{([['overview', 'Przegląd'], ['visits', 'Wizyty'], ['medicine', 'Leki'], ['documents', 'Dokumenty'], ['history', 'Historia zdrowia'], ['contacts', 'Kontakty medyczne']] as const).map(([key, label]) => <button type="button" key={key} aria-pressed={section === key} onClick={() => setSection(key)}>{label}</button>)}</nav>
-      {(section === 'overview' || section === 'documents') && <ProtectedHealthDocuments key={user.uid} user={user} member={member} person={person} />}
+      {(section === 'overview' || section === 'documents') && <ProtectedHealthDocuments key={user.uid} user={user} member={member} person={person} onSelectPerson={setPerson} />}
 
       <section className="specialty-chips"><button className={specialtyFilter === 'all' ? 'active' : ''} onClick={() => setSpecialtyFilter('all')}>Chronologia</button>{SPECIALTIES.map((s)=><button key={s} className={specialtyFilter === s ? 'active' : ''} onClick={() => setSpecialtyFilter(s)}>{s}</button>)}</section>
 

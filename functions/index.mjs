@@ -40,6 +40,7 @@ const familyStorageBucket = defineString('FIREBASE_STORAGE_BUCKET', { default: '
 const tasksWritesEnabled = defineString('TASKS_WRITES_ENABLED', { default: 'false' });
 const taskProofBucket = defineString('TASK_PROOF_BUCKET', { default: '' });
 const healthWritesEnabled = defineString('HEALTH_WRITES_ENABLED', { default: 'false' });
+const financeWritesEnabled = defineString('FINANCE_WRITES_ENABLED', { default: 'false' });
 const healthStorageBucket = defineString('HEALTH_STORAGE_BUCKET', { default: '' });
 
 const notificationDependencies = {
@@ -172,11 +173,10 @@ export const healthDocumentCleanup = onSchedule({ ...familyJobOptions, schedule:
   info('Protected document cleanup', await retryHealthDocumentDeletes({ app, db, bucket: getStorage(app).bucket(healthStorageBucket.value()) }));
 });
 
-// Prepared only: the existing deployment opt-in keeps this job inert until
-// financial ACLs and notification permissions have been reviewed and published.
+// Finance has an independent release switch; no other domain is enabled by it.
 export const financeReminders = onSchedule({ ...familyJobOptions, schedule: '0 9 * * *', retryCount: 3,
   maxRetrySeconds: 1800, minBackoffSeconds: 60, maxBackoffSeconds: 300 }, async () => {
-  if (familyV2WritesEnabled.value() !== 'true') return;
+  if (financeWritesEnabled.value() !== 'true' && familyV2WritesEnabled.value() !== 'true') return;
   const result = await runFinanceReminders({ app, db });
   info('Finance reminder maintenance', result); // Counts only; no invoice details.
 });

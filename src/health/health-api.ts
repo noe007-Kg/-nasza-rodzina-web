@@ -10,8 +10,8 @@ export async function healthDocumentAction<T>(body: Record<string, unknown>): Pr
   }
   return result;
 }
-export function prepareHealthDocument(ownerProfileId: string, metadata: HealthDocumentMetadata, file: File) {
-  return healthDocumentAction<{ documentId: string; storagePath: string }>({ operation: 'prepare', ownerProfileId, metadata,
+export function prepareHealthDocument(ownerProfileId: string, metadata: HealthDocumentMetadata, file: File, copyFolder = false) {
+  return healthDocumentAction<{ documentId: string; storagePath: string }>({ operation: 'prepare', ownerProfileId, metadata, copyFolder,
     mimeType: file.type, size: file.size, fileName: file.name });
 }
 

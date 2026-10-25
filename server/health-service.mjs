@@ -5,6 +5,7 @@ import { EduServerError } from './edu-auth.mjs';
 import { activeHealthMember, activeHealthProfile, canManageHealthOwner, HEALTH_DOCUMENT_MAX_BYTES,
   HEALTH_DOCUMENT_MIME_TYPES, normalizeHealthDocumentMetadata, validHealthFileHeader, validHealthDate } from './health-access.mjs';
 import { discardVisitAttachment, finalizeVisitAttachment, prepareVisitAttachment } from './health-visit-attachments.mjs';
+import { configuredCopyFolder, copyFolderFor } from './health-copy-folders.mjs';
 
 const fail = (code = 'HEALTH_FORBIDDEN', status = 403) => { throw new EduServerError(code, status,
   code === 'HEALTH_FORBIDDEN' ? 'Brak upoważnienia do tej kartoteki. W przypadku osoby dorosłej potrzebna jest jej zgoda lub potwierdzone umocowanie prawne.'
@@ -22,7 +23,7 @@ export function healthStorageBucket(context) {
 }
 
 /** Fresh authorization participates in the same transaction as each document write. */
-async function ownerContext(transaction, context, ownerProfileId) {
+async function ownerContext(transaction, context, ownerProfileId, options = {}) {
   if (!identifier(ownerProfileId)) fail('HEALTH_INVALID_DOCUMENT', 400);
   const refs = [context.db.collection('members').doc(context.uid), context.db.collection('members').doc(ownerProfileId),
     context.db.collection('healthDocumentGrants').doc(ownerProfileId)];
@@ -31,11 +32,13 @@ async function ownerContext(transaction, context, ownerProfileId) {
   const owner = ownerSnapshot.exists ? { ...ownerSnapshot.data(), id: ownerProfileId } : null;
   if (!activeHealthMember(actor) || !activeHealthProfile(owner)
     || (actor.familyId ?? null) !== (owner.familyId ?? null)) fail();
-  if (!canManageHealthOwner(actor, owner, grantSnapshot.data(), context.now || new Date())) {
+  const copyFolder = options.copyFolder ? await copyFolderFor(context, transaction, actor, ownerProfileId) : null;
+  if (options.copyFolder && !copyFolder) fail();
+  if (!copyFolder && !canManageHealthOwner(actor, owner, grantSnapshot.data(), context.now || new Date())) {
     if (actor.role === 'parent' && owner.role === 'child' && !validHealthDate(owner.birthDate)) fail('HEALTH_BIRTH_DATE_REQUIRED', 409);
     fail();
   }
-  return { actor, owner, grant: grantSnapshot.data(), grantRef: refs[2] };
+  return { actor, owner, copyFolder, grant: grantSnapshot.data(), grantRef: refs[2] };
 }
 
 async function documentContext(transaction, context, documentId) {
@@ -45,7 +48,7 @@ async function documentContext(transaction, context, documentId) {
   if (!snapshot.exists) fail('HEALTH_DOCUMENT_NOT_FOUND', 404);
   const record = snapshot.data();
   if (!Array.isArray(record.editors) || !record.editors.includes(context.uid)) fail();
-  const permission = await ownerContext(transaction, context, record.ownerProfileId);
+  const permission = await ownerContext(transaction, context, record.ownerProfileId, { copyFolder: record.accessScope === 'shared-copies' });
   return { ...permission, ref, record };
 }
 
@@ -74,11 +77,13 @@ async function healthDocumentState(context) {
       ownerProfileId: record.ownerProfileId, ownerUid: identifier(record.ownerUid) ? record.ownerUid : null,
       ownerPersonKey: text(record, 'ownerPersonKey', 128), readers: identities(record.readers), editors: identities(record.editors),
       createdBy: text(record, 'createdBy', 128), state: 'ready', protected: true, storagePath: record.storagePath,
-      fileName: text(record, 'fileName', 250), mimeType: text(record, 'mimeType', 100), size: Number(record.size) || 0,
+      accessScope: record.accessScope === 'shared-copies' ? 'shared-copies' : '', fileName: text(record, 'fileName', 250), mimeType: text(record, 'mimeType', 100), size: Number(record.size) || 0,
       issuedOn: text(record, 'issuedOn', 10), expiresOn: text(record, 'expiresOn', 10), indefinite: record.indefinite === true,
       number: text(record, 'number', 200), note: text(record, 'note', 4000), pinned: record.pinned === true, shareOwner: record.shareOwner === true }];
   });
-  return { documentsReady: true, documents };
+  const folderConfig = configuredCopyFolder();
+  const folder = folderConfig ? await copyFolderFor(context, null, actor, folderConfig.ownerProfileId) : null;
+  return { documentsReady: true, documents, copyFolders: folder ? [folder] : [] };
 }
 
 async function prepareDocument(context, body) {
@@ -89,10 +94,11 @@ async function prepareDocument(context, body) {
   const extension = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[body.mimeType];
   const storagePath = `healthDocuments/${documentId}/${context.uid}/${randomUUID()}.${extension}`;
   await context.db.runTransaction(async transaction => {
-    const { owner } = await ownerContext(transaction, context, body.ownerProfileId);
+    const { owner, copyFolder } = await ownerContext(transaction, context, body.ownerProfileId, { copyFolder: body.copyFolder === true });
     const ownerUid = owner.canLogin === true ? owner.id : null;
     const record = { ...metadata, ownerProfileId: owner.id, ownerUid, ownerPersonKey: owner.personKey || owner.name || owner.id,
-      readers: [...new Set([context.uid, ...(metadata.shareOwner && ownerUid ? [ownerUid] : [])])], editors: [context.uid],
+      readers: copyFolder ? copyFolder.memberUids : [...new Set([context.uid, ...(metadata.shareOwner && ownerUid ? [ownerUid] : [])])], editors: copyFolder ? copyFolder.memberUids : [context.uid],
+      ...(copyFolder ? { accessScope: 'shared-copies', pinned: true, shareOwner: true } : {}),
       createdBy: context.uid, familyId: owner.familyId || null, state: 'draft', protected: true, storagePath, mimeType: body.mimeType, size: body.size,
       fileName: body.fileName.replace(/[\u0000-\u001f/\\]/g, '-'), createdAt: stamp(), updatedAt: stamp(),
       uploadExpiresAt: Timestamp.fromMillis((context.now || new Date()).getTime() + 3600000) };
@@ -154,7 +160,7 @@ async function updateDocument(context, body) {
     const { ref, record } = await documentContext(transaction, context, body.documentId);
     if (record.state !== 'ready') fail('HEALTH_INVALID_DOCUMENT', 409);
     if (record.attachmentKind === 'health-record' && record.attachmentPrivate === true && metadata.shareOwner) fail('HEALTH_INVALID_DOCUMENT', 400);
-    transaction.update(ref, { ...metadata, readers: documentReaders(record, metadata), updatedAt: stamp() });
+    transaction.update(ref, { ...metadata, ...(record.accessScope === 'shared-copies' ? { pinned: true, shareOwner: true } : {}), readers: documentReaders(record, metadata), updatedAt: stamp() });
   });
   return { documentId: body.documentId };
 }
@@ -208,7 +214,21 @@ async function changeGrant(context, body, revoke) {
   return { saved: true };
 }
 
+async function shareCopy(context, body) {
+  if (!Array.isArray(body.readerUids) || body.readerUids.length > 20 || body.readerUids.some(uid => !identifier(uid))) fail('HEALTH_INVALID_DOCUMENT', 400);
+  await context.db.runTransaction(async transaction => {
+    const { actor, ref, record, copyFolder } = await documentContext(transaction, context, body.documentId);
+    if (!copyFolder || record.state !== 'ready') fail();
+    const extras = [...new Set(body.readerUids)].filter(uid => !copyFolder.memberUids.includes(uid));
+    const profiles = extras.length ? await transaction.getAll(...extras.map(uid => context.db.collection('members').doc(uid))) : [];
+    if (profiles.some(profile => !profile.exists || !activeHealthMember(profile.data()) || profile.data().familyId !== actor.familyId)) fail();
+    transaction.update(ref, { readers: [...copyFolder.memberUids, ...extras], editors: copyFolder.memberUids, sharingUpdatedBy: context.uid, updatedAt: stamp() });
+  });
+  return { documentId: body.documentId };
+}
+
 export async function manageHealthAction(context, body) {
+  if (body?.operation === 'share-copy') return shareCopy(context, body);
   if (!body || typeof body !== 'object' || Array.isArray(body)) fail('HEALTH_INVALID_DOCUMENT', 400);
   if (body.operation === 'state') return healthDocumentState(context);
   if (body.operation === 'status') return healthDocumentStatus(context, body);
