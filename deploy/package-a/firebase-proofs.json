@@ -1,0 +1,8 @@
+{
+  "storage": [
+    {
+      "bucket": "nasza-rodzina-task-proofs",
+      "rules": "storage-proofs.rules"
+    }
+  ]
+}

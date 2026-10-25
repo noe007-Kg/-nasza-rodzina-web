@@ -37,6 +37,8 @@ const calendarEncryptionKeyId = defineString('CALENDAR_ENCRYPTION_KEY_ID', { def
 const googleCalendarOwnerUid = defineString('CALENDAR_GOOGLE_OWNER_UID', { default: '' });
 const familyV2WritesEnabled = defineString('FAMILY_V2_WRITES_ENABLED', { default: 'false' });
 const familyStorageBucket = defineString('FIREBASE_STORAGE_BUCKET', { default: '' });
+const tasksWritesEnabled = defineString('TASKS_WRITES_ENABLED', { default: 'false' });
+const taskProofBucket = defineString('TASK_PROOF_BUCKET', { default: '' });
 
 const notificationDependencies = {
   derive: deriveNotificationEvent, enqueue: enqueueInAppEvents,
@@ -146,8 +148,10 @@ function familyJobContext() {
   return { app, db, bucket: getStorage(app).bucket(familyStorageBucket.value()) };
 }
 export const taskPhotoCleanup = onSchedule({ ...familyJobOptions, schedule: '0 * * * *' }, async () => {
-  const context = familyJobContext();
-  if (!context) return;
+  if (tasksWritesEnabled.value() !== 'true' && familyV2WritesEnabled.value() !== 'true') return;
+  if (!familyStorageBucket.value() || !taskProofBucket.value()) throw new Error('TASK_CLEANUP_NOT_CONFIGURED');
+  const context = { app, db, bucket: getStorage(app).bucket(familyStorageBucket.value()),
+    proofBucket: getStorage(app).bucket(taskProofBucket.value()) };
   const result = await runTaskPhotoCleanup(context);
   info('Task photograph cleanup', result); // Aggregate counts only.
 });

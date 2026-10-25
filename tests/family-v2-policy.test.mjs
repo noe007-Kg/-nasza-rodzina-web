@@ -7,6 +7,14 @@ const production = context('nasza-rodzina');
 const demo = context('demo-nasza-rodzina');
 const local = { FIREBASE_PROJECT_ID: 'demo-nasza-rodzina', FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9099', FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080' };
 
+test('tasks-only release cannot enable health or finance, or bypass Preview and emulator guards', () => {
+  const env = { TASKS_WRITES_ENABLED: 'true' };
+  assert.equal(familyV2WritesAllowed(production, env, 'tasks'), true);
+  for (const domain of [undefined, 'finance', 'health']) assert.equal(familyV2WritesAllowed(production, env, domain), false);
+  assert.equal(familyV2WritesAllowed(production, { ...env, VERCEL_ENV: 'preview' }, 'tasks'), false);
+  assert.equal(familyV2WritesAllowed(production, { ...env, FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080' }, 'tasks'), false);
+});
+
 test('v2 writes are disabled by default and require the exact server-owned opt-in', () => {
   assert.equal(familyV2WritesAllowed(production, {}), false);
   for (const value of ['false', 'TRUE', '1', 'yes', true]) assert.equal(familyV2WritesAllowed(production, { FAMILY_V2_WRITES_ENABLED: value }), false);

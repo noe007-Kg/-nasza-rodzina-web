@@ -59,6 +59,19 @@ test('task state never exposes the points history of a different family', async 
   assert.equal(state.balances.some(entry => entry.person === 'foreign-person'), false);
 });
 
+test('legacy tasks require an explicit household binding and cannot leak to a different household', async () => {
+  const previous = process.env.TASKS_LEGACY_FAMILY_ID;
+  try {
+    const context = familyMemoryContext({ 'tasks/legacy': task({ familyId: undefined }) });
+    await assert.rejects(manageTasksAction(context.as('child'), { action: 'submit', taskId: 'legacy' }), errorCode('TASK_NOT_FOUND'));
+    process.env.TASKS_LEGACY_FAMILY_ID = 'other-family';
+    await assert.rejects(manageTasksAction(context.as('child'), { action: 'submit', taskId: 'legacy' }), errorCode('TASK_NOT_FOUND'));
+    process.env.TASKS_LEGACY_FAMILY_ID = 'fixture-family';
+    await manageTasksAction(context.as('child'), { action: 'submit', taskId: 'legacy' });
+    assert.equal(balance(context).balance, 12);
+  } finally { if (previous === undefined) delete process.env.TASKS_LEGACY_FAMILY_ID; else process.env.TASKS_LEGACY_FAMILY_ID = previous; }
+});
+
 async function rewardContext(points = 12, cost = 5) {
   const context = familyMemoryContext({ 'tasks/earned': task({}) });
   context.rows.get('tasks/earned').points = points;

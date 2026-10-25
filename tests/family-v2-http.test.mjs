@@ -29,6 +29,17 @@ test('Preview authenticated state can be read but writes remain blocked even whe
   assert.equal(state.headers['Referrer-Policy'], 'no-referrer');
 });
 
+test('tasks release enables only the task route and reports the correct per-module status', async () => {
+  const { router, calls } = mocked({ env: { TASKS_WRITES_ENABLED: 'true' } });
+  const headers = { 'content-type': 'application/json' };
+  const tasks = response(); await router(request('save-task', { headers }), tasks);
+  assert.equal(tasks.statusCode, 200); assert.equal(tasks.body.writesEnabled, true);
+  const health = response(); await router(request('save', { url: '/api/family/health', headers }), health);
+  assert.equal(health.statusCode, 503); assert.equal(calls.health, 0);
+  const healthState = response(); await router(request('state', { url: '/api/family/health', headers }), healthState);
+  assert.equal(healthState.statusCode, 200); assert.equal(healthState.body.writesEnabled, false);
+});
+
 test('router selects only the exact tasks or health path and rejects query overrides', async () => {
   const { router, calls } = mocked();
   const health = response(); await router(request('status', { url: '/api/family/health' }), health);
