@@ -41,14 +41,14 @@ test('Google Calendar adds one independent Gen2 hourly Warsaw job using separate
   assert.equal(endpoint.timeoutSeconds, 540); assert.equal(endpoint.maxInstances, 1); assert.equal(endpoint.concurrency, 1);
   assert.deepEqual(endpoint.secretEnvironmentVariables, [{ key: 'CALENDAR_ENCRYPTION_KEY_BASE64' }, { key: 'GOOGLE_CALENDAR_CLIENT_SECRET' }]);
   const exportedEndpoints = Object.entries(functions).filter(([, value]) => value?.__endpoint).map(([name]) => name).sort();
-  assert.equal(exportedEndpoints.length, 18);
+  assert.equal(exportedEndpoints.length, 19);
   assert.deepEqual(exportedEndpoints, ['notifyCalendar', 'notifyPrivateCalendar', 'notifyTasks', 'notifyShopping', 'notifyHealth', 'notifySchool',
-    'notifySchoolParents', 'notifySchoolStudent', 'notifyChat', 'notifySchoolSync', 'eduVulcanSchoolHours', 'eduVulcanOffHours', 'medicineReminders', 'googleCalendarHourly', 'taskPhotoCleanup', 'healthDocumentReminders', 'financeReminders', 'musicSchoolPublicHourly'].sort());
+    'notifySchoolParents', 'notifySchoolStudent', 'notifyChat', 'notifySchoolSync', 'eduVulcanSchoolHours', 'eduVulcanOffHours', 'medicineReminders', 'googleCalendarHourly', 'taskPhotoCleanup', 'healthDocumentReminders', 'healthDocumentCleanup', 'financeReminders', 'musicSchoolPublicHourly'].sort());
 });
 
 
 test('v2 maintenance remains separate from SP4 and health expiry never deletes files', () => {
-  for (const [name, cron] of [['taskPhotoCleanup', '0 * * * *'], ['healthDocumentReminders', '0 8 * * *']]) {
+  for (const [name, cron] of [['taskPhotoCleanup', '0 * * * *'], ['healthDocumentReminders', '0 8 * * *'], ['healthDocumentCleanup', '15 * * * *']]) {
     const endpoint = functions[name].__endpoint;
     assert.equal(endpoint.platform, 'gcfv2');
     assert.deepEqual(endpoint.region, ['europe-west1']);

@@ -280,7 +280,7 @@ service cloud.firestore {
     // New medical documents have explicit server-issued UID ACLs. The parent role
     // grants no automatic access to an adult's document or to its authorization.
     function healthDocumentFamily(data) {
-      return data.get('attachmentKind', '') != 'health-record'
+      return (!data.keys().hasAny(['familyId']) && data.get('attachmentKind', '') != 'health-record')
         || data.get('familyId', null) == profile().get('familyId', null);
     }
     function linkedHealthEditor(id, data) {

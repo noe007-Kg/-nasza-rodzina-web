@@ -11,7 +11,7 @@ const fail = (code = 'HEALTH_INVALID_ATTACHMENT', status = 400) => { throw new E
 const stamp = () => FieldValue.serverTimestamp();
 
 function normalizeVisit(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || !['visit', 'doctor'].includes(value.type)
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !['visit', 'doctor', 'medicine', 'result', 'history', 'document'].includes(value.type)
     || typeof value.privateToParents !== 'boolean' || !['planned', 'toBook', 'booked', 'done', 'cancelled'].includes(value.status)) fail();
   const fields = { title: 500, person: 128, date: 10, time: 5, doctor: 500, location: 1000, note: 12000,
     specialty: 200, referralCode: 200, nextControl: 500, callReminderDate: 10, dose: 500, medicineTime: 5 };
@@ -44,7 +44,7 @@ async function existingVisit(transaction, context, reference, owner, actor, ownR
   const snapshot = await transaction.get(reference);
   const current = snapshot.data();
   if (!snapshot.exists) return null;
-  if (!['visit', 'doctor'].includes(current.type) || current.person !== (owner.personKey || owner.name || owner.id)
+  if (!['visit', 'doctor', 'medicine', 'result', 'history', 'document'].includes(current.type) || current.person !== (owner.personKey || owner.name || owner.id)
     || !(actor.role === 'parent' || ownRetry && owner.id === context.uid && current.createdBy === context.uid)
     || current.familyId && actor.familyId && current.familyId !== actor.familyId) fail('HEALTH_FORBIDDEN', 403);
   // Legacy records do not have a familyId. Check their real creator instead of accepting a guessed record ID.

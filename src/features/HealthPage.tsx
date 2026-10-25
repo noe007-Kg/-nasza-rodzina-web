@@ -53,6 +53,16 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
   const pendingRecordId = useRef('');
   const pendingCalendarId = useRef('');
   const profiles = useFamilyDirectory();
+  const [healthAccess, setHealthAccess] = useState({ uid: '', enabled: false, loaded: false });
+  const writesEnabled = healthAccess.uid === user.uid && healthAccess.enabled && familyV2WritesAllowed();
+  useEffect(() => {
+    let active = true;
+    const load = () => { void healthDocumentAction<{ writesEnabled?: boolean }>({ operation: 'status' }).then(result => {
+      if (active) setHealthAccess({ uid: user.uid, enabled: result.writesEnabled === true, loaded: true });
+    }).catch(() => { if (active) setHealthAccess({ uid: user.uid, enabled: false, loaded: true }); }); };
+    load(); window.addEventListener('focus', load);
+    return () => { active = false; window.removeEventListener('focus', load); };
+  }, [user.uid]);
   const healthSavingRef = useRef(false);
   const { announceLocal } = useNotifications();
   const [savingContact, setSavingContact] = useState(false);
@@ -172,7 +182,7 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
     setUploadError(''); setUploadCode(''); setSaveStage('Przygotowywanie zapisu');
     try {
       await requireHealthWrites();
-      if (form.file && ['visit', 'doctor'].includes(form.type)) {
+      if (form.file) {
         validateHealthFile(form.file);
         const owner = profiles.find(profile => (profile.personKey || profile.name) === form.person);
         if (!owner) throw new Error('Nie udało się znaleźć profilu pacjenta. Sprawdź przypisanie kartoteki.');
@@ -253,11 +263,20 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
     finally { contactSavingRef.current = false; setSavingContact(false); }
   }
 
-  async function confirmMedicine(record: HealthRecord) { await requireHealthWrites(); await updateDoc(doc(db,'healthRecords',record.id), { confirmedDate:formatDateInput(new Date()), updatedAt:Timestamp.now() }); }
+  async function confirmMedicine(record: HealthRecord) {
+    try { await requireHealthWrites(); await updateDoc(doc(db,'healthRecords',record.id), { confirmedDate:formatDateInput(new Date()), updatedAt:Timestamp.now() }); }
+    catch (error) { notify(errorMessage(error), 'error'); }
+  }
+  async function removeContact(contact: MedicalContact) {
+    if (!parent || !confirm(`Usunąć kontakt „${contact.name}”?`)) return;
+    try { await requireHealthWrites(); await deleteDoc(doc(db, 'medicalContacts', contact.id)); }
+    catch (error) { notify(errorMessage(error), 'error'); }
+  }
 
   return (
     <div className="page-content compact-page health-v130">
       <ModuleHeader icon="❤️" title="Zdrowie" text="Kartoteka, wizyty, leki, dokumenty i kontakty całej rodziny." action={<button className="primary-button" onClick={() => openAdd('visit')}>＋ Dodaj wizytę / wpis</button>} />
+      {healthAccess.loaded && !writesEnabled && <p role="status">Zapisywanie zmian w Zdrowiu jest obecnie wyłączone. Dotychczasowe wpisy pozostają dostępne.</p>}
       {!showForm && uploadProgress.phase === 'uploaded' && <><HealthUploadStatus progress={uploadProgress} fileName={uploadFileName} /><p role="status">{saveStage}</p></>}
 
       <section className="health-person-filter" aria-label="Wybór kartoteki zdrowia">
@@ -271,18 +290,18 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
       <div className="health-dashboard-grid">
         {(section === 'overview' || section === 'visits') && <article className="health-card upcoming-health"><header><strong>📅 Najbliższe wizyty{person !== 'family' ? ` — ${person}` : ''}</strong><button onClick={() => openAdd('visit')}>Dodaj +</button></header>{upcomingVisits.length === 0 ? <p className="health-empty">Brak zaplanowanych wizyt.</p> : upcomingVisits.map((r)=><div className="health-list-row" key={r.id}><span className="health-date-tile"><b>{new Date(`${r.date}T12:00`).getDate()}</b><small>{new Date(`${r.date}T12:00`).toLocaleDateString('pl-PL',{month:'short'}).toUpperCase()}</small></span><div><strong>{r.person} — {r.specialty || r.title}</strong><small>{r.doctor || r.location || r.title}</small><p>{r.time}{r.referralCode ? ` · skierowanie: ${r.referralCode}` : ''}</p></div><span className="health-status">{r.status === 'toBook' ? 'Do umówienia' : r.status === 'booked' ? 'Umówiona' : 'Zaplanowana'}</span></div>)}</article>}
 
-        {(section === 'overview' || section === 'medicine') && <article className="health-card"><header><strong>🔔 Przypomnienia</strong></header>{medicines.slice(0,3).map((r)=><div className="health-list-row" key={r.id}><span className="health-icon-tile">💊</span><div><strong>{r.title} — {r.person}</strong><small>{r.medicineTime || r.time}{r.dose ? ` · ${r.dose}` : ''}</small></div><button className={r.confirmedDate === formatDateInput(new Date()) ? 'confirmed-button' : 'medicine-confirm'} onClick={() => void confirmMedicine(r)}>{r.confirmedDate === formatDateInput(new Date()) ? '✓ Przyjęte' : 'Potwierdź'}</button></div>)}{controlItems.map((r)=><div className="health-list-row" key={`control-${r.id}`}><span className="health-icon-tile">☎️</span><div><strong>{r.nextControl ? `Kontrola: ${r.nextControl}` : 'Zadzwoń do rejestracji'}</strong><small>{r.callReminderDate ? `Przypomnienie: ${formatShortDate(r.callReminderDate)}` : r.specialty}</small></div></div>)}</article>}
+        {(section === 'overview' || section === 'medicine') && <article className="health-card"><header><strong>🔔 Przypomnienia</strong></header>{medicines.slice(0,3).map((r)=><div className="health-list-row" key={r.id}><span className="health-icon-tile">💊</span><div><strong>{r.title} — {r.person}</strong><small>{r.medicineTime || r.time}{r.dose ? ` · ${r.dose}` : ''}</small></div><button className={r.confirmedDate === formatDateInput(new Date()) ? 'confirmed-button' : 'medicine-confirm'} disabled={!writesEnabled} onClick={() => void confirmMedicine(r)}>{r.confirmedDate === formatDateInput(new Date()) ? '✓ Przyjęte' : 'Potwierdź'}</button></div>)}{controlItems.map((r)=><div className="health-list-row" key={`control-${r.id}`}><span className="health-icon-tile">☎️</span><div><strong>{r.nextControl ? `Kontrola: ${r.nextControl}` : 'Zadzwoń do rejestracji'}</strong><small>{r.callReminderDate ? `Przypomnienie: ${formatShortDate(r.callReminderDate)}` : r.specialty}</small></div></div>)}</article>}
 
         {(section === 'overview' || section === 'history' || section === 'visits') && <article className="health-card"><header><strong>🕘 Historia wizyt</strong><small>Od najnowszych do najstarszych</small></header>{history.length === 0 ? <p className="health-empty">Brak historii.</p> : history.map((r)=><div className="timeline-health-row" key={r.id}><time>{r.date ? formatShortDate(r.date) : '—'}</time><span style={{ background:personColor(r.person) }} /><div><strong>{r.specialty || r.title}</strong><small>{r.person}{r.doctor ? ` · ${r.doctor}` : ''}</small><p>{r.note || r.location}</p></div></div>)}</article>}
 
         {(section === 'overview' || section === 'documents') && <article className="health-card"><header><strong>📄 Dotychczasowe dokumenty i wyniki</strong><button onClick={() => openAdd('result')}>Dodaj wynik +</button></header>{documents.length === 0 ? <p className="health-empty">Brak dokumentów.</p> : documents.map((r)=><div className="document-row" key={r.id}><span>📄</span><div><strong>{r.title}</strong><small>{r.date ? formatShortDate(r.date) : ''} · {r.person}</small></div>{r.documentPath || r.documentURL ? <button onClick={()=>void openDocument(r)}>Otwórz</button> : <span>Bez pliku</span>}</div>)}</article>}
 
-        {(section === 'overview' || section === 'contacts') && <article className="health-card medical-contacts"><header><strong>👥 Kontakty medyczne</strong>{parent && <button onClick={() => { setEditingContact(null); setContactForm({ person:person === 'family' ? 'family' : person, specialty:'', name:'', doctor:'', phone:'', address:'', note:'' }); setShowContactForm(true); }}>Dodaj +</button>}</header>{visibleContacts.length === 0 ? <p className="health-empty">Dodaj szpital, poradnię lub lekarza.</p> : visibleContacts.map((c)=><div className="contact-row" key={c.id}><span>🏥</span><div><strong>{c.name}</strong><small>{[c.specialty,c.doctor,c.address].filter(Boolean).join(' · ')}</small></div>{c.phone && <a href={`tel:${c.phone.replace(/\s/g,'')}`}>☎ {c.phone}</a>}{parent && <div className="health-record-actions"><button aria-label={`Edytuj kontakt: ${c.name}`} onClick={()=>{ const { id, ...fields } = c; setContactForm(fields); setEditingContact(c); setShowContactForm(true); }}>Edytuj</button><button aria-label={`Usuń kontakt: ${c.name}`} onClick={()=>{ if(confirm(`Usunąć kontakt „${c.name}”?`)) void deleteDoc(doc(db,'medicalContacts',c.id)); }}>Usuń</button></div>}</div>)}</article>}
+        {(section === 'overview' || section === 'contacts') && <article className="health-card medical-contacts"><header><strong>👥 Kontakty medyczne</strong>{parent && <button onClick={() => { setEditingContact(null); setContactForm({ person:person === 'family' ? 'family' : person, specialty:'', name:'', doctor:'', phone:'', address:'', note:'' }); setShowContactForm(true); }}>Dodaj +</button>}</header>{visibleContacts.length === 0 ? <p className="health-empty">Dodaj szpital, poradnię lub lekarza.</p> : visibleContacts.map((c)=><div className="contact-row" key={c.id}><span>🏥</span><div><strong>{c.name}</strong><small>{[c.specialty,c.doctor,c.address].filter(Boolean).join(' · ')}</small></div>{c.phone && <a href={`tel:${c.phone.replace(/\s/g,'')}`}>☎ {c.phone}</a>}{parent && <div className="health-record-actions"><button aria-label={`Edytuj kontakt: ${c.name}`} onClick={()=>{ const { id, ...fields } = c; setContactForm(fields); setEditingContact(c); setShowContactForm(true); }}>Edytuj</button><button aria-label={`Usuń kontakt: ${c.name}`} disabled={!writesEnabled} onClick={()=>void removeContact(c)}>Usuń</button></div>}</div>)}</article>}
       </div>
 
       <section className="health-manager"><header><strong>Wszystkie wpisy</strong><span>{visibleRecords.length} wpisów</span></header>
         <div className="health-type-filter">{(['all', ...Object.keys(HEALTH_META)] as Array<HealthType | 'all'>).map(type=><button key={type} className={recordType === type ? 'active' : ''} onClick={()=>setRecordType(type)}>{type === 'all' ? 'Wszystkie' : HEALTH_META[type].label}</button>)}</div>
-        {visibleRecords.length === 0 ? <EmptyState icon="❤️" text="Brak wpisów w tym widoku." /> : visibleRecords.map(record=><article className="module-row" key={record.id}><div className="row-main"><strong>{record.title}</strong><small>{record.person} · {HEALTH_META[record.type].label} · {record.date ? formatShortDate(record.date) : 'bez daty'}{record.privateToParents ? ' · tylko rodzice' : ''}</small><p>{record.note}</p></div><div className="health-record-actions">{(record.attachmentDocumentId || record.documentPath || record.documentURL) && <button onClick={()=>void openDocument(record)}>Plik</button>}{parent && <><button onClick={()=>editHealth(record)}>Edytuj</button><button onClick={()=>void removeHealth(record)}>Usuń</button></>}</div></article>)}
+        {visibleRecords.length === 0 ? <EmptyState icon="❤️" text="Brak wpisów w tym widoku." /> : visibleRecords.map(record=><article className="module-row" key={record.id}><div className="row-main"><strong>{record.title}</strong><small>{record.person} · {HEALTH_META[record.type].label} · {record.date ? formatShortDate(record.date) : 'bez daty'}{record.privateToParents ? ' · tylko rodzice' : ''}</small><p>{record.note}</p></div><div className="health-record-actions">{(record.attachmentDocumentId || record.documentPath || record.documentURL) && <button onClick={()=>void openDocument(record)}>Plik</button>}{parent && <><button onClick={()=>editHealth(record)}>Edytuj</button><button disabled={!writesEnabled} onClick={()=>void removeHealth(record).catch(error=>notify(errorMessage(error),'error'))}>Usuń</button></>}</div></article>)}
       </section>
 
       {showForm && <Modal title={`❤️ ${HEALTH_META[form.type].label}`} onClose={() => { if (!savingHealth) { resetUpload(); setShowForm(false); } }} wide>
@@ -310,13 +329,13 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
           {saveStage && <p className="field-wide" role="status" data-testid="health-save-stage">{saveStage}</p>}
           {uploadCode && <small className="field-wide" data-testid="health-upload-error-code">Kod diagnostyczny: {uploadCode}</small>}
           {uploadError && uploadProgress.phase !== 'error' && <p className="field-wide health-save-error" role="alert">{uploadProgress.phase === 'uploaded' ? 'Plik został przesłany, ale zapis wpisu wymaga ponowienia. ' : ''}{uploadError}</p>}
-          {!familyV2WritesAllowed() && <p className="field-wide" role="status">Preview: zapis wizyt i załączników jest wyłączony, aby chronić dane produkcyjne.</p>}
-          <div className="form-actions field-wide"><button type="button" className="secondary-button" disabled={savingHealth} onClick={()=>{ resetUpload(); setShowForm(false); }}>Anuluj</button><button className="primary-button" disabled={savingHealth || !familyV2WritesAllowed()}>{savingHealth ? "Zapisuję…" : "✓ Zapisz"}</button></div>
+          {!writesEnabled && <p className="field-wide" role="status">Zapisywanie jest wyłączone. Możesz obejrzeć formularz.</p>}
+          <div className="form-actions field-wide"><button type="button" className="secondary-button" disabled={savingHealth} onClick={()=>{ resetUpload(); setShowForm(false); }}>Anuluj</button><button className="primary-button" disabled={savingHealth || !writesEnabled}>{savingHealth ? "Zapisuję…" : "✓ Zapisz"}</button></div>
         </form>
       </Modal>}
 
       {showContactForm && <Modal title={editingContact ? "☎️ Edytuj kontakt medyczny" : "☎️ Nowy kontakt medyczny"} onClose={()=>setShowContactForm(false)}>
-        <form className="form-grid" onSubmit={saveContact}><label className="field"><span>Osoba / rodzina</span><PersonSelect value={contactForm.person} onChange={(value)=>setContactForm((f)=>({...f,person:value}))} /></label><label className="field"><span>Specjalizacja</span><input value={contactForm.specialty} onChange={(e)=>setContactForm((f)=>({...f,specialty:e.target.value}))} /></label><label className="field field-wide"><span>Nazwa placówki</span><input value={contactForm.name} onChange={(e)=>setContactForm((f)=>({...f,name:e.target.value}))} required /></label><label className="field"><span>Lekarz</span><input value={contactForm.doctor} onChange={(e)=>setContactForm((f)=>({...f,doctor:e.target.value}))} /></label><label className="field"><span>Telefon</span><input value={contactForm.phone} onChange={(e)=>setContactForm((f)=>({...f,phone:e.target.value}))} /></label><label className="field field-wide"><span>Adres</span><input value={contactForm.address} onChange={(e)=>setContactForm((f)=>({...f,address:e.target.value}))} /></label><label className="field field-wide"><span>Notatka</span><textarea value={contactForm.note} onChange={(e)=>setContactForm((f)=>({...f,note:e.target.value}))} /></label><div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={()=>setShowContactForm(false)}>Anuluj</button><button className="primary-button" disabled={savingContact}>{savingContact ? "Zapisuję…" : "✓ Zapisz"}</button></div></form>
+        <form className="form-grid" onSubmit={saveContact}><label className="field"><span>Osoba / rodzina</span><PersonSelect value={contactForm.person} onChange={(value)=>setContactForm((f)=>({...f,person:value}))} /></label><label className="field"><span>Specjalizacja</span><input value={contactForm.specialty} onChange={(e)=>setContactForm((f)=>({...f,specialty:e.target.value}))} /></label><label className="field field-wide"><span>Nazwa placówki</span><input value={contactForm.name} onChange={(e)=>setContactForm((f)=>({...f,name:e.target.value}))} required /></label><label className="field"><span>Lekarz</span><input value={contactForm.doctor} onChange={(e)=>setContactForm((f)=>({...f,doctor:e.target.value}))} /></label><label className="field"><span>Telefon</span><input value={contactForm.phone} onChange={(e)=>setContactForm((f)=>({...f,phone:e.target.value}))} /></label><label className="field field-wide"><span>Adres</span><input value={contactForm.address} onChange={(e)=>setContactForm((f)=>({...f,address:e.target.value}))} /></label><label className="field field-wide"><span>Notatka</span><textarea value={contactForm.note} onChange={(e)=>setContactForm((f)=>({...f,note:e.target.value}))} /></label><div className="form-actions field-wide"><button type="button" className="secondary-button" onClick={()=>setShowContactForm(false)}>Anuluj</button><button className="primary-button" disabled={savingContact || !writesEnabled}>{savingContact ? "Zapisuję…" : "✓ Zapisz"}</button></div></form>
       </Modal>}
       {previewFile && <HealthDocumentViewer uid={user.uid} file={previewFile} onClose={() => setPreviewFile(null)} />}
     </div>

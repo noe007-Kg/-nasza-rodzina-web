@@ -3,11 +3,13 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import { EduServerError } from './edu-auth.mjs';
 import { activeHealthMember, activeHealthProfile, canManageHealthOwner, HEALTH_DOCUMENT_MAX_BYTES,
-  HEALTH_DOCUMENT_MIME_TYPES, normalizeHealthDocumentMetadata, validHealthFileHeader } from './health-access.mjs';
+  HEALTH_DOCUMENT_MIME_TYPES, normalizeHealthDocumentMetadata, validHealthFileHeader, validHealthDate } from './health-access.mjs';
 import { discardVisitAttachment, finalizeVisitAttachment, prepareVisitAttachment } from './health-visit-attachments.mjs';
 
 const fail = (code = 'HEALTH_FORBIDDEN', status = 403) => { throw new EduServerError(code, status,
-  code === 'HEALTH_FORBIDDEN' ? 'Brak upoważnienia do tej kartoteki. W przypadku osoby dorosłej potrzebna jest jej zgoda lub potwierdzone umocowanie prawne.' : 'Nie udało się zapisać dokumentu. Spróbuj ponownie.'); };
+  code === 'HEALTH_FORBIDDEN' ? 'Brak upoważnienia do tej kartoteki. W przypadku osoby dorosłej potrzebna jest jej zgoda lub potwierdzone umocowanie prawne.'
+    : code === 'HEALTH_BIRTH_DATE_REQUIRED' ? 'Uzupełnij datę urodzenia w profilu dziecka. Bez potwierdzenia małoletności nie można przyznać rodzicowi dostępu do dokumentów.'
+      : 'Nie udało się zapisać dokumentu. Spróbuj ponownie.'); };
 const identifier = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 const stamp = () => FieldValue.serverTimestamp();
 export function healthStorageBucket(context) {
@@ -28,8 +30,11 @@ async function ownerContext(transaction, context, ownerProfileId) {
   const actor = actorSnapshot.exists ? { ...actorSnapshot.data(), id: context.uid } : null;
   const owner = ownerSnapshot.exists ? { ...ownerSnapshot.data(), id: ownerProfileId } : null;
   if (!activeHealthMember(actor) || !activeHealthProfile(owner)
-    || actor.familyId && owner.familyId && actor.familyId !== owner.familyId
-    || !canManageHealthOwner(actor, owner, grantSnapshot.data(), context.now || new Date())) fail();
+    || (actor.familyId ?? null) !== (owner.familyId ?? null)) fail();
+  if (!canManageHealthOwner(actor, owner, grantSnapshot.data(), context.now || new Date())) {
+    if (actor.role === 'parent' && owner.role === 'child' && !validHealthDate(owner.birthDate)) fail('HEALTH_BIRTH_DATE_REQUIRED', 409);
+    fail();
+  }
   return { actor, owner, grant: grantSnapshot.data(), grantRef: refs[2] };
 }
 
@@ -62,7 +67,7 @@ async function healthDocumentState(context) {
   const documents = snapshot.docs.flatMap(document => {
     const record = document.data();
     if (record.state !== 'ready' || !record.readers?.includes(context.uid)
-      || record.attachmentKind === 'health-record' && (record.familyId ?? null) !== (actor.familyId ?? null)
+      || (record.familyId !== undefined || record.attachmentKind === 'health-record') && (record.familyId ?? null) !== (actor.familyId ?? null)
       || !identifier(record.ownerProfileId) || typeof record.storagePath !== 'string'
       || !record.storagePath.startsWith(`healthDocuments/${document.id}/`)) return [];
     return [{ id: document.id, title: text(record, 'title', 300), documentType: text(record, 'documentType', 50),
@@ -88,7 +93,7 @@ async function prepareDocument(context, body) {
     const ownerUid = owner.canLogin === true ? owner.id : null;
     const record = { ...metadata, ownerProfileId: owner.id, ownerUid, ownerPersonKey: owner.personKey || owner.name || owner.id,
       readers: [...new Set([context.uid, ...(metadata.shareOwner && ownerUid ? [ownerUid] : [])])], editors: [context.uid],
-      createdBy: context.uid, state: 'draft', protected: true, storagePath, mimeType: body.mimeType, size: body.size,
+      createdBy: context.uid, familyId: owner.familyId || null, state: 'draft', protected: true, storagePath, mimeType: body.mimeType, size: body.size,
       fileName: body.fileName.replace(/[\u0000-\u001f/\\]/g, '-'), createdAt: stamp(), updatedAt: stamp(),
       uploadExpiresAt: Timestamp.fromMillis((context.now || new Date()).getTime() + 3600000) };
     transaction.create(context.db.collection('healthDocuments').doc(documentId), record);
@@ -189,7 +194,7 @@ async function changeGrant(context, body, revoke) {
     const [actorSnapshot, recipientSnapshot, prior] = await transaction.getAll(actorRef, recipientRef, ref);
     const actor = actorSnapshot.data(); const recipient = recipientSnapshot.data();
     if (!activeHealthMember(actor) || !activeHealthMember(recipient)
-      || actor.familyId && recipient.familyId && actor.familyId !== recipient.familyId) fail();
+      || (actor.familyId ?? null) !== (recipient.familyId ?? null)) fail();
     const documents = revoke ? await transaction.get(context.db.collection('healthDocuments').where('ownerProfileId', '==', body.ownerProfileId).limit(401)) : null;
     if (documents?.size > 400) fail('HEALTH_TOO_MANY_DOCUMENTS', 409);
     const grants = (prior.data()?.grants || []).filter(item => item.uid !== body.granteeUid);
@@ -227,14 +232,13 @@ export async function retryHealthDocumentDeletes(context) {
   const drafts = await context.db.collection('healthDocuments').where('state', '==', 'draft').limit(100).get();
   for (const snapshot of drafts.docs) {
     const record = snapshot.data();
-    if (record.attachmentKind !== 'health-record' || !record.attachmentRecordId
-      || !record.uploadExpiresAt?.toMillis || record.uploadExpiresAt.toMillis() > (context.now || new Date()).getTime()) continue;
+    if (!record.uploadExpiresAt?.toMillis || record.uploadExpiresAt.toMillis() > (context.now || new Date()).getTime()) continue;
     await context.db.runTransaction(async transaction => {
       const current = await transaction.get(snapshot.ref);
-      const linked = await transaction.get(context.db.collection('healthRecords').doc(record.attachmentRecordId));
-      if (current.data()?.state !== 'draft' || current.data()?.attachmentKind !== 'health-record'
+      const linked = record.attachmentRecordId ? await transaction.get(context.db.collection('healthRecords').doc(record.attachmentRecordId)) : null;
+      if (current.data()?.state !== 'draft'
         || current.data()?.uploadExpiresAt?.toMillis() > (context.now || new Date()).getTime()
-        || linked.data()?.attachmentDocumentId === snapshot.id) return;
+        || linked?.data()?.attachmentDocumentId === snapshot.id) return;
       transaction.update(snapshot.ref, { state: 'deleting', deletionRequestedBy: record.createdBy,
         deletionRequestedAt: stamp(), updatedAt: stamp() });
     });

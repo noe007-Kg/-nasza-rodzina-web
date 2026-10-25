@@ -15,6 +15,14 @@ test('tasks-only release cannot enable health or finance, or bypass Preview and 
   assert.equal(familyV2WritesAllowed(production, { ...env, FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080' }, 'tasks'), false);
 });
 
+test('health-only release does not enable finance/tasks and keeps production and Preview boundaries', () => {
+  const env = { HEALTH_WRITES_ENABLED: 'true' };
+  assert.equal(familyV2WritesAllowed(production, env, 'health'), true);
+  for (const domain of ['finance', 'tasks', undefined]) assert.equal(familyV2WritesAllowed(production, env, domain), false);
+  assert.equal(familyV2WritesAllowed(production, { ...env, VERCEL_ENV: 'preview' }, 'health'), false);
+  assert.equal(familyV2WritesAllowed(production, { ...env, FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080' }, 'health'), false);
+});
+
 test('v2 writes are disabled by default and require the exact server-owned opt-in', () => {
   assert.equal(familyV2WritesAllowed(production, {}), false);
   for (const value of ['false', 'TRUE', '1', 'yes', true]) assert.equal(familyV2WritesAllowed(production, { FAMILY_V2_WRITES_ENABLED: value }), false);

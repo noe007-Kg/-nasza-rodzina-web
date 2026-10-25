@@ -19,6 +19,38 @@ function store(context, ticket, content = bytes, changes = {}) {
 }
 const code = expected => error => error.code === expected;
 
+test('results, history and other health files use protected attachment finalization rather than public legacy paths', async () => {
+  for (const type of ['result', 'history', 'document', 'medicine']) {
+    const context = makeContext();
+    const ticket = await manageHealthAction(context, request()); store(context, ticket);
+    await manageHealthAction(context, finalize({ record: { ...visit, type }, addToCalendar: true }));
+    const record = context.rows.get('healthRecords/visit-test');
+    assert.equal(record.type, type); assert.equal(record.documentPath, '');
+    assert.equal(record.attachmentDocumentId, 'attachment-test');
+    assert.equal([...context.rows.keys()].some(key => key.startsWith('calendarEvents/')), false);
+  }
+});
+
+test('an abandoned standalone document draft is deleted after expiry but ready documents remain', async () => {
+  const context = makeContext();
+  const ticket = await manageHealthAction(context, { operation: 'prepare', ownerProfileId: 'child', metadata, mimeType: 'application/pdf', size: bytes.length, fileName: 'fixture.pdf' });
+  store(context, ticket);
+  context.rows.get('healthDocuments/' + ticket.documentId).uploadExpiresAt = Timestamp.fromMillis(0);
+  const result = await retryHealthDocumentDeletes(context);
+  assert.equal(result.deleted, 1);
+  assert.equal(context.bucket.objects.has(ticket.storagePath), false);
+  assert.equal(context.rows.has('healthDocuments/' + ticket.documentId), false);
+});
+
+test('a missing birth date cannot silently grant a parent access, while the owner keeps their own access', async () => {
+  const context = makeContext(); context.rows.get('members/child').birthDate = undefined;
+  await assert.rejects(manageHealthAction(context, request()), code('HEALTH_BIRTH_DATE_REQUIRED'));
+  assert.equal(context.rows.has('healthDocuments/attachment-test'), false);
+  const own = { ...context.as('child'), bucket: context.bucket };
+  await manageHealthAction(own, request());
+  assert.equal(context.rows.get('healthDocuments/attachment-test').createdBy, 'child');
+});
+
 test('prepare is idempotent and does not prematurely save the visit or file metadata in legacy healthRecords', async () => {
   const context = makeContext();
   const first = await manageHealthAction(context, request());

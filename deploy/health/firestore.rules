@@ -1,0 +1,275 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function profile() { return get(/databases/$(database)/documents/members/$(request.auth.uid)).data; }
+    function member() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/members/$(request.auth.uid))
+        && profile().get('active', false) == true
+        && profile().get('canLogin', false) == true
+        && profile().get('archived', false) == false
+        && profile().get('role', '') in ['parent', 'adult', 'child'];
+    }
+    function parent() { return member() && profile().role == 'parent'; }
+    function ownPerson() { return profile().get('personKey', profile().get('name', '')); }
+    function person(value) {
+      return value is string && (value in ['family', 'Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla']
+        || value.matches('member-[a-f0-9]{24}'));
+    }
+    function ownOrFamily(value) { return value == ownPerson() || value == 'family'; }
+    function title(value) { return value is string && value.size() > 0 && value.size() <= 500; }
+    function creator(data) { return data.createdBy == request.auth.uid; }
+    function preserveCreator() { return request.resource.data.get('createdBy', '') == resource.data.get('createdBy', ''); }
+    // Google imports and their provenance are managed only by authorized Admin endpoints.
+    // Legacy manual/ICS documents remain editable without adding provider metadata.
+    function clientCalendar(id, data) {
+      return !id.matches('google-[a-f0-9]{64}')
+        && data.get('source', 'manual') in ['manual', 'ics']
+        && !data.keys().hasAny(['provider', 'readOnly', 'cancelled', 'sourceConnectionId', 'sourceOwnerUid',
+          'externalCalendarId', 'externalEventId', 'externalSeriesId', 'ownerProfileId', 'visibilityOverride',
+          'sourceStartDate', 'sourceEndDateExclusive']);
+    }
+    function validTask(data) {
+      return title(data.title) && person(data.person)
+        && data.done is bool && data.requireApproval is bool
+        && data.points is number && data.points >= 0 && data.points <= 10000
+        && data.approvalStatus in ['none', 'pending', 'approved'];
+    }
+    function validHealth(data) {
+      return title(data.title) && person(data.person) && data.privateToParents is bool
+        && data.type in ['visit', 'doctor', 'medicine', 'result', 'history', 'document']
+        && data.get('documentURL', '') == ''
+        && (data.get('documentPath', '') == ''
+          || data.documentPath.matches('health/' + (data.privateToParents ? 'parents' : 'shared') + '/' + data.person + '/[^/]+/[^/]+'));
+    }
+    function healthVisible(data) {
+      return parent() || (member() && data.get('privateToParents', false) == false && ownOrFamily(data.person));
+    }
+    function validSchool(data) {
+      return title(data.title) && person(data.person) && !(data.person in ['family', 'Sebastian', 'Dominika'])
+        && data.type in ['lesson', 'homework', 'test', 'grade', 'message', 'activity'];
+    }
+    function manualSchool(data) {
+      return !data.keys().hasAny(['source', 'provider', 'providerScopeId', 'sourceRecordId', 'sourceExternalId', 'sourceProfileId', 'sourceOwnerUid', 'sourceConnectionId', 'sourceConnectionScope', 'sourceSyncId', 'syncedAt']);
+    }
+    function privateParticipant(data) {
+      return request.auth.uid in data.participants;
+    }
+    function activeChatParticipant(uid) {
+      return uid is string
+        && exists(/databases/$(database)/documents/members/$(uid))
+        && get(/databases/$(database)/documents/members/$(uid)).data.get('active', false) == true
+        && get(/databases/$(database)/documents/members/$(uid)).data.get('canLogin', false) == true
+        && get(/databases/$(database)/documents/members/$(uid)).data.get('archived', false) == false
+        && get(/databases/$(database)/documents/members/$(uid)).data.get('role', '') in ['parent', 'adult', 'child'];
+    }
+    function validMessage(data) {
+      return data.keys().hasOnly(['text', 'name', 'uid', 'channel', 'participants', 'createdAt'])
+        && data.text is string && data.text.size() > 0 && data.text.size() <= 10000
+        && data.uid == request.auth.uid && data.name == profile().name
+        && data.createdAt is timestamp && data.participants is list
+        && ((data.channel == 'family' && data.participants.size() == 0)
+          || (data.participants.size() == 2 && data.participants[0] != data.participants[1]
+            && privateParticipant(data)
+            && activeChatParticipant(data.participants[0])
+            && activeChatParticipant(data.participants[1])
+            && (data.channel == 'private:' + data.participants[0] + ':' + data.participants[1]
+              || data.channel == 'private:' + data.participants[1] + ':' + data.participants[0])));
+    }
+
+    match /members/{uid} {
+      allow get: if signedIn() && (uid == request.auth.uid || member());
+      allow list: if member();
+      allow write: if false;
+    }
+    // The aggregate family profile is metadata, never a login identity.
+    // Changes go through the authorized Admin endpoint.
+    match /familySettings/profile {
+      allow read: if member();
+      allow write: if false;
+    }
+    match /calendarEvents/{id} {
+      allow read: if member();
+      allow create: if member() && creator(request.resource.data) && clientCalendar(id, request.resource.data)
+        && request.resource.data.get('private', false) == false
+        && title(request.resource.data.title) && person(request.resource.data.person)
+        && (parent() || ownOrFamily(request.resource.data.person));
+      allow update: if member() && preserveCreator() && clientCalendar(id, resource.data) && clientCalendar(id, request.resource.data)
+        && request.resource.data.get('private', false) == false
+        && title(request.resource.data.title) && person(request.resource.data.person)
+        && (parent() || (resource.data.createdBy == request.auth.uid
+          && ownOrFamily(resource.data.person) && ownOrFamily(request.resource.data.person)));
+      allow delete: if clientCalendar(id, resource.data)
+        && (parent() || (member() && resource.data.createdBy == request.auth.uid && ownOrFamily(resource.data.person)));
+    }
+    match /privateCalendarEvents/{id} {
+      allow read: if member() && resource.data.ownerUid == request.auth.uid;
+      allow create: if member() && creator(request.resource.data) && clientCalendar(id, request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid && request.resource.data.private == true
+        && title(request.resource.data.title) && person(request.resource.data.person)
+        && (parent() || ownOrFamily(request.resource.data.person));
+      allow update: if member() && resource.data.ownerUid == request.auth.uid && preserveCreator()
+        && clientCalendar(id, resource.data) && clientCalendar(id, request.resource.data)
+        && request.resource.data.ownerUid == resource.data.ownerUid && request.resource.data.private == true
+        && title(request.resource.data.title) && person(request.resource.data.person)
+        && (parent() || ownOrFamily(request.resource.data.person));
+      allow delete: if member() && resource.data.ownerUid == request.auth.uid && clientCalendar(id, resource.data);
+    }
+
+    function notificationPreferences(value) {
+      return value is map && value.keys().hasOnly(['enabled', 'sound', 'categories'])
+        && value.enabled is bool && value.sound is bool && value.categories is map
+        && value.categories.keys().hasOnly(['calendar', 'tasks', 'shopping', 'familyChat', 'privateChat', 'health', 'school', 'important'])
+        && value.categories.calendar is bool && value.categories.tasks is bool
+        && value.categories.shopping is bool && value.categories.familyChat is bool
+        && value.categories.privateChat is bool && value.categories.health is bool
+        && value.categories.school is bool && value.categories.important is bool;
+    }
+    function validPreferences(data) {
+      return data.keys().hasOnly(['dashboardOrder', 'notifications', 'importantItems', 'updatedAt'])
+        && (!data.keys().hasAny(['dashboardOrder']) || (data.dashboardOrder is list && data.dashboardOrder.size() <= 7
+          && data.dashboardOrder.hasOnly(['family-time', 'calendar', 'tasks', 'shopping', 'chat', 'health', 'school'])
+          && data.dashboardOrder.toSet().size() == data.dashboardOrder.size()))
+        && (!data.keys().hasAny(['notifications']) || notificationPreferences(data.notifications))
+        && (!data.keys().hasAny(['importantItems']) || (data.importantItems is list && data.importantItems.size() <= 500))
+        && (!data.keys().hasAny(['updatedAt']) || data.updatedAt is timestamp);
+    }
+    match /userPreferences/{uid} {
+      allow read: if member() && request.auth.uid == uid;
+      allow create, update: if member() && request.auth.uid == uid && validPreferences(request.resource.data);
+      allow delete: if false;
+    }
+    match /notificationInbox/{uid}/items/{id} {
+      allow read: if member() && request.auth.uid == uid;
+      allow update: if member() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt', 'starred'])
+        && request.resource.data.get('read', false) is bool && request.resource.data.get('starred', false) is bool
+        && (!request.resource.data.keys().hasAny(['readAt']) || request.resource.data.readAt is timestamp);
+      allow create, delete: if false;
+    }
+    // Device tokens, ownership, deduplication and the delivery queue are server-only.
+    match /_notificationDevices/{id} { allow read, write: if false; }
+    match /_notificationTokenOwners/{id} { allow read, write: if false; }
+    match /_notificationEvents/{id} { allow read, write: if false; }
+    match /_notificationOutbox/{id} { allow read, write: if false; }
+    match /_notificationBaselines/{id} { allow read, write: if false; }
+    match /tasks/{id} {
+      allow read: if member();
+      allow write: if false;
+    }
+    match /taskPointBalances/{id} { allow read, write: if false; }
+    match /taskPointLedger/{id} { allow read, write: if false; }
+    match /taskCompletions/{id} { allow read, write: if false; }
+    match /taskRewards/{id} { allow read, write: if false; }
+    match /taskRewardRequests/{id} { allow read, write: if false; }
+    match /_taskPhotoUploads/{id} { allow read, write: if false; }
+    match /_taskPhotoCleanup/{id} { allow read, write: if false; }
+    match /_taskRewardImageUploads/{id} { allow read, write: if false; }
+    match /_taskRewardImageCleanup/{id} { allow read, write: if false; }
+
+    match /shoppingItems/{id} {
+      allow read, delete: if member();
+      allow create: if member() && creator(request.resource.data) && title(request.resource.data.title)
+        && request.resource.data.done is bool;
+      allow update: if member() && preserveCreator() && title(request.resource.data.title)
+        && request.resource.data.done is bool;
+    }
+    match /quickProducts/{id} {
+      allow read: if member();
+      allow create, update: if member() && title(request.resource.data.get('title', id));
+      allow delete: if member();
+    }
+    match /familyMessages/{id} {
+      allow read: if member() && (privateParticipant(resource.data) || resource.data.get('channel', '') == 'family');
+      allow create: if member() && validMessage(request.resource.data);
+      allow update: if false;
+      allow delete: if member() && (resource.data.uid == request.auth.uid
+        || (parent() && resource.data.channel == 'family'));
+    }
+    function healthDocumentFamily(data) {
+      return (!data.keys().hasAny(['familyId']) && data.get('attachmentKind', '') != 'health-record')
+        || data.get('familyId', null) == profile().get('familyId', null);
+    }
+    function linkedHealthEditor(id, data) {
+      let document = get(/databases/$(database)/documents/healthDocuments/$(data.attachmentDocumentId)).data;
+      return document.state == 'ready' && document.get('attachmentKind', '') == 'health-record'
+        && document.attachmentRecordId == id && request.auth.uid in document.editors
+        && healthDocumentFamily(document);
+    }
+    function healthLinkPreserved(id) {
+      return !resource.data.keys().hasAny(['attachmentDocumentId'])
+        ? !request.resource.data.keys().hasAny(['attachmentDocumentId'])
+        : request.resource.data.get('attachmentDocumentId', '') == resource.data.attachmentDocumentId
+          && request.resource.data.person == resource.data.person
+          && request.resource.data.privateToParents == resource.data.privateToParents
+          && request.resource.data.get('documentPath', '') == resource.data.get('documentPath', '')
+          && request.resource.data.get('documentURL', '') == resource.data.get('documentURL', '')
+          && linkedHealthEditor(id, resource.data);
+    }
+    match /healthDocuments/{id} {
+      allow read: if member() && resource.data.state == 'ready' && request.auth.uid in resource.data.readers
+        && healthDocumentFamily(resource.data);
+      allow write: if false;
+    }
+    match /healthDocumentGrants/{ownerProfileId} {
+      allow get: if member() && (ownerProfileId == request.auth.uid
+        || resource.data.ownerUid == request.auth.uid || request.auth.uid in resource.data.authorizedUids);
+      allow list: if member() && (resource.data.ownerUid == request.auth.uid || request.auth.uid in resource.data.authorizedUids);
+      allow write: if false;
+    }
+    match /_healthDocumentCleanup/{id} { allow read, write: if false; }
+    match /_healthDocumentReminderEvents/{id} { allow read, write: if false; }
+    match /healthRecords/{id} {
+      allow read: if member() && healthVisible(resource.data);
+      allow create: if member() && creator(request.resource.data) && validHealth(request.resource.data)
+        && !request.resource.data.keys().hasAny(['attachmentDocumentId'])
+        && (parent() || (request.resource.data.person == ownPerson() && request.resource.data.privateToParents == false));
+      allow update: if member() && preserveCreator() && validHealth(request.resource.data)
+        && healthLinkPreserved(id)
+        && (parent() || (resource.data.person == ownPerson() && resource.data.get('privateToParents', false) == false
+          && resource.data.type == 'medicine'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmedDate', 'updatedAt'])
+          && request.resource.data.confirmedDate is string && request.resource.data.confirmedDate.size() == 10));
+      allow delete: if parent() && (!resource.data.keys().hasAny(['attachmentDocumentId']) || linkedHealthEditor(id, resource.data));
+    }
+    match /medicalContacts/{id} {
+      allow read: if member() && (parent() || ownOrFamily(resource.data.person));
+      allow create: if parent() && creator(request.resource.data) && person(request.resource.data.person);
+      allow update: if parent() && preserveCreator() && person(request.resource.data.person);
+      allow delete: if parent();
+    }
+    match /schoolItems/{id} {
+      allow read: if member() && (parent() || resource.data.person == ownPerson());
+      allow create: if member() && creator(request.resource.data) && validSchool(request.resource.data) && manualSchool(request.resource.data)
+        && (parent() || (request.resource.data.person == ownPerson()
+          && request.resource.data.type in ['lesson', 'homework', 'test', 'activity']));
+      allow update: if member() && preserveCreator() && validSchool(request.resource.data) && manualSchool(request.resource.data)
+        && resource.data.get('source', '') != 'eduvulcan'
+        && (parent() || (resource.data.person == ownPerson() && request.resource.data.person == ownPerson()
+          && resource.data.type in ['lesson', 'homework', 'test', 'activity']
+          && request.resource.data.type in ['lesson', 'homework', 'test', 'activity']));
+      allow delete: if resource.data.get('source', '') != 'eduvulcan' && (parent() || (member() && resource.data.person == ownPerson()
+        && resource.data.type in ['lesson', 'homework', 'test', 'activity']));
+    }
+    match /schoolParentMessages/{id} {
+      allow read: if parent();
+      allow write: if false;
+    }
+    match /schoolStudentMessages/{id} {
+      allow read: if member() && profile().role == 'child' && resource.data.sourceOwnerUid == request.auth.uid
+        && resource.data.person == ownPerson();
+      allow write: if false;
+    }
+    match /_eduConnections/{uid} {
+      allow read, write: if false;
+    }
+    match /_eduStudentBindings/{personKey} {
+      allow read, write: if false;
+    }
+    match /_eduConnectLocks/{id} {
+      allow read, write: if false;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
