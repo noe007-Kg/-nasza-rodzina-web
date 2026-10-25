@@ -13,10 +13,10 @@ function displayDate(record: SchoolGradeRecord) {
   return 'Bez daty wystawienia';
 }
 
-function GradeRow<T extends SchoolGradeRecord>({ record, onOpen }: { record: T; onOpen: (record: T) => void }) {
+function GradeRow<T extends SchoolGradeRecord>({ record, onOpen, isNew = false }: { record: T; onOpen: (record: T) => void; isNew?: boolean }) {
   const metadata = parseGradeMetadata(record.note);
-  return <button type="button" className="school-entry school-grade-entry" onClick={() => onOpen(record)} data-testid="school-grade-entry" data-grade-id={record.id}>
-    <span className="school-grade-value">{record.title || 'Bez oznaczenia'}</span>
+  return <button type="button" className={`school-entry school-grade-entry ${isNew ? 'has-new-badge' : ''}`} onClick={() => onOpen(record)} data-testid="school-grade-entry" data-grade-id={record.id}>
+    {isNew && <small className="school-new-badge">NOWE</small>}<span className="school-grade-value">{record.title || 'Bez oznaczenia'}</span>
     <span className="school-entry-copy"><strong>{record.subject || 'Bez przedmiotu'}</strong><span>{displayDate(record)}{metadata.teacher ? ` · ${metadata.teacher}` : ''}</span>{metadata.weight !== undefined && <small>Waga w dzienniku: {metadata.weight}</small>}{record.source === 'eduvulcan' && <small className="school-source-badge">eduVULCAN · tylko odczyt</small>}</span>
     <span className="school-entry-arrow" aria-hidden="true"><Icon name="chevron-right" /></span>
   </button>;
@@ -30,7 +30,7 @@ export function SchoolGrades<T extends SchoolGradeRecord>({ records, resetKey, o
   const distribution = useMemo(() => gradeDistribution(partials), [partials]);
   const [selection, setSelection] = useState<{ key: string; subject: string | null }>({ key: resetKey, subject: null });
   const selected = selection.key === resetKey ? subjects.find(subject => subject.key === selection.subject) : undefined;
-  const renderGrade = (record: T) => <div key={record.id}>{isNew(record) && <span className="school-new-badge">Nowa ocena</span>}<GradeRow record={record} onOpen={onOpen} />{renderAction?.(record)}</div>;
+  const renderGrade = (record: T) => <div key={record.id}><GradeRow record={record} onOpen={onOpen} isNew={isNew(record)} />{renderAction?.(record)}</div>;
 
   if (!records.length) return <div className="school-empty-state"><Icon name="grade" /><strong>Nie ma jeszcze ocen.</strong><p>Oceny pojawią się po dodaniu lub synchronizacji.</p></div>;
   if (selected) return <div className="school-grades school-subject-detail" data-testid="school-grade-subject">
@@ -43,8 +43,8 @@ export function SchoolGrades<T extends SchoolGradeRecord>({ records, resetKey, o
   return <div className="school-grades" data-testid="school-grades-dashboard">
     <header className="school-grades-heading"><div><span className="school-eyebrow">Postępy w szkole</span><h3>Oceny</h3><p>Prawdziwe wpisy z dziennika i dodane przez rodzinę.</p></div><span className="school-grades-total"><strong>{records.length}</strong><small>{records.length === 1 ? 'wpis' : 'wpisów'}</small></span></header>
     <div className="school-grade-summary"><span><b>{partials.length}</b> Oceny i wyniki</span><span><b>{subjects.filter(subject => subject.subject.trim()).length}</b> Przedmioty</span><span><b>{periods.length}</b> Wpisy okresowe</span></div>
-    <section className="school-grade-subjects" aria-labelledby="school-grade-subjects-title"><div className="school-list-section-heading"><h3 id="school-grade-subjects-title">Przedmioty</h3></div><div className="school-grade-subject-grid">{subjects.map((subject, index) => <button key={subject.key} type="button" data-testid="school-grade-subject-card" className={`school-grade-subject-card grade-tone-${index % 4}`} onClick={() => setSelection({ key: resetKey, subject: subject.key })}>
-      <span className="school-grade-subject-title"><strong>{subject.subject || 'Bez przedmiotu'} {[...subject.partial, ...subject.period].some(isNew) && <small className="school-new-badge">Nowa ocena</small>}</strong><Icon name="chevron-right" /></span><span className="school-grade-subject-values">{subject.partial.slice(0, 5).map(record => <span key={record.id}>{record.title || 'Bez oznaczenia'}</span>)}</span>
+    <section className="school-grade-subjects" aria-labelledby="school-grade-subjects-title"><div className="school-list-section-heading"><h3 id="school-grade-subjects-title">Przedmioty</h3></div><div className="school-grade-subject-grid">{subjects.map((subject, index) => <button key={subject.key} type="button" data-testid="school-grade-subject-card" className={`school-grade-subject-card grade-tone-${index % 4} ${[...subject.partial, ...subject.period].some(isNew) ? 'has-new-badge' : ''}`} onClick={() => setSelection({ key: resetKey, subject: subject.key })}>
+      <span className="school-grade-subject-title"><strong>{subject.subject || 'Bez przedmiotu'} {[...subject.partial, ...subject.period].some(isNew) && <small className="school-new-badge">NOWE</small>}</strong><Icon name="chevron-right" /></span><span className="school-grade-subject-values">{subject.partial.slice(0, 5).map(record => <span key={record.id}>{record.title || 'Bez oznaczenia'}</span>)}</span>
       <span className="school-grade-subject-caption">{subject.partial.length} ocen / wyników{subject.period.length ? ` · ${subject.period.length} okresowych` : ''}</span>{subject.portalAverage !== null && <small>Średnia z dziennika: {subject.portalAverage}</small>}
     </button>)}</div></section>
     <SchoolExpandableList key={`${resetKey}:latest`} items={newestPartials} title="Ostatnie oceny" resetKey={`${resetKey}:latest`} renderItem={renderGrade} className="school-latest-grades" testId="school-latest-grades" countLabel={`${partials.length} ocen / wyników`} collapseLabel="Zwiń listę" />

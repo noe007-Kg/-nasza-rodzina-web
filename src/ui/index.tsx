@@ -7,9 +7,10 @@ export type IconName =
   | 'school' | 'calendar' | 'book' | 'grade' | 'homework' | 'test' | 'message'
   | 'activity' | 'sun' | 'clock' | 'arrow-right' | 'chevron-left' | 'chevron-right'
   | 'plus' | 'upload' | 'check' | 'link' | 'shield' | 'users' | 'refresh'
-  | 'x' | 'close' | 'heart' | 'bell' | 'document' | 'settings' | 'shopping' | 'task' | 'mail';
+  | 'pill' | 'x' | 'close' | 'heart' | 'bell' | 'document' | 'settings' | 'shopping' | 'task' | 'mail';
 
 const iconPaths: Record<IconName, ReactNode> = {
+  pill: <><path d="m9 4-5 5a6 6 0 0 0 8 8l5-5a6 6 0 0 0-8-8Z"/><path d="m7 7 8 8"/></>,
   school: <><path d="m3 9 9-6 9 6v12H3Z"/><path d="M9 21v-7h6v7M7 10h.01M17 10h.01M7 14h.01M17 14h.01"/><path d="M12 3V1m0 0h5"/></>,
   calendar: <><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M16 3v4M8 3v4M3 11h18M8 15h.01M12 15h.01M16 15h.01M8 18h.01M12 18h.01"/></>,
   book: <><path d="M12 5v16M3 3h4a5 5 0 0 1 5 3 5 5 0 0 1 5-3h4v16h-4a5 5 0 0 0-5 2 5 5 0 0 0-5-2H3Z"/><path d="M6 7h2M16 7h2M6 11h2M16 11h2"/></>,

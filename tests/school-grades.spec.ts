@@ -83,7 +83,8 @@ test('Ostatnie oceny rozwijają wszystkie i zwijają do pięciu bez ponownego za
   expect(diaryRequests).toEqual([]);
   await expand.click();
   await page.locator('.school-students').getByRole('button', { name: 'Paweł', exact: true }).click();
-  await expect(page.getByTestId('school-latest-grades').locator('[data-testid="school-grade-entry"]')).toHaveCount(5);
+  // Paweł has the separate Okruszek source; SP4 grades must stay hidden.
+  await expect(page.getByRole('region', { name: 'Okruszek: Paweł', exact: true })).toBeVisible();
   await page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true }).click();
   await expect(page.getByTestId('school-latest-grades').locator('[data-testid="school-grade-entry"]')).toHaveCount(5);
 });
@@ -171,7 +172,7 @@ test('Wszystkie ogranicza każdy rodzaj do pięciu, a zmiana filtra lub ucznia r
   await expect(page.getByTestId('school-list-grade').locator('.school-entry')).toHaveCount(5);
   await page.getByTestId('school-list-grade').getByRole('button', { name: 'Pokaż wszystkie: Oceny', exact: true }).click();
   await page.locator('.school-students').getByRole('button', { name: 'Paweł', exact: true }).click();
-  await expect(page.getByTestId('school-list-grade').locator('.school-entry')).toHaveCount(5);
+  await expect(page.getByRole('region', { name: 'Okruszek: Paweł', exact: true })).toBeVisible();
   await expect(page.locator('.school-record-list')).not.toContainText('Nauczyciel testowy');
   await page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true }).click();
   await expect(page.getByTestId('school-list-grade').locator('.school-entry')).toHaveCount(5);
@@ -180,7 +181,7 @@ test('Wszystkie ogranicza każdy rodzaj do pięciu, a zmiana filtra lub ucznia r
   await page.getByTestId('school-subject-grades').getByRole('button', { name: 'Pokaż wszystkie: Oceny i wyniki', exact: true }).click();
   await expect(page.getByTestId('school-subject-grades').locator('[data-testid="school-grade-entry"]')).toHaveCount(7);
   await page.locator('.school-students').getByRole('button', { name: 'Paweł', exact: true }).click();
-  await expect(page.getByTestId('school-grades-dashboard')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Okruszek: Paweł', exact: true })).toBeVisible();
   await page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true }).click();
   await expect(page.getByTestId('school-grades-dashboard')).toBeVisible();
   await page.getByTestId('school-grade-subject-card').filter({ hasText: 'Matematyka' }).click();

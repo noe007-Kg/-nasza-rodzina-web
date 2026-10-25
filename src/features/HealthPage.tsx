@@ -1,5 +1,6 @@
 import { addDoc, collection, db, deleteDoc, deleteObject, doc, EmptyState, errorMessage, formatDateInput, formatShortDate, getDoc, isParent, isPersonKey, Modal, ModuleHeader, notify, onSnapshot, ownPerson, parseLocalDate, personColor, PersonSelect, query, React, storage, storageRef, Timestamp, updateDoc, useEffect, useRef, useState, where, writeBatch, type HealthForm, type HealthRecord, type HealthStatus, type HealthType, type MedicalContact, type Member, type PersonKey, type User } from "../app-shared";
 
+import { Icon } from '../ui';
 import { uploadBytesResumable } from 'firebase/storage';
 import { useNotifications } from '../notifications';
 
@@ -282,7 +283,7 @@ export function HealthPage({ user, member }: { user: User; member: Member | null
       <section className="health-person-filter" aria-label="Wybór kartoteki zdrowia">
         <label><span>Kartoteka</span><PersonSelect value={person} onChange={setPerson} allowed={parent ? undefined : ['family', ownPerson(member)]} /></label>
       </section>
-      <nav className="health-section-navigation" aria-label="Sekcje zdrowia">{([['overview', 'Przegląd'], ['visits', 'Wizyty'], ['medicine', 'Leki'], ['documents', 'Dokumenty'], ['history', 'Historia zdrowia'], ['contacts', 'Kontakty medyczne']] as const).map(([key, label]) => <button type="button" key={key} aria-pressed={section === key} onClick={() => setSection(key)}>{label}</button>)}</nav>
+      <nav className="health-section-navigation" aria-label="Sekcje zdrowia">{([['overview', 'Przegląd', 'heart'], ['visits', 'Wizyty', 'calendar'], ['medicine', 'Leki', 'pill'], ['documents', 'Dokumenty', 'document'], ['history', 'Historia zdrowia', 'clock'], ['contacts', 'Kontakty medyczne', 'users']] as const).map(([key, label, icon]) => <button type="button" key={key} aria-pressed={section === key} onClick={() => setSection(key)}><span className="health-section-icon" aria-hidden="true"><Icon name={icon} size={20}/></span><span>{label}</span></button>)}</nav>
       {(section === 'overview' || section === 'documents') && <ProtectedHealthDocuments key={user.uid} user={user} member={member} person={person} onSelectPerson={setPerson} />}
 
       <section className="specialty-chips"><button className={specialtyFilter === 'all' ? 'active' : ''} onClick={() => setSpecialtyFilter('all')}>Chronologia</button>{SPECIALTIES.map((s)=><button key={s} className={specialtyFilter === s ? 'active' : ''} onClick={() => setSpecialtyFilter(s)}>{s}</button>)}</section>

@@ -1,0 +1,13 @@
+import { initializeApp, getApps } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import { defineSecret } from 'firebase-functions/params';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { info } from 'firebase-functions/logger';
+import { EDU_DAY_SCHEDULE, EDU_NIGHT_SCHEDULE, EDU_SCHEDULE_TIME_ZONE, runScheduledEduSync } from './server/edu-scheduler.mjs';
+const app = getApps()[0] || initializeApp();
+const db = getFirestore(app);
+const key = defineSecret('EDUVULCAN_ENCRYPTION_KEY_BASE64');
+const options = { timeZone: EDU_SCHEDULE_TIME_ZONE, region:'europe-west1', secrets:[key], retryCount:0, minInstances:0, maxInstances:1, concurrency:1, memory:'256MiB', timeoutSeconds:110 };
+const scheduled = window => async event => info('eduVULCAN scheduled synchronization', await runScheduledEduSync({db}, {scheduleTime:event.scheduleTime, window}));
+export const eduVulcanSchoolHours = onSchedule({...options,schedule:EDU_DAY_SCHEDULE},scheduled('day'));
+export const eduVulcanOffHours = onSchedule({...options,schedule:EDU_NIGHT_SCHEDULE},scheduled('night'));
