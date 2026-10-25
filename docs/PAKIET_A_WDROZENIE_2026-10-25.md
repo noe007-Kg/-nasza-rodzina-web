@@ -70,9 +70,11 @@ testu. Testy zapisu wykorzystują wyłącznie odizolowany projekt demo.
   POST `/api/family/tasks` z operacją odczytu bez logowania zwraca prawidłowe
   401 `EDU_UNAUTHENTICATED`.
 - Kontrola logów error/fatal tego wdrożenia w oknie 10 minut nie wykazała wpisów.
-- Przeglądarka produkcyjna poprawnie pokazuje ekran logowania. Brak dostępnej
-  zalogowanej sesji użytkownika ogranicza weryfikację rzeczywistych przycisków
-  rodzica w produkcji. Nie obchodzono logowania ani nie podszywano się pod rodzinę.
+- Po odświeżeniu przeglądarka automatycznie odzyskała istniejącą sesję rodzica.
+  Potwierdzono widok czterech zadań, brak banera blokady oraz aktywne przyciski
+  „Dodaj zadanie”, „Zatwierdź”, „Do poprawy” i „Dodaj nagrodę”. Panel punktów,
+  nagród, próśb i historii ładuje się poprawnie. Nie obchodzono logowania ani
+  nie podszywano się pod rodzinę. Nie naciskano przycisków zmieniających zadania.
 - Ten dopisek dokumentacyjny powstał po wydaniu; nie zmienia wdrożonego kodu.
 
 Reguły są weryfikowaną testami propozycją dla obecnego modelu jednej rodziny;
