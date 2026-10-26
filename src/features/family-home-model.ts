@@ -2,9 +2,9 @@ import type { CalendarOccurrence } from '../app-shared';
 import { warsawCalendarDayRange, warsawDayKey } from '../calendar-timeline';
 import { normalizeDashboardOrder, type StartCardId } from './start-layout';
 
-export const HOME_SECTIONS = ['calendar', 'tasks', 'shortcuts'] as const;
+export const HOME_SECTIONS = ['calendar', 'tasks', 'school', 'shortcuts'] as const;
 export type HomeSection = typeof HOME_SECTIONS[number];
-const shortcutCards: StartCardId[] = ['shopping', 'chat', 'health', 'school'];
+const shortcutCards: StartCardId[] = ['shopping', 'chat', 'health'];
 export function homeSectionOrder(order: readonly StartCardId[]): HomeSection[] {
   return [...new Set(normalizeDashboardOrder(order).filter(id => id !== 'family-time').map(id => shortcutCards.includes(id) ? 'shortcuts' : id))] as HomeSection[];
 }

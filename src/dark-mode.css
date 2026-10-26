@@ -1,0 +1,40 @@
+/* Share the active palette with both generations of components, including dialogs. */
+html:root[data-theme="dark"], html:root[data-theme="dark"] .family-ui {
+  --family-text:var(--brand-ink); --family-muted:var(--brand-muted); --family-surface:var(--brand-card);
+  --family-background:var(--brand-page); --family-line:var(--brand-line);
+  --family-soft-rose:var(--brand-primary-soft); --family-soft-violet:var(--brand-violet-soft);
+  --family-soft-blue:var(--brand-blue-soft); --family-soft-mint:var(--brand-green-soft); --family-soft-gold:var(--brand-amber-soft);
+  --family-ink-rose:var(--brand-primary-ink); --family-ink-violet:var(--brand-violet);
+  --family-ink-blue:var(--brand-blue); --family-ink-mint:var(--brand-green); --family-ink-gold:var(--brand-amber);
+  --family-error-background:var(--brand-danger-soft); --family-error-text:var(--brand-danger);
+}
+html:root[data-theme="dark"] :is(.notification-settings,.notification-center,.notification-item,.family-aggregate-person,.calendar-schedule-day,.account-change-form,.chat-compose) {
+  background:var(--brand-card); color:var(--brand-ink); border-color:var(--brand-line);
+}
+html:root[data-theme="dark"] :is(.notification-toggle,.notification-center-tabs button,.notification-item.is-unread,.notification-bell,.profile-photo-preview,.family-admin-avatar,.family-top-avatar) {
+  background:var(--brand-soft); color:var(--brand-ink); border-color:var(--brand-line);
+}
+html:root[data-theme="dark"] :is(.notification-settings h2,.notification-center h2,.notification-categories label,.notification-item-content,.notification-empty strong,.account-section-heading h2,.family-admin-details strong) { color:var(--brand-ink); }
+html:root[data-theme="dark"] :is(.notification-settings header p,.notification-center header p,.notification-system-status,.notification-note,.notification-item-content small,.notification-empty,.family-top-copy small,.family-selection-note) { color:var(--brand-muted); }
+html:root[data-theme="dark"] :is(.notification-heading-icon,.notification-center-tabs button.is-active,.family-aggregate-profile) { background:var(--brand-primary-soft); color:var(--brand-primary-ink); }
+html:root[data-theme="dark"] .notification-toggle > span { background:var(--brand-soft); color:var(--brand-muted); }
+html:root[data-theme="dark"] :is(.notification-toggle > span.is-on,.account-success) { background:var(--brand-green-soft); color:var(--brand-green); }
+html:root[data-theme="dark"] :is(.notification-feedback,.account-error,.account-danger-link,.account-danger-button) { background:var(--brand-danger-soft); color:var(--brand-danger); border-color:var(--brand-line); }
+html:root[data-theme="dark"] .notification-star.is-starred { background:var(--brand-amber-soft); color:var(--brand-amber); }
+html:root[data-theme="dark"] .settings-section { color:var(--brand-ink); }
+html:root[data-theme="dark"] .settings-section > header strong { color:var(--brand-ink); }
+html:root[data-theme="dark"] .settings-section > header small { color:var(--brand-muted); }
+html:root[data-theme="dark"] .chat-page .chat-composer { background:var(--brand-card); border-color:var(--brand-line); }
+html:root[data-theme="dark"] .chat-page :is(.chat-emoji-button,.chat-mode-tabs button.active,.chat-message-reactions > button) { background:var(--brand-soft); color:var(--brand-ink); border-color:var(--brand-line); }
+html:root[data-theme="dark"] .chat-message-reactions > button[aria-pressed="true"] { background:var(--brand-primary-soft); color:var(--brand-primary-ink); }
+html:root[data-theme="dark"] :is(.health-upload-status,.health-person-filter select) { background:var(--brand-soft); color:var(--brand-ink); border-color:var(--brand-line); }
+html:root[data-theme="dark"] .health-person-filter > label { color:var(--brand-ink); }
+html:root[data-theme="dark"] .health-upload-status[data-phase="uploaded"] { background:var(--brand-green-soft); }
+html:root[data-theme="dark"] .health-upload-status[data-phase="error"] { background:var(--brand-danger-soft); color:var(--brand-danger); }
+html:root[data-theme="dark"] .settings-logout { background:var(--brand-danger-soft); color:var(--brand-danger); border-color:var(--brand-line); }
+html:root[data-theme="dark"] .account-reset-row button { color:var(--brand-blue); }
+html:root[data-theme="dark"] .shopping-v130 .quick-product-tile { background:var(--brand-amber-soft); color:var(--brand-ink); border-color:var(--brand-line); }
+html:root[data-theme="dark"] .calendar-package .connected-calendars-footer > div > button { background:var(--brand-violet-soft); color:var(--brand-violet); }
+html:root[data-theme="dark"] .health-section-navigation > button:is(:hover,[aria-pressed="true"]) { background:var(--brand-soft); color:var(--brand-violet); border-color:var(--brand-line); }
+html:root[data-theme="dark"] :is(.health-document-status.soon,.calendar-cancelled-badge) { background:var(--brand-amber-soft); color:var(--brand-amber); }
+html:root[data-theme="dark"] .health-document-status.expired { background:var(--brand-danger-soft); color:var(--brand-danger); }

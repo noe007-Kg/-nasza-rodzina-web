@@ -319,6 +319,7 @@ async function saveReward(context, body, now) {
     const previous = await transaction.get(ref);
     if (previous.exists && !sameFamily(actor, previous.data())) fail('TASK_FORBIDDEN', 403, 'Nagroda należy do innej rodziny.');
     const old = previous.exists ? previous.data() : null;
+    if (old?.archived) fail('TASK_REWARD_NOT_AVAILABLE', 404, 'Ta nagroda została usunięta.');
     const oldTicket = old?.imageUploadId ? await transaction.get(context.db.collection('_taskRewardImageUploads').doc(old.imageUploadId)) : null;
     const newTicket = uploaded ? await transaction.get(context.db.collection('_taskRewardImageUploads').doc(uploaded.id)) : null;
     const image = newTicket?.exists ? { id: newTicket.id, ...newTicket.data() } : null;
@@ -341,6 +342,29 @@ async function saveReward(context, body, now) {
   return { rewardId: ref.id };
 }
 
+async function archiveReward(context, body, now) {
+  fields(body, ['rewardId', 'confirmed']);
+  if (body.confirmed !== true) fail('TASK_CONFIRM_REQUIRED', 400, 'Potwierdź usunięcie nagrody.');
+  const ref = context.db.collection('taskRewards').doc(taskId(body.rewardId));
+  let image = null;
+  await context.db.runTransaction(async transaction => {
+    image = null;
+    const actor = await freshActor(transaction, context); requireParent(actor);
+    const snapshot = await transaction.get(ref); const reward = snapshot.exists ? snapshot.data() : null;
+    if (!reward || !sameFamily(actor, reward)) fail('TASK_REWARD_NOT_FOUND', 404, 'Nie znaleziono dostępnej nagrody.');
+    if (reward.archived) return;
+    const ticket = reward.imageUploadId ? await transaction.get(context.db.collection('_taskRewardImageUploads').doc(reward.imageUploadId)) : null;
+    const requests = await transaction.get(context.db.collection('taskRewardRequests').where('rewardId', '==', ref.id));
+    transaction.update(ref, {archived:true,active:false,archivedAt:stamp(),updatedAt:stamp(),imagePath:FieldValue.delete(),imageUploadId:FieldValue.delete()});
+    if (ticket?.exists && ticket.data().state === 'attached') { image = {id:ticket.id,...ticket.data()}; revokeRewardImage(transaction,context.db,image,'reward-deleted',now); }
+    for (const request of requests.docs) if (request.data().state === 'pending' && sameFamily(actor,request.data())) {
+      transaction.update(request.ref,{state:'rejected',decidedBy:context.uid,decidedAt:stamp(),reason:'reward-deleted'});
+      transaction.delete(context.db.collection('_taskRewardPending').doc(hash(`${request.data().person}:${ref.id}`)));
+    }
+  });
+  if (image) await deleteQueuedRewardImage(context,{...image,uploadId:image.id},now);
+  return {rewardId:ref.id,archived:true};
+}
 async function requestReward(context, body) {
   fields(body, ['rewardId', 'person']); const rewardId = taskId(body.rewardId); let requestId;
   await context.db.runTransaction(async transaction => {
@@ -351,7 +375,7 @@ async function requestReward(context, body) {
     if (!memberForPerson(profiles, person, actor)) fail('TASK_INVALID_PERSON', 400, 'Wybierz aktywnego członka rodziny.');
     const reward = await transaction.get(context.db.collection('taskRewards').doc(rewardId));
     const definition = reward.exists ? reward.data() : null;
-    if (!definition?.active || !sameFamily(actor, definition) || definition.people.length && !definition.people.includes(person)) fail('TASK_REWARD_NOT_AVAILABLE', 404, 'Ta nagroda nie jest dostępna dla wybranej osoby.');
+    if (!definition?.active || definition.archived === true || !sameFamily(actor, definition) || definition.people.length && !definition.people.includes(person)) fail('TASK_REWARD_NOT_AVAILABLE', 404, 'Ta nagroda nie jest dostępna dla wybranej osoby.');
     const pendingRef = context.db.collection('_taskRewardPending').doc(hash(`${person}:${rewardId}`));
     const pending = await transaction.get(pendingRef);
     if (pending.exists) { requestId = pending.data().requestId; return; }
@@ -442,7 +466,7 @@ async function state(context, body) {
     const person = profilePerson(profile); const stored = balanceRows.find(balance => balance.person === person);
     return { person, name: profile.name || person, ...(stored ? { balance: stored.balance, earned: stored.earned, spent: stored.spent, completedCount: stored.completedCount }
       : { balance: legacyTaskPoints(allTasks, person), earned: legacyTaskPoints(allTasks, person), spent: 0, completedCount: allTasks.filter(task => task.person === person && task.done).length }) };
-  }), rewards: rewards.docs.map(item => ({ id: item.id, ...item.data() })).filter(reward => sameFamily(actor, reward) && (parent(actor) || reward.active && (!reward.people?.length || reward.people.includes(own))))
+  }), rewards: rewards.docs.map(item => ({ id: item.id, ...item.data() })).filter(reward => reward.archived !== true && sameFamily(actor, reward) && (parent(actor) || reward.active && (!reward.people?.length || reward.people.includes(own))))
     .map(reward => ({ id: reward.id, title: reward.title, note: reward.note || '', cost: reward.cost, people: reward.people || [], active: reward.active === true,
       ...(typeof reward.imagePath === 'string' ? { imagePath: reward.imagePath } : {}) })),
   requests: requests.docs.map(item => ({ id: item.id, ...item.data() })).filter(request => sameFamily(actor, request) && (parent(actor) || request.person === own))
@@ -465,6 +489,7 @@ export async function manageTasksAction(context, body, { now = new Date() } = {}
     case 'approve': return decideTask(context, body, true, now);
     case 'rework': return decideTask(context, body, false, now);
     case 'begin-reward-image': return beginRewardImage(context, body, now);
+    case 'archive-reward': return archiveReward(context, body, now);
     case 'save-reward': return saveReward(context, body, now);
     case 'request-reward': return requestReward(context, body);
     case 'decide-reward': return decideReward(context, body);

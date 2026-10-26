@@ -9,7 +9,7 @@ import { fetchCalendarEvents } from '../calendar-store';
 import { NotificationSettings } from '../notifications';
 import { ConnectedCalendarsSettings } from '../calendars/ConnectedCalendarsSettings';
 import type { CalendarNotice } from '../calendars/model';
-import { SchoolConnectionsPreparation } from '../school/SchoolSources';
+
 import './settings-appearance.css';
 
 export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout, calendarNotice, accountAccent }: { accountAccent: { preference: AccountAccentPreference; setPreference: (value: AccountAccentPreference) => void; saved: boolean }; user: User; member: Member | null; theme: 'light' | 'dark'; setTheme: (theme: 'light' | 'dark') => void; goTo: (page: Page) => void; onLogout: () => Promise<void>; calendarNotice?: CalendarNotice }) {
@@ -44,30 +44,23 @@ export function SettingsPage({ user, member, theme, setTheme, goTo, onLogout, ca
   }
 
   return (
-    <div className="page-content compact-page settings-v130">
-      <ModuleHeader icon="⚙️" title="Ustawienia" text="Konto, wygląd, powiadomienia, synchronizacja i bezpieczeństwo." />
+    <div className="page-content compact-page settings-v130 family-ui">
+      <ModuleHeader icon="⚙️" title="Ustawienia" text="Twój profil, wygląd, powiadomienia i połączenia." />
       <section className="settings-dashboard">
         <AccountSettings user={user} />
         <OwnProfileSettings user={user} member={member} />
 
-        <article className="settings-section settings-appearance" data-testid="settings-appearance"><header><span>🎨</span><div><strong>Wygląd</strong><small>Motyw i kolor aplikacji</small></div></header><div className="appearance-theme-buttons" role="group" aria-label="Motyw aplikacji"><button type="button" aria-pressed={theme === 'light'} onClick={()=>setTheme('light')}><span aria-hidden="true">☀️</span> Jasny</button><button type="button" aria-pressed={theme === 'dark'} onClick={()=>setTheme('dark')}><span aria-hidden="true">🌙</span> Ciemny</button></div><p className="settings-footnote">Motyw zapisuje się na tym urządzeniu.</p><div className="appearance-theme-buttons" role="group" aria-label="Kolor aplikacji">{([['auto', 'Automatyczny'], ['blue', 'Niebieski'], ['pink', 'Różowy']] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={accountAccent.preference === value} onClick={() => accountAccent.setPreference(value)}>{label}</button>)}</div><p className="settings-footnote">Kolor dotyczy zalogowanego konta na tym urządzeniu. Wybranie kalendarza innej osoby nie zmienia motywu. Automatycznie: Sebastian, Paweł i Nikodem — niebieski; Dominika i Layla — różowy.</p>{!accountAccent.saved && <p role="status">Nie udało się zapisać koloru na tym urządzeniu. Zmiana działa do zamknięcia strony.</p>}</article>
+        <article className="settings-section settings-appearance" data-testid="settings-appearance"><header><span>🎨</span><div><strong>Wygląd</strong><small>Motyw i kolor aplikacji</small></div></header><div className="appearance-theme-buttons" role="group" aria-label="Motyw aplikacji"><button type="button" aria-pressed={theme === 'light'} onClick={()=>setTheme('light')}><span aria-hidden="true">☀️</span> Jasny</button><button type="button" aria-pressed={theme === 'dark'} onClick={()=>setTheme('dark')}><span aria-hidden="true">🌙</span> Ciemny</button></div><p className="settings-footnote">Motyw zapisuje się na tym urządzeniu.</p><div className="appearance-theme-buttons" role="group" aria-label="Kolor aplikacji">{([['auto', 'Automatyczny'], ['blue', 'Niebieski'], ['pink', 'Różowy']] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={accountAccent.preference === value} onClick={() => accountAccent.setPreference(value)}>{label}</button>)}</div><p className="settings-footnote">Kolor dotyczy zalogowanego konta na tym urządzeniu. Wybranie kalendarza innej osoby nie zmienia motywu. Automatyczny kolor wynika z Twojego profilu.</p>{!accountAccent.saved && <p role="status">Nie udało się zapisać koloru na tym urządzeniu. Zmiana działa do zamknięcia strony.</p>}</article>
 
         <NotificationSettings />
 
         {parent && <FamilyMembersSettings user={user} member={member} />}
-        {parent && <SchoolConnectionsPreparation onOpenSchool={() => goTo('Szkoła')} />}
+
 
         <ConnectedCalendarsSettings user={user} member={member} notice={calendarNotice}><div className="data-tools"><button className="secondary-button" disabled={exporting} onClick={()=>void downloadCalendar()}>Pobierz kalendarz .ics</button><button className="secondary-button" onClick={() => goTo('Kalendarz')}>Import, osoby i zakres dat</button></div><p className="settings-footnote">Plik jest kopią bieżącego kalendarza. Zmiany po imporcie nie synchronizują się automatycznie. Godziny przyjmują strefę Twojego kalendarza.</p></ConnectedCalendarsSettings>
 
-        <article className="settings-section"><header><span>👨‍👩‍👧‍👦</span><div><strong>Uprawnienia rodzinne</strong><small>Role i dostęp do danych</small></div></header><div className="permission-summary"><span className={parent ? 'parent-role' : 'child-role'}>{parent ? '👑 Rodzic — zarządzanie rodziną' : '👤 Członek rodziny — dostęp ograniczony'}</span><p>Rodzice zarządzają punktami, profilami dzieci oraz dokumentami. Prywatne wydarzenia i rozmowy są dostępne wyłącznie uprawnionym osobom.</p></div></article>
-
-        <article className="settings-section"><header><span>🔐</span><div><strong>Prywatność i bezpieczeństwo</strong><small>Dane rodzinne są dostępne po zalogowaniu</small></div></header><div className="settings-info-list"><span>🔒 Ważne dokumenty Pawła: tylko rodzice</span><span>🗂️ Dokumenty zdrowotne: zgodnie z rolą</span><span>🔑 Dane połączenia eduVULCAN są szyfrowane wyłącznie na serwerze</span></div></article>
-
-        <article className="settings-section"><header><span>📁</span><div><strong>Dane i pliki</strong><small>Zdjęcia, dokumenty i własne ikonki</small></div></header><div className="settings-info-list"><span>🖼️ Zdjęcia i dokumenty — magazyn rodziny</span><span>☁️ Dane są wspólne na wszystkich urządzeniach</span></div></article>
-
         {parent && <article className="settings-section"><header><span>💾</span><div><strong>Kopia danych rodziny</strong><small>Pobierz dane jako prywatny plik JSON</small></div></header><button className="secondary-button" disabled={exporting} onClick={()=>void downloadBackup()}>{exporting ? "Przygotowuję…" : "Pobierz kopię danych"}</button><p className="settings-footnote">Kopia zawiera dane zdrowotne. Dokumenty i wiadomości czatu wymagają oddzielnej kopii. Konta i hasła nie są eksportowane.</p></article>}
 
-        <article className="settings-section whats-new-v130"><header><span>✨</span><div><strong>Co nowego?</strong><small>Ta sekcja będzie przy każdej wersji</small></div><b className="version-pill">v{APP_VERSION}</b></header><ul><li>Czytelne układy na telefonie, tablecie i komputerze</li><li>Ochrona prywatnych rozmów i dokumentów przez uprawnienia</li><li>Edycja szkolnych i zdrowotnych wpisów</li><li>Import szkoły z pliku i eksport kalendarza</li><li>Zadania powtarzające się z zatwierdzaniem rodzica</li></ul></article>
 
         <article className="settings-section app-about"><header><span>ℹ️</span><div><strong>O aplikacji</strong><small>Nasza Rodzina</small></div></header><div className="about-version"><img src="/nasza-rodzina-logo.svg" alt="" /><div><strong>Nasza Rodzina v{APP_VERSION}</strong><small>Aktualizacja: {APP_UPDATED}</small></div></div></article>
       </section>

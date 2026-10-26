@@ -34,7 +34,7 @@ import { startOfDay, endOfDay, startOfWeek, addDays, addMonths, addYears, sameDa
 
 export const APP_VERSION = '2.0.0';
 
-export const APP_UPDATED = '11.10.2026';
+export const APP_UPDATED = '26.10.2026';
 
 export type Member = {
   id?: string;

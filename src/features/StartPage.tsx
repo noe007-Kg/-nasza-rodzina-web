@@ -23,6 +23,8 @@ import { calendarSourceDisplayEvent } from '../calendar-source-metadata';
 import { generateCalendarOccurrencesFromSources } from '../calendars/google-occurrences';
 import { useCalendarHealthSources } from '../health/useCalendarHealthSources';
 import './calendar-v2.css';
+import { useSchoolNewness } from '../school/useSchoolNewness';
+import { schoolHomeEntries } from './school-home';
 
 type Weather = { temp: number; max: number; min: number; wind: number; label: string; icon: string };
 function timestampDate(value: unknown) { return value instanceof Timestamp ? value.toDate() : undefined; }
@@ -38,6 +40,8 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const [calendarDetail, setCalendarDetail] = useState<{ uid: string; key: string } | null>(null);
   const healthSources = useCalendarHealthSources({ uid: user.uid, member });
   const schoolSources = useCalendarSchoolSources(user.uid, member);
+  const schoolNewness = useSchoolNewness(user.uid);
+  const schoolPreview = schoolHomeEntries(schoolSources.rows, schoolNewness.isNew);
   const musicSources = useMusicSchoolPlans(user.uid, schoolSources.scope);
   const musicEvents = useMemo(() => musicCalendarEvents(musicSources.data?.plans || [], profiles), [musicSources.data, profiles]);
   const schoolRecords = schoolSources.rows;
@@ -48,7 +52,7 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const { order, saveOrder, loaded } = useDashboardOrder(user.uid);
 
   useEffect(() => onSnapshot(collection(db, 'tasks'), snap => {
-    setTasks(snap.docs.map(d => {
+    setTasks(snap.docs.filter(d => d.data().archived !== true).map(d => {
       const x = d.data();
       return { id: d.id, title: String(x.title || ''), person: isPersonKey(x.person) ? x.person : 'family', done: x.done === true,
         dueDate: typeof x.dueDate === 'string' ? x.dueDate : '', priority: x.priority === 'low' || x.priority === 'high' ? x.priority : 'normal',
@@ -118,7 +122,7 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const conversations = latestConversations(messages, profiles, user.uid);
   return <>
     <FamilyHome name={name} now={now} weather={weather} familyTime={familyTime} profiles={profiles} upcoming={upcoming}
-      tasks={openTasks} shoppingCount={openShopping.length} chatCount={conversations.length} order={order} loaded={loaded}
+      tasks={openTasks} school={schoolPreview} schoolError={schoolSources.error} shoppingCount={openShopping.length} chatCount={conversations.length} order={order} loaded={loaded}
       saveOrder={saveOrder} goTo={goTo} onOpenEvent={key => setCalendarDetail({ uid: user.uid, key })}/>
     {openedCalendarOccurrence && <Modal title={openedCalendarOccurrence.source.title} subtitle="Wydarzenie rodzinne" onClose={() => setCalendarDetail(null)}><div className="details-grid"><CalendarOwnerBadge event={openedCalendarOccurrence.source}/><DetailRow label="Termin" value={openedCalendarOccurrence.date.toLocaleDateString('pl-PL', { timeZone: 'Europe/Warsaw' })}/><DetailRow label="Godzina" value={openedCalendarOccurrence.source.allDay ? 'Cały dzień' : `${formatWarsawTime(openedCalendarOccurrence.date)}–${formatWarsawTime(openedCalendarOccurrence.endDate)}`}/>{openedCalendarOccurrence.source.cancelled && <DetailRow label="Status" value="ODWOŁANE"/>}{openedCalendarOccurrence.source.description && <DetailRow label="Opis" value={openedCalendarOccurrence.source.description}/>}</div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setCalendarDetail(null); goTo('Kalendarz'); }}>Otwórz Kalendarz</button></div></Modal>}
   </>;

@@ -56,7 +56,7 @@ test('IN-APP: preferencje kategorii i dźwięku zapisują się do właściwego U
   await login(page);
   const panel = await settings(page);
   await expect(panel.getByRole('switch', { name: /^Powiadomienia/ })).toHaveAttribute('aria-checked', 'true');
-  await expect(panel).toContainText('Powiadomienia systemowe — dostępne w przyszłej aktualizacji.');
+  await expect(panel).toContainText('Przy zamkniętej aplikacji nie wysyłamy powiadomień systemowych.');
   await expect(panel.getByRole('button', { name: 'Włącz powiadomienia systemowe' })).toHaveCount(0);
   await panel.getByRole('switch', { name: /^Dźwięk powiadomień/ }).click();
   await expect(panel.getByRole('switch', { name: /^Dźwięk powiadomień/ })).toHaveAttribute('aria-checked', 'false');

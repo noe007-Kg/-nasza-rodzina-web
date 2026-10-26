@@ -5,12 +5,12 @@ import { agendaDayLabel, familyAgendaRange, homeSectionOrder, reorderHomeSection
 import { START_CARD_IDS } from '../src/features/start-layout';
 import { accountAccentKey, parseAccountAccent, resolveAccountAccent } from '../src/features/account-accent';
 const occurrence = (key: string, from: string, until: string, extra = {}) => ({ key, date: new Date(from), endDate: new Date(until), source: { title: key, person: 'Nikodem', ...extra } }) as CalendarOccurrence;
-test('three-section layout preserves legacy seven-ID schema and shortcut internal order on explicit drop', () => {
-  assert.deepEqual(homeSectionOrder(START_CARD_IDS), ['calendar', 'tasks', 'shortcuts']);
+test('school section preserves legacy seven-ID schema and shortcut internal order on explicit drop', () => {
+  assert.deepEqual(homeSectionOrder(START_CARD_IDS), ['calendar', 'tasks', 'shortcuts', 'school']);
   const previous = ['health', 'school', 'family-time', 'calendar', 'shopping', 'tasks', 'chat'] as const;
-  assert.deepEqual(homeSectionOrder(previous), ['shortcuts', 'calendar', 'tasks']);
+  assert.deepEqual(homeSectionOrder(previous), ['shortcuts', 'school', 'calendar', 'tasks']);
   const next = reorderHomeSections(previous, 'tasks', 'shortcuts');
-  assert.deepEqual(next, ['family-time', 'tasks', 'health', 'school', 'shopping', 'chat', 'calendar']);
+  assert.deepEqual(next, ['family-time', 'tasks', 'health', 'shopping', 'chat', 'school', 'calendar']);
   assert.equal(new Set(next).size, 7);
   assert.deepEqual(reorderHomeSections(previous, 'tasks', 'tasks'), [...previous]);
   assert.deepEqual(previous, ['health', 'school', 'family-time', 'calendar', 'shopping', 'tasks', 'chat']);

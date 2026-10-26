@@ -1,25 +1,27 @@
-import { addDays, ageFromBirthDate, type CalendarEventData, collection, db, endOfDay, eventActivityIcon, FAMILY_BIRTHDAYS, formatDateInput, formatShortDate, formatTime, generateOccurrences, isPersonKey, isSchoolType, type Member, ModuleHeader, notify, type Page, parseLocalDate, type PersonKey, personLabel, personRole, schoolQuery, type SchoolRecord, startOfDay, subjectIcon, type TaskItem, useEffect, useMemo, useRef, type User, useState } from "../app-shared";
+import { useCalendarSchoolSources } from '../useCalendarSchoolSources';
+import { projectSchoolCalendar, projectOkruszekCalendar } from '../calendar-source-projections';
+import { projectManualSchoolCalendar } from '../calendar-school-display';
+import { formatWarsawTime } from '../calendar-timeline';
+import { addDays, ageFromBirthDate, type CalendarEventData, collection, db, endOfDay, eventActivityIcon, FAMILY_BIRTHDAYS, formatDateInput, formatShortDate, formatTime, generateOccurrences, isPersonKey, type Member, ModuleHeader, notify, type Page, parseLocalDate, type PersonKey, personLabel, personRole, type SchoolRecord, startOfDay, subjectIcon, type TaskItem, useEffect, useMemo, useRef, type User, useState } from "../app-shared";
 import { onSnapshot } from 'firebase/firestore';
 
 import { subscribeCalendar } from '../calendar-store';
 import { useFamilyDirectory } from '../family-directory';
 import { memberPersonKey, memberSchoolEnabled } from '../family-members';
 import { familyAccessDiagnostic, familyAccessErrorMessage, type FamilyQuerySource } from '../family-access-diagnostics';
-import { schoolReadAccess, schoolReadAccessKey, SCHOOL_PROFILE_UNBOUND } from '../school/read-access';
+import { SCHOOL_PROFILE_UNBOUND } from '../school/read-access';
 import { clearNotice } from '../feedback';
 import { ProfileAvatar } from '../account/ProfileSettings';
 import { calendarEventInView } from '../calendar-v2';
 import { ownPerson } from '../app-shared';
 
 export function FamilyPage({ user, member, goTo, selected, onSelect }: { user: User; member: Member | null; goTo: (page: Page) => void; selected: PersonKey; onSelect: (person: PersonKey) => void }) {
-  const members = useFamilyDirectory().filter(profile => profile.active !== false && !profile.archived && !profile.disabled);
+  const directory = useFamilyDirectory();
+  const members = useMemo(() => directory.filter(profile => profile.active !== false && !profile.archived && !profile.disabled), [directory]);
   const [events, setEvents] = useState<CalendarEventData[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const schoolAccess = schoolReadAccess(member);
-  const schoolScope = schoolReadAccessKey(user.uid, schoolAccess);
-  const [schoolData, setSchoolData] = useState<{ scope: string; rows: SchoolRecord[] }>({ scope: '', rows: [] });
-  // A changed role/person cannot expose even one render of the previous scope.
-  const school = schoolData.scope === schoolScope ? schoolData.rows : [];
+  const schoolSources = useCalendarSchoolSources(user.uid, member);
+  const schoolAccess = schoolSources.access;
   const currentProfile = useRef(member);
   currentProfile.current = member;
 
@@ -40,38 +42,26 @@ export function FamilyPage({ user, member, goTo, selected, onSelect }: { user: U
   useEffect(() => {
     const stop = onSnapshot(collection(db,'tasks'), (snap) => {
     clearNotice('family.tasks');
-    setTasks(snap.docs.map((d): TaskItem => { const x=d.data(); return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', done:x.done === true, dueDate:typeof x.dueDate === 'string' ? x.dueDate : '', priority:x.priority === 'low' || x.priority === 'high' ? x.priority : 'normal', note:typeof x.note === 'string' ? x.note : '', points:Number(x.points || 0), requireApproval:x.requireApproval === true, approvalStatus:x.approvalStatus === 'pending' || x.approvalStatus === 'approved' ? x.approvalStatus : 'none', repeat:x.repeat === 'daily' || x.repeat === 'weekly' || x.repeat === 'monthly' ? x.repeat : 'none' }; }));
+    setTasks(snap.docs.filter(d => d.data().archived !== true).map((d): TaskItem => { const x=d.data(); return { id:d.id, title:String(x.title || ''), person:isPersonKey(x.person) ? x.person : 'family', done:x.done === true, dueDate:typeof x.dueDate === 'string' ? x.dueDate : '', priority:x.priority === 'low' || x.priority === 'high' ? x.priority : 'normal', note:typeof x.note === 'string' ? x.note : '', points:Number(x.points || 0), requireApproval:x.requireApproval === true, approvalStatus:x.approvalStatus === 'pending' || x.approvalStatus === 'approved' ? x.approvalStatus : 'none', repeat:x.repeat === 'daily' || x.repeat === 'weekly' || x.repeat === 'monthly' ? x.repeat : 'none' }; }));
     }, error => { setTasks([]); reportQueryError('family.tasks', error); });
     return () => { stop(); clearNotice('family.tasks'); };
   }, [user.uid]);
 
   useEffect(() => {
-    setSchoolData({ scope: schoolScope, rows: [] });
-    clearNotice('family.school');
-    const target = schoolQuery(member);
-    if (!target) return;
-    let active = true;
-    const stop = onSnapshot(target, (snap) => {
-      if (!active) return;
-      clearNotice('family.school');
-      const rows = snap.docs.flatMap((d): SchoolRecord[] => {
-        const x = d.data();
-        if (!isPersonKey(x.person) || !isSchoolType(x.type)
-          || (schoolAccess?.scope === 'student' && x.person !== schoolAccess.person)) return [];
-        return [{ id:d.id, title:String(x.title || ''), person:x.person, type:x.type, subject:typeof x.subject === 'string' ? x.subject : '', date:typeof x.date === 'string' ? x.date : '', time:typeof x.time === 'string' ? x.time : '', endTime:typeof x.endTime === 'string' ? x.endTime : '', weekday:Number(x.weekday || 0), note:typeof x.note === 'string' ? x.note : '' }];
-      });
-      setSchoolData({ scope: schoolScope, rows });
-    }, error => {
-      if (!active) return;
-      setSchoolData({ scope: schoolScope, rows: [] });
-      reportQueryError('family.school', error);
-    });
-    return () => { active = false; stop(); clearNotice('family.school'); };
-  }, [schoolScope]);
+    if (schoolSources.error) reportQueryError('family.school', {code:'permission-denied'});
+    else clearNotice('family.school');
+    return () => clearNotice('family.school');
+  }, [schoolSources.scope, schoolSources.error]);
 
-  const now=new Date(); const today=formatDateInput(now); const weekday=now.getDay() === 0 ? 7 : now.getDay();
+  const now=new Date(); const today=formatDateInput(now);
   const todayCalendar=useMemo(()=>events.flatMap((e)=>generateOccurrences(e,startOfDay(now),endOfDay(now))).sort((a,b)=>a.date.getTime()-b.date.getTime()), [events, today]);
-  const todaySchool=useMemo(()=>school.filter((r)=>(r.type === 'lesson' || r.type === 'activity') && (r.weekday === weekday || r.date === today)).sort((a,b)=>(a.time || '99:99').localeCompare(b.time || '99:99')), [school, weekday, today]);
+  const schoolEvents = useMemo(() => [
+    ...projectSchoolCalendar(schoolSources.rows,events,schoolAccess,members).events,
+    ...projectManualSchoolCalendar(schoolSources.rows,events,schoolAccess).events,
+    ...projectOkruszekCalendar(schoolSources.rows,events,schoolAccess,members),
+  ], [schoolSources.rows,schoolSources.scope,events,members]);
+  const todaySchool = useMemo(() => schoolEvents.flatMap(event => generateOccurrences(event,startOfDay(now),endOfDay(now)))
+    .sort((a,b) => a.date.getTime()-b.date.getTime()).map((item): SchoolRecord => ({id:item.key,person:item.source.person,type:'lesson',title:item.source.title,subject:item.source.title,date:today,time:formatWarsawTime(item.date),endTime:formatWarsawTime(item.endDate),weekday:0,note:item.source.timingConfidence === 'estimated' ? 'Godziny orientacyjne' : item.source.location || ''})), [schoolEvents,today]);
 
   function statusFor(name:string) {
     const key=name as PersonKey;
@@ -86,7 +76,7 @@ export function FamilyPage({ user, member, goTo, selected, onSelect }: { user: U
   const selectedMember=members.find((m)=>memberPersonKey(m) === selected);
   const selectedTasks=tasks.filter((t)=>!t.done && (selected === 'family' ? true : t.person === selected || t.person === 'family')).slice(0,5);
   const selectedPlan=todayCalendar.filter(o => calendarEventInView(o.source, selected, ownPerson(member), user.uid)).slice(0,selected === 'family' ? 8 : 6);
-  const selectedSchool=todaySchool.filter((r)=>selected !== 'family' && r.person === selected).slice(0,7);
+  const selectedSchool=todaySchool.filter((r)=>selected !== 'family' && r.person === selected);
   const upcoming=events.filter(e => calendarEventInView(e, selected, ownPerson(member), user.uid)).flatMap((e)=>generateOccurrences(e,new Date(),endOfDay(addDays(new Date(),30)))).filter((o)=>o.date >= new Date()).sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,4);
   const isStudent=memberSchoolEnabled(selectedMember);
   const age=ageFromBirthDate((selectedMember as { birthDate?: string } | undefined)?.birthDate || FAMILY_BIRTHDAYS[selected]);

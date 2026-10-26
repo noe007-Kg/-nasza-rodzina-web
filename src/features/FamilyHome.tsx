@@ -10,14 +10,16 @@ import { formatFamilyStatusTime, type FamilyTimeProjection } from './start-tile-
 import { agendaDayLabel, homeOccurrenceDayKey, homeSectionOrder, reorderHomeSections, type HomeSection } from './family-home-model';
 import type { StartCardId } from './start-layout';
 import './family-home.css';
+import type { SchoolHomeEntry } from './school-home';
 
 export type FamilyHomeProps = {
   name: string; now: Date; weather: { temp: number; label: string; icon: string } | null;
   familyTime: FamilyTimeProjection; profiles: readonly FamilyMemberProfile[]; upcoming: CalendarOccurrence[];
   tasks: TaskItem[]; shoppingCount: number; chatCount: number; order: readonly StartCardId[]; loaded: boolean;
+  school?: readonly SchoolHomeEntry[]; schoolError?: boolean;
   saveOrder: (order: StartCardId[]) => void; goTo: (page: Page) => void; onOpenEvent: (key: string) => void;
 };
-const sectionTitles: Record<HomeSection, string> = { calendar: 'Najbliżej w rodzinie', tasks: 'Do zrobienia', shortcuts: 'Szybki dostęp' };
+const sectionTitles: Record<HomeSection, string> = { calendar: 'Najbliżej w rodzinie', tasks: 'Do zrobienia', school:'Szkoła — ostatnie wpisy', shortcuts: 'Szybki dostęp' };
 function HomePanel({ id, active, loaded, children }: { id: HomeSection; active: boolean; loaded: boolean; children: ReactNode }) {
   const drag = useDraggable({ id, disabled: !loaded }), drop = useDroppable({ id });
   const panel = useRef<HTMLElement | null>(null);
@@ -78,6 +80,7 @@ export function FamilyHome(props: FamilyHomeProps) {
             <time>{item.source.allDay ? 'Cały dzień' : `${formatWarsawTime(item.date)}–${formatWarsawTime(item.endDate)}`}</time><span className="home-event-copy"><strong>{item.source.title}</strong><CalendarOwnerBadge event={item.source}/><span className="home-event-labels">{item.source.cancelled && <small>Odwołane</small>}{!item.source.cancelled && !item.source.allDay && item.date <= now && item.endDate > now && <small>Teraz</small>}{item.source.timingConfidence === 'estimated' && <small>Godziny orientacyjne</small>}{!item.source.allDay && warsawDayKey(item.endDate) !== warsawDayKey(item.date) && <small>Do {item.endDate.toLocaleDateString('pl-PL', { timeZone: 'Europe/Warsaw', day: 'numeric', month: 'long' })}</small>}</span></span><Icon name="arrow-right" size={15}/>
           </button></div>)}{!upcoming.length && <p className="home-empty">Brak wspólnych wydarzeń w najbliższych dniach.</p>}</div><button type="button" className="home-section-link" onClick={() => goTo('Kalendarz')}>Zobacz kalendarz <Icon name="arrow-right" size={16}/></button></>}
         {id === 'tasks' && <><p className="home-section-note">{props.tasks.length ? `${props.tasks.length} zadań do zrobienia` : 'Wszystko zrobione'}</p><div className="home-task-list">{props.tasks.slice(0, 4).map(task => <button type="button" className="home-task" key={task.id} onClick={() => goTo('Zadania')}><span className={`home-task-dot${task.priority === 'high' ? ' is-important' : ''}`} aria-hidden="true"/><span><strong>{task.title}</strong><small>{task.person === 'family' ? 'Cała rodzina' : task.person}{task.dueDate ? ` · ${task.dueDate.split('-').reverse().join('.')}` : ''}{task.approvalStatus === 'pending' ? ' · Do zatwierdzenia' : ''}</small></span></button>)}{!props.tasks.length && <p className="home-empty">Nie ma zadań do zrobienia.</p>}</div><button type="button" className="home-section-link" onClick={() => goTo('Zadania')}>Wszystkie zadania <Icon name="arrow-right" size={16}/></button></>}
+        {id === 'school' && <><p className="home-section-note">Najnowsze oceny, zadania i informacje ze szkoły</p><div className="home-school-list">{props.schoolError ? <p className="home-empty" role="status">Nie udało się odczytać wpisów szkolnych. Spróbuj ponownie w zakładce Szkoła.</p> : props.school?.length ? props.school.map(entry=><article className="home-school-entry" key={entry.id}><div><small>{entry.kind} · {entry.person}</small>{entry.isNew && <span className="school-new-badge">NOWE</span>}</div><strong>{entry.title}</strong><small>{entry.dateLabel}</small></article>) : <p className="home-empty">Brak wpisów szkolnych do wyświetlenia.</p>}</div><button type="button" className="home-section-link" onClick={()=>goTo('Szkoła')}>Otwórz szkołę <Icon name="arrow-right" size={16}/></button></>}
         {id === 'shortcuts' && <div className="home-shortcuts">{links.map(page => <button type="button" key={page} data-shortcut={page} onClick={() => goTo(page)}><span className="home-shortcut-icon"><AppIcon page={page} size={23}/></span><strong>{page}</strong>{page === 'Zakupy' && <small>{props.shoppingCount} do kupienia</small>}{page === 'Czat' && <small>{props.chatCount} {props.chatCount === 1 ? 'rozmowa' : 'rozmów'}</small>}</button>)}</div>}
       </HomePanel>)}</div>
     </DndContext>

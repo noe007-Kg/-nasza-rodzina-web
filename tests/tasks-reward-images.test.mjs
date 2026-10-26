@@ -9,6 +9,27 @@ const draft = changes => ({ action: 'save-reward', id: 'reward-image', title: 'N
 const code = expected => error => error?.code === expected;
 const now = { now: familyTestNow };
 
+test('only parents delete rewards; pending requests close without spending points and images are revoked', async()=>{
+  const {context,ticket}=await uploadedReward();
+  await manageTasksAction(context,draft({imageUploadId:ticket.uploadId}),now);
+  const request=await manageTasksAction(context.as('child'),{action:'request-reward',rewardId:'reward-image'},now);
+  const remove={action:'archive-reward',rewardId:'reward-image',confirmed:true};
+  await assert.rejects(manageTasksAction(context.as('child'),remove,now),code('TASK_PARENT_REQUIRED'));
+  context.rows.set('members/foreign-parent',{...context.rows.get('members/parent'),familyId:'other-family'});
+  await assert.rejects(manageTasksAction(context.as('foreign-parent'),remove,now),code('TASK_REWARD_NOT_FOUND'));
+  await assert.rejects(manageTasksAction(context,{...remove,confirmed:false},now),code('TASK_CONFIRM_REQUIRED'));
+  const ledgerBefore=[...context.rows.entries()].filter(([key])=>key.startsWith('taskPointLedger/'));
+  await manageTasksAction(context,remove,now); await manageTasksAction(context,remove,now);
+  assert.equal(context.rows.get('taskRewards/reward-image').archived,true);
+  assert.equal(context.rows.get(`taskRewardRequests/${request.requestId}`).state,'rejected');
+  assert.equal(context.rows.get(`_taskRewardImageUploads/${ticket.uploadId}`).state,'deleted');
+  assert.equal(context.bucket.objects.has(ticket.path),false);
+  assert.deepEqual([...context.rows.entries()].filter(([key])=>key.startsWith('taskPointLedger/')),ledgerBefore);
+  assert.equal((await manageTasksAction(context,{action:'state'},now)).rewards.length,0);
+  await assert.rejects(manageTasksAction(context,draft(),now),code('TASK_REWARD_NOT_AVAILABLE'));
+  await assert.rejects(manageTasksAction(context.as('child'),{action:'request-reward',rewardId:'reward-image'},now),code('TASK_REWARD_NOT_AVAILABLE'));
+});
+
 async function uploadedReward(context = familyMemoryContext()) {
   context.bucket ||= memoryBucket();
   const ticket = await manageTasksAction(context, { action: 'begin-reward-image', rewardId: 'reward-image', contentType: 'image/png', size: png.length }, now);

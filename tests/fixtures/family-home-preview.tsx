@@ -15,6 +15,7 @@ import '../../src/navigation.css';
 import '../../src/brand-theme.css';
 import '../../src/family-shell.css';
 import '../../src/account-accent.css';
+import '../../src/dark-mode.css';
 const now = new Date('2026-10-20T12:00:00Z');
 const profiles = ['Sebastian', 'Dominika', 'Paweł', 'Nikodem', 'Layla'].map((name, i) => ({ id: `demo-profile-${i}`, name, personKey: name, active: true, emoji: ['👨', '👩', '👦', '👦', '👧'][i] }));
 const occurrence = (id: string, title: string, person: string, start: string, end: string, extra = {}) => ({ key: id, date: new Date(start), endDate: new Date(end), source: { id, title, person, ownerProfileId: profiles.find(p => p.name === person)?.id, allDay: false, private: false, ...extra } }) as CalendarOccurrence;

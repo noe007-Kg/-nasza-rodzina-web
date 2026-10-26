@@ -8,7 +8,7 @@ for (const width of [360, 390, 430, 768, 1024, 1280, 1440]) test(`family home st
   await page.setViewportSize({ width, height: 1000 });
   await expect(page.locator('.home-person')).toHaveCount(5);
   await expect(page.locator('.home-event')).toHaveCount(4);
-  await expect(page.locator('.home-sections')).toHaveAttribute('data-order', 'calendar,tasks,shortcuts');
+  await expect(page.locator('.home-sections')).toHaveAttribute('data-order', 'calendar,tasks,shortcuts,school');
   await expect(page.getByRole('heading', { name: 'Najbliżej w rodzinie' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Wszystkie zadania' })).toBeVisible();
   await page.waitForTimeout(200);
@@ -49,8 +49,8 @@ test('keyboard drag changes only section order and survives reload; family stays
   await page.keyboard.press('ArrowDown');
   await expect(page.getByText('Nad sekcją: Do zrobienia.', { exact: true })).toHaveCount(1);
   await page.keyboard.press('Space');
-  await expect(page.locator('.home-sections')).toHaveAttribute('data-order', 'tasks,calendar,shortcuts');
-  await page.reload(); await expect(page.locator('.home-sections')).toHaveAttribute('data-order', 'tasks,calendar,shortcuts');
+  await expect(page.locator('.home-sections')).toHaveAttribute('data-order', 'tasks,calendar,shortcuts,school');
+  await page.reload(); await expect(page.locator('.home-sections')).toHaveAttribute('data-order', 'tasks,calendar,shortcuts,school');
   const family = await page.locator('.home-family').boundingBox(), sections = await page.locator('.home-sections').boundingBox();
   expect(family!.y).toBeLessThan(sections!.y);
 });
@@ -75,7 +75,7 @@ test('mouse drag reorders sections without opening their content', async ({ page
   await page.mouse.move(b!.x + b!.width / 2, b!.y + b!.height / 2, { steps: 10 });
   await expect(page.getByText('Nad sekcją: Do zrobienia.', { exact: true })).toHaveCount(1);
   await page.mouse.up();
-  await expect(page.locator('.home-sections')).toHaveAttribute('data-order', 'tasks,calendar,shortcuts');
+  await expect(page.locator('.home-sections')).toHaveAttribute('data-order', 'tasks,calendar,shortcuts,school');
   await expect(page.getByTestId('destination')).toHaveText('Start');
 });
 test('touch hold on handle reorders sections while content remains scrollable', async ({ page }) => {
@@ -94,7 +94,7 @@ test('touch hold on handle reorders sections while content remains scrollable', 
   });
   await expect(page.getByText('Nad sekcją: Szybki dostęp.', { exact: true })).toHaveCount(1);
   await page.evaluate(() => document.querySelector('[aria-label="Przenieś sekcję: Do zrobienia"]')!.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, touches: [], changedTouches: [] })));
-  await expect(page.locator('.home-sections')).toHaveAttribute('data-order', 'calendar,shortcuts,tasks');
+  await expect(page.locator('.home-sections')).toHaveAttribute('data-order', 'calendar,shortcuts,tasks,school');
 });
 
 test('both account accents have readable text in light and dark modes', async ({ page }) => {
