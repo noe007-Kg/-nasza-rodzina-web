@@ -26,3 +26,14 @@ Jest to standardowe uprawnienie dla [reguł Storage odczytujących dokumenty Fir
 - Kompilacja produkcyjna oraz budowa/sprawdzenie kanonicznych źródeł Functions — zaliczone. Istniejące ostrzeżenie o wielkości pakietu pozostaje.
 
 Testy modyfikujące rachunki, zadania, zdjęcia lub wiadomości używają wyłącznie lokalnego projektu demonstracyjnego. Nie zmieniano prawdziwych nagród, punktów ani zadań rodziny na potrzeby testów. Nie wykonywano testu na fizycznym iPadzie ani w Safari. Ponowny zapis rzeczywistego zdjęcia przez zalogowanego użytkownika nie był wykonywany automatycznie na produkcji; potwierdzono przyczynę konfiguracji, zapis roli i pełny przepływ na emulatorach.
+
+## Potwierdzenie produkcji — 26.10.2026
+
+- Źródło: `a64358a2700b7e95aec79dd759f4717b9e41a448`, gałąź `fix/rewards-school-dark-settings-20261026`.
+- Wdrożenie Vercel: `dpl_725s4EWZRBySmbJLVCQurDCCtjsM`, istniejący projekt `nasza-rodzina-web`, środowisko `production`, status `READY`, brak błędu adresów.
+- Główny adres https://nasza-rodzina-web.vercel.app potwierdzony jako przypisany do tego wdrożenia i commita.
+- Adres konkretnego wdrożenia: https://nasza-rodzina-n77zwpb9s-noe007-kg.vercel.app.
+- Strona i pliki JS/CSS odpowiadają 200. Opublikowany CSS `index-BY-t5n2d.css` jest identyczny z lokalnie zbudowaną, przetestowaną wersją. W skrypcie potwierdzono nowe operacje nagród, kafelek szkolny i obsługę przygotowania zdjęć.
+- Endpoint zadań bez sesji zwraca 401. Nie wykonywano prób zmiany prawdziwych danych rodzinnych na produkcji.
+- Aktywna rola usługi Storage została potwierdzona ponownym odczytem IAM. Pozostały aktywne wcześniejsze zabezpieczenia Storage i Firestore.
+- Łącznie 390 odrębnych sprawdzonych przypadków testowych oraz poprawna kompilacja produkcyjna. Końcowy test obejmował także przyciski i nie znalazł jasnych powierzchni objętych kontrolą na dziesięciu głównych ekranach w trybie ciemnym.
