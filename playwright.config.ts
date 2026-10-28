@@ -9,7 +9,7 @@ export default defineConfig({
   testDir: './tests',
   testMatch: '**/*.spec.ts',
   // Offline component fixture uses its own config and does not need Firebase emulators.
-  testIgnore: '**/family-home.spec.ts',
+  testIgnore: ['**/family-home.spec.ts', '**/music-school-errors.spec.ts'],
   fullyParallel: false,
   workers: 1,
   timeout: 45_000,

@@ -121,6 +121,7 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const openShopping = shopping.filter(item => !item.done);
   const conversations = latestConversations(messages, profiles, user.uid);
   return <>
+    {musicSources.error && <p className="calendar-source-notice" role="status">Nie udało się odczytać planu szkoły muzycznej. Terminy i status rodziny mogą nie uwzględniać tych zajęć.<button type="button" onClick={musicSources.reload}>Ponów odczyt planu</button></p>}
     <FamilyHome name={name} now={now} weather={weather} familyTime={familyTime} profiles={profiles} upcoming={upcoming}
       tasks={openTasks} school={schoolPreview} schoolError={schoolSources.error} shoppingCount={openShopping.length} chatCount={conversations.length} order={order} loaded={loaded}
       saveOrder={saveOrder} goTo={goTo} onOpenEvent={key => setCalendarDetail({ uid: user.uid, key })}/>

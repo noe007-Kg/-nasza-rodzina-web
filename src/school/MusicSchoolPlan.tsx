@@ -34,15 +34,17 @@ export function MusicSchoolPlan({ uid, ownerProfileId, student, parent, scope }:
   return <section className="music-school-plan" data-testid="fryderyk-preparation" aria-label={`Fryderyk: ${student}`}>
     <Card tone="violet"><h2>🎵 Szkoła muzyczna · {student}</h2><StatusPill tone="neutral">Dziennik Fryderyk — niepołączono</StatusPill>
       <p>Plan rodzica i publiczne komunikaty PSM w Kołobrzegu. Bez logowania do Fryderyka.</p>
-      <p>W dni zajęć: sprawdzanie komunikatów co godzinę, 08:00–18:00, Europe/Warsaw. Brak komunikatu nie potwierdza odbycia lekcji.</p>
+      <p>Zapisany plan powtarza się automatycznie przez cały potwierdzony okres, bez cotygodniowego zapisywania. Status „niepołączono” dotyczy dziennika Fryderyk, a nie zapisanego planu.</p>
+      <p>Harmonogram sprawdzania publicznych komunikatów: w dni zajęć co godzinę, 08:00–18:00, Europe/Warsaw. Wymaga uruchomionego zadania na serwerze. Brak komunikatu nie potwierdza odbycia lekcji.</p>
       <small>Ostatnie pełne sprawdzenie: {plan?.check?.successAt ? new Date(plan.check.successAt).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw' }) : 'jeszcze nie wykonano'}.</small>
       {plan?.check?.status === 'unavailable' || plan?.check?.status === 'review' ? <p role="status">Aktualność komunikatów niepotwierdzona. Zachowano wcześniejsze informacje.</p> : null}
       <p><a href="https://www.gov.pl/web/psmkolobrzeg/nieobecnosci-nauczycieli" target="_blank" rel="noopener noreferrer">Komunikaty szkoły ↗</a> · <a href="https://psmkolobrzeg.fryderyk.edu.pl" target="_blank" rel="noopener noreferrer">Portal Fryderyk ↗</a></p>
     </Card>
-    {error && <p role="alert">{error}</p>}
+    {error && <p role="alert">{error} Nie można potwierdzić, czy plan jest zapisany.<button type="button" onClick={reload}>Ponów odczyt planu</button></p>}
+    {!data && !error && <p role="status">Wczytywanie planu szkoły muzycznej…</p>}
     {message && <p role="status">{message}</p>}
     {data && !data.writesEnabled && parent && <p>Moduł przygotowany. Zapisy i automatyczne sprawdzanie wymagają konfiguracji serwera; w Preview są wyłączone.</p>}
-    {!plan && <Card><p>Nie zapisano planu tego ucznia. Zapis wymaga potwierdzenia profilu, godzin i okresu przez rodzica.</p>
+    {data && !plan && <Card><p>Nie zapisano planu tego ucznia. Zapis wymaga potwierdzenia profilu, godzin i okresu przez rodzica.</p>
       {parent && <SecondaryButton disabled={!canEdit} onClick={() => setEditing(true)}>Potwierdź i zapisz plan</SecondaryButton>}</Card>}
     {plan && <Card><h3>Plan tygodniowy</h3><ul>{plan.lessons.map(x => <li key={x.id}>{days[x.weekday]} · {x.time}–{x.endTime} · {x.title} · sala {x.room}</li>)}</ul>
       <small>Okres: {plan.validFrom}–{plan.validUntil}. Wyłączonych dni: {plan.excludedDates.length}.</small>

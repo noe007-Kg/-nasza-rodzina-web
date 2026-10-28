@@ -19,7 +19,7 @@ export async function prepareMusicDeployPackage(root) {
     for (const match of content.matchAll(/\b(?:import|export)\s+(?:[^;\n]*?\s+from\s*)?['"]([^'"\n]+)['"]|\bimport\s*\(\s*['"]([^'"\n]+)['"]\s*\)/g)) {
       const specifier = match[1] || match[2];
       if (!specifier.startsWith('.')) continue;
-      const destination = resolve(dirname(target), specifier), local = relative(functions, destination);
+      const destination = resolve(dirname(target), specifier), local = relative(functions, destination).replaceAll('\\', '/');
       if (local.startsWith('..') || isAbsolute(local) || !local.startsWith('server/') || !local.endsWith('.mjs')) throw new Error('DEPLOY_IMPORT_OUTSIDE_MUSIC_CLOSURE');
       await copy(join(root, local), destination);
     }
@@ -30,7 +30,7 @@ export async function prepareMusicDeployPackage(root) {
   await writeFile(join(functions, 'package.json'), JSON.stringify(manifest, null, 2));
   await writeFile(join(functions, 'package-lock.json'), await readFile(join(root, 'functions/package-lock.json')));
   // Used for local discovery only; excluded from the uploaded archive.
-  await symlink(join(root, 'functions/node_modules'), join(functions, 'node_modules'), 'dir');
+  await symlink(resolve(root, 'functions/node_modules'), join(functions, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   await writeFile(join(functions, '.env.nasza-rodzina'), 'MUSIC_SCHOOL_ENABLED=true\n', { mode: 0o600 });
   const config = { functions: [{ source: 'functions', codebase: 'nasza-rodzina', runtime: 'nodejs22', ignore: ['node_modules', '.git', '**/.env*', '**/*private*.json', '**/*.pem', '**/*.key'] }] };
   const configFile = join(directory, 'firebase.json');

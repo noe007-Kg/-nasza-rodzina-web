@@ -353,6 +353,7 @@ export function CalendarPage({ user, member, goTo, requestedSelection }: { user:
         {personOptions.map((person) => <button key={person} type="button" className={selectedPerson === person ? 'active' : ''} onClick={() => setSelectedPerson(person)}><span style={{ background: calendarOwnerColor(person, activeProfiles.find(profile => memberPersonKey(profile) === person)) }} />{activeProfiles.find(profile => memberPersonKey(profile) === person)?.name || personLabel(person)}</button>)}
       </section>
       <CalendarGoogleBulkSharing user={user} events={events} />
+      {musicSources.error && <p className="calendar-source-notice" role="status">Nie udało się odczytać planu szkoły muzycznej. Kalendarz może nie pokazywać wszystkich zajęć.<button type="button" onClick={musicSources.reload}>Ponów odczyt planu</button><button type="button" onClick={() => goTo('Szkoła')}>Sprawdź w Szkole</button></p>}
       {schoolSources.error && <p className="calendar-source-notice" role="status">Nie udało się odczytać zajęć SP4. Pozostałe wydarzenia nadal są dostępne.</p>}
       {schoolProjection.incomplete > 0 && <p className="calendar-source-notice" role="status">SP4: {schoolProjection.incomplete} wpisów bez pełnej daty lub godzin. Nie dopisujemy brakujących terminów.<button type="button" onClick={() => goTo('Szkoła')}>Sprawdź w Szkole</button></p>}
 
