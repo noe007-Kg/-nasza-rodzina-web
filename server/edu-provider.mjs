@@ -377,15 +377,28 @@ export function createEduProvider({ fetchImpl = (...args) => globalThis.fetch(..
         if (current.length !== 1) { report('Oceny: dziennik nie wskazał jednoznacznego bieżącego okresu klasyfikacyjnego.'); return null; }
         const periodId = String(current[0].id);
         if (!periodId || periodId.length > 100) throw failure('EDU_SCHEMA_CHANGED');
-        const rows = normalizeGrades(await io.json(apiUrl(journal.baseUrl, 'Oceny', { key: pupil.key, idOkresKlasyfikacyjny: periodId }), journal), { profileId, periodId });
-        return { rows, periodId };
+        const year = Number(today.slice(0, 4)) - (Number(today.slice(5, 7)) < 9 ? 1 : 0);
+        const schoolYearFrom = `${year}-09-01`;
+        const started = periods.filter(period => period.id !== undefined && parseEduDate(period.dataOd) && parseEduDate(period.dataDo)
+          && parseEduDate(period.dataOd) <= today && parseEduDate(period.dataDo) >= schoolYearFrom
+          && parseEduDate(period.dataOd) <= parseEduDate(period.dataDo));
+        const ids = started.map(period => String(period.id));
+        if (ids.some(id => !id || id.length > 100) || new Set(ids).size !== ids.length) throw failure('EDU_SCHEMA_CHANGED');
+        const rows = [], completed = [];
+        // Current semester first; a failed older period must not erase its cache.
+        for (const id of [periodId, ...ids.filter(id => id !== periodId)]) {
+          const result = await scope(async () => normalizeGrades(await io.json(apiUrl(journal.baseUrl, 'Oceny',
+            { key: pupil.key, idOkresKlasyfikacyjny: id }), journal), { profileId, periodId: id }), 'Oceny');
+          if (result !== null) { rows.push(...result); completed.push(id); }
+        }
+        return completed.length ? { rows, periodIds: completed, currentPeriodId: periodId, complete: completed.length === ids.length } : null;
       }, 'Oceny'),
       scope(async () => normalizeTimetable(await io.json(apiUrl(journal.baseUrl, 'PlanZajec', { key: pupil.key,
         dataOd: dateBoundary(dateFrom), dataDo: dateBoundary(dateTo, true), zakresDanych: 2 }), journal)), 'Plan lekcji'),
       scope(async () => arrayPayload(await io.json(apiUrl(journal.baseUrl, 'SprawdzianyZadaniaDomowe', { key: pupil.key,
         dataOd: dateBoundary(dateFrom), dataDo: dateBoundary(assignmentsTo, true) }), journal), 1000), 'Zadania i sprawdziany'),
     ]);
-    if (gradeResult) { items.push(...gradeResult.rows); reconcileScopes.push({ type: 'grade', scopeId: `grades:${gradeResult.periodId}` }); }
+    if (gradeResult) { items.push(...gradeResult.rows); reconcileScopes.push(...gradeResult.periodIds.map(id => ({ type: 'grade', scopeId: `grades:${id}` }))); }
     if (timetableResult) { items.push(...timetableResult); reconcileScopes.push({ type: 'lesson', scopeId: 'timetable', dateFrom, dateTo }); }
     if (items.length > MAX_ITEMS) throw failure('EDU_DATA_LIMIT');
 
@@ -445,7 +458,7 @@ export function createEduProvider({ fetchImpl = (...args) => globalThis.fetch(..
       if (mailboxes.filter((box) => box.globalKey === pupil.globalKeySkrzynka).length !== 1) throw failure('EDU_SCHEMA_CHANGED');
       const inbox = arrayPayload(await io.json(apiUrl(messagesApp.baseUrl, 'OdebraneSkrzynka', { globalKeySkrzynka: pupil.globalKeySkrzynka,
         idLastWiadomosc: 0, pageSize: DETAIL_LIMIT }), messagesApp), 1000);
-      if (inbox.length >= DETAIL_LIMIT) report(`Wiadomości: pobrano ostatnie ${DETAIL_LIMIT} wiadomości z wybranej skrzynki.`);
+      if (inbox.length >= DETAIL_LIMIT) report(`Wiadomości: pobrano najnowsze ${DETAIL_LIMIT} wiadomości z wybranej skrzynki. Ten limit nie dotyczy ocen. Starsze zapisane wiadomości pozostają dostępne w aplikacji.`);
       const details = new Map();
       await mapLimited(inbox, DETAIL_LIMIT, async (row) => {
         if (typeof row.apiGlobalKey !== 'string' || !row.apiGlobalKey || row.apiGlobalKey.length > 500) throw failure('EDU_SCHEMA_CHANGED');
@@ -470,11 +483,12 @@ export function createEduProvider({ fetchImpl = (...args) => globalThis.fetch(..
     // Internal metadata for the server notification baseline only; these flags
     // never change portal requests, session handling, public counts or leases.
     const notificationReadyTypes = [
-      ...(gradeResult ? ['grade'] : []), ...(timetableResult !== null ? ['lesson'] : []),
+      ...(gradeResult?.complete ? ['grade'] : []), ...(timetableResult !== null ? ['lesson'] : []),
       ...(assignmentsNotificationReady ? ['homework', 'test'] : []), ...(messagesNotificationReady ? ['message'] : []),
     ];
     return { session: { ...session, cookieJar: jar.toJSON(), currentProfileId: profileId, journal }, sessionConfirmedAt, items, counts, warnings,
-      reconcileScopes, notificationReadyTypes, range: { dateFrom, dateTo, assignmentsTo } };
+      reconcileScopes, notificationReadyTypes, notificationGradeScopeId: gradeResult ? `grades:${gradeResult.currentPeriodId}` : undefined,
+      range: { dateFrom, dateTo, assignmentsTo } };
   }
 
   return { connectProvider, readProviderData };

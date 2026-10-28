@@ -25,12 +25,12 @@ async function seedGrades() {
   const base = { person: 'Nikodem', type: 'grade', subject: 'Matematyka', date: todayKey(), time: '', endTime: '', weekday: 0, source: 'eduvulcan', sourceProfileId: 'verified-school-profile', providerScopeId: 'grades:period-1', createdBy: accounts.mother.uid, createdAt: Timestamp.now(), syncedAt: Timestamp.now() };
   const batch = db.batch();
   const titles = ['2', '3', '4', '4+', '5', '5-', '6'];
-  for (let index = 0; index < 7; index++) batch.set(db.doc(`schoolItems/grade-ui-${index}`), { ...base, title: titles[index], date: movedDay(index - 6), sourceRecordId: sourceId('grade', index), note: `Sprawdzian — dostępna notatka\nNauczyciel: Nauczyciel testowy\nWaga w dzienniku: ${index === 6 ? '0' : '1'}\nŚrednia podana przez dziennik: 4,50`, createdAt: Timestamp.fromMillis(Date.now() + (7 - index) * 60_000) });
+  for (let index = 0; index < 12; index++) batch.set(db.doc(`schoolItems/grade-ui-${index}`), { ...base, title: index === 11 ? '6' : titles[index % titles.length], date: movedDay(index - 11), sourceRecordId: sourceId('grade', index), note: `Sprawdzian — dostępna notatka\nNauczyciel: Nauczyciel testowy\nWaga w dzienniku: ${index === 11 ? '0' : '1'}\nŚrednia podana przez dziennik: 4,50`, createdAt: Timestamp.fromMillis(Date.now() + (12 - index) * 60_000) });
   batch.set(db.doc('schoolItems/grade-ui-period'), { ...base, title: 'Ocena okresowa: 5', sourceRecordId: sourceId('grade-period', 99), note: 'Średnia podana przez dziennik: 4,50' });
   batch.set(db.doc('schoolItems/grade-ui-points'), { ...base, subject: 'Muzyka', title: '8/10 pkt', sourceRecordId: sourceId('grade', 100), note: 'Nauczyciel: Drugi nauczyciel' });
   batch.set(db.doc('schoolItems/grade-ui-description'), { ...base, subject: 'Muzyka', title: 'Samodzielnie wykonuje zadania', sourceRecordId: sourceId('grade', 101), date: movedDay(-1), note: 'Ocena opisowa' });
   for (let index = 0; index < 9; index++) batch.set(db.doc(`schoolItems/sibling-grade-ui-${index}`), { ...base, person: 'Paweł', subject: 'Fizyka', title: 'Wynik wyłącznie Pawła', sourceProfileId: 'sibling-school-profile', sourceRecordId: sourceId('grade', 200 + index), note: '' });
-  for (let index = 0; index < 9; index++) batch.set(db.doc(`schoolParentMessages/grade-ui-parent-${index}`), { ...base, type: 'message', title: `Poufna wiadomość rodzica ${index}`, note: 'Treść zastrzeżona dla rodziców', date: movedDay(index - 8) });
+  for (let index = 0; index < 12; index++) batch.set(db.doc(`schoolParentMessages/grade-ui-parent-${index}`), { ...base, type: 'message', title: `Poufna wiadomość rodzica ${index}`, note: 'Treść zastrzeżona dla rodziców', date: movedDay(index - 8) });
   await batch.commit();
 }
 test.beforeEach(async ({ page }) => {
@@ -44,13 +44,13 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('Oceny pokazują prawdziwe liczby, ostatnie pięć cząstkowych i osobne podsumowanie okresowe', async ({ page }) => {
+test('Oceny pokazują prawdziwe liczby, ostatnie dziesięć cząstkowych i osobne podsumowanie okresowe', async ({ page }) => {
   await school(page);
-  await expect(page.getByTestId('school-stat-grades').locator('.family-stat-card__value')).toHaveText('10');
+  await expect(page.getByTestId('school-stat-grades').locator('.family-stat-card__value')).toHaveText('15');
   await page.getByTestId('school-stat-grades').click();
   const dashboard = page.getByTestId('school-grades-dashboard');
-  await expect(dashboard.locator('.school-grades-total strong')).toHaveText('10');
-  await expect(dashboard.locator('.school-latest-grades [data-testid="school-grade-entry"]')).toHaveCount(5);
+  await expect(dashboard.locator('.school-grades-total strong')).toHaveText('15');
+  await expect(dashboard.locator('.school-latest-grades [data-testid="school-grade-entry"]')).toHaveCount(10);
   await expect(page.getByTestId('school-grade-periods')).toContainText('Ocena okresowa: 5');
   await expect(dashboard.getByTestId('school-grade-subject-card')).toHaveCount(2);
   await expect(dashboard).not.toContainText('Wynik wyłącznie Pawła');
@@ -61,37 +61,37 @@ test('Oceny pokazują prawdziwe liczby, ostatnie pięć cząstkowych i osobne po
   await expect(dashboard).not.toContainText('Średnia klasy');
 });
 
-test('Ostatnie oceny rozwijają wszystkie i zwijają do pięciu bez ponownego zapytania do dziennika', async ({ page }) => {
+test('Ostatnie oceny rozwijają wszystkie i zwijają do dziesięciu bez ponownego zapytania do dziennika', async ({ page }) => {
   await school(page); await page.getByTestId('school-stat-grades').click();
   const latest = page.getByTestId('school-latest-grades');
-  await expect(latest.locator('[data-testid="school-grade-entry"]')).toHaveCount(5);
-  await expect(latest.locator('[data-testid="school-grade-entry"]').first()).toHaveAttribute('data-grade-id', 'grade-ui-6');
+  await expect(latest.locator('[data-testid="school-grade-entry"]')).toHaveCount(10);
+  await expect(latest.locator('[data-testid="school-grade-entry"]').first()).toHaveAttribute('data-grade-id', 'grade-ui-11');
   const diaryRequests: string[] = [];
   page.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/eduvulcan/')) diaryRequests.push(request.url()); });
   const expand = latest.getByRole('button', { name: 'Pokaż wszystkie: Ostatnie oceny', exact: true });
-  await expect(expand).toHaveText('Pokaż wszystkie (9)');
+  await expect(expand).toHaveText('Pokaż wszystkie (14)');
   await expect(expand).toHaveAttribute('aria-expanded', 'false');
   await expand.click();
-  await expect(latest.locator('[data-testid="school-grade-entry"]')).toHaveCount(9);
+  await expect(latest.locator('[data-testid="school-grade-entry"]')).toHaveCount(14);
   const collapse = latest.getByRole('button', { name: 'Zwiń listę: Ostatnie oceny', exact: true });
   await expect(collapse).toHaveText('Zwiń listę');
   await expect(collapse).toHaveAttribute('aria-expanded', 'true');
   await expect(latest).not.toContainText('Ocena okresowa: 5');
   await expect(latest.locator('[data-testid="school-grade-entry"]').last()).toHaveAttribute('data-grade-id', 'grade-ui-0');
   await collapse.click();
-  await expect(latest.locator('[data-testid="school-grade-entry"]')).toHaveCount(5);
+  await expect(latest.locator('[data-testid="school-grade-entry"]')).toHaveCount(10);
   expect(diaryRequests).toEqual([]);
   await expand.click();
   await page.locator('.school-students').getByRole('button', { name: 'Paweł', exact: true }).click();
   // Paweł has the separate Okruszek source; SP4 grades must stay hidden.
   await expect(page.getByRole('region', { name: 'Okruszek: Paweł', exact: true })).toBeVisible();
   await page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true }).click();
-  await expect(page.getByTestId('school-latest-grades').locator('[data-testid="school-grade-entry"]')).toHaveCount(5);
+  await expect(page.getByTestId('school-latest-grades').locator('[data-testid="school-grade-entry"]')).toHaveCount(10);
 });
 
 test('Ostatnie oceny z pięcioma wpisami nie pokazują zbędnego rozwijania ani domyślnej wagi', async ({ page }) => {
   const db = fixtureDatabase(); const batch = db.batch();
-  for (let index = 0; index < 4; index++) batch.delete(db.doc(`schoolItems/grade-ui-${index}`));
+  for (let index = 0; index < 9; index++) batch.delete(db.doc(`schoolItems/grade-ui-${index}`));
   await batch.commit();
   await school(page); await page.getByTestId('school-stat-grades').click();
   const latest = page.getByTestId('school-latest-grades');
@@ -126,17 +126,17 @@ test('Statystyki rozróżniają czternaście ocen od pięciu rodzajów, zachowuj
   await expect(page.getByTestId('school-grades-dashboard')).not.toContainText('Średnia z dziennika');
 });
 
-test('Przedmiot: pięć najnowszych, rozwiń/zwiń oraz szczegóły oceny z prawdziwą wagą zero', async ({ page }) => {
+test('Przedmiot: dziesięć najnowszych, rozwiń/zwiń oraz szczegóły oceny z prawdziwą wagą zero', async ({ page }) => {
   await school(page); await page.getByTestId('school-stat-grades').click();
   await page.getByTestId('school-grade-subject-card').filter({ hasText: 'Matematyka' }).click();
   const grades = page.getByTestId('school-subject-grades');
-  await expect(grades.locator('[data-testid="school-grade-entry"]')).toHaveCount(5);
-  await expect(grades.locator('[data-testid="school-grade-entry"]').first()).toHaveAttribute('data-grade-id', 'grade-ui-6');
+  await expect(grades.locator('[data-testid="school-grade-entry"]')).toHaveCount(10);
+  await expect(grades.locator('[data-testid="school-grade-entry"]').first()).toHaveAttribute('data-grade-id', 'grade-ui-11');
   await grades.getByRole('button', { name: 'Pokaż wszystkie: Oceny i wyniki', exact: true }).click();
-  await expect(grades.locator('[data-testid="school-grade-entry"]')).toHaveCount(7);
+  await expect(grades.locator('[data-testid="school-grade-entry"]')).toHaveCount(12);
   await grades.getByRole('button', { name: 'Zwiń: Oceny i wyniki', exact: true }).click();
-  await expect(grades.locator('[data-testid="school-grade-entry"]')).toHaveCount(5);
-  const latest = grades.locator('[data-grade-id="grade-ui-6"]'); await latest.click();
+  await expect(grades.locator('[data-testid="school-grade-entry"]')).toHaveCount(10);
+  const latest = grades.locator('[data-grade-id="grade-ui-11"]'); await latest.click();
   const dialog = page.getByRole('dialog', { name: 'Szczegóły oceny', exact: true });
   await expect(dialog).toContainText('6'); await expect(dialog).toContainText('Nauczyciel testowy');
   await expect(dialog).toContainText('Matematyka');
@@ -161,31 +161,31 @@ test('Średnia pozostaje wartością portalu, a kilka okresów lub sprzeczne dan
   await expect(math).not.toContainText('Średnia z dziennika');
 });
 
-test('Wszystkie ogranicza każdy rodzaj do pięciu, a zmiana filtra lub ucznia resetuje rozwinięcie', async ({ page }) => {
+test('Wszystkie ogranicza każdy rodzaj do dziesięciu, a zmiana filtra lub ucznia resetuje rozwinięcie', async ({ page }) => {
   await school(page);
   const grades = page.getByTestId('school-list-grade');
-  await expect(grades.locator('.school-entry')).toHaveCount(5);
-  await grades.getByRole('button', { name: 'Pokaż wszystkie: Oceny', exact: true }).click();
   await expect(grades.locator('.school-entry')).toHaveCount(10);
+  await grades.getByRole('button', { name: 'Pokaż wszystkie: Oceny', exact: true }).click();
+  await expect(grades.locator('.school-entry')).toHaveCount(15);
   await page.locator('.school-filters').getByRole('button', { name: /^Zadania domowe/ }).click();
   await page.locator('.school-filters').getByRole('button', { name: /^Wszystkie/ }).click();
-  await expect(page.getByTestId('school-list-grade').locator('.school-entry')).toHaveCount(5);
+  await expect(page.getByTestId('school-list-grade').locator('.school-entry')).toHaveCount(10);
   await page.getByTestId('school-list-grade').getByRole('button', { name: 'Pokaż wszystkie: Oceny', exact: true }).click();
   await page.locator('.school-students').getByRole('button', { name: 'Paweł', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Okruszek: Paweł', exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Okruszek: Paweł', exact: true })).not.toContainText('Nauczyciel testowy');
   await page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true }).click();
-  await expect(page.getByTestId('school-list-grade').locator('.school-entry')).toHaveCount(5);
+  await expect(page.getByTestId('school-list-grade').locator('.school-entry')).toHaveCount(10);
   await page.getByTestId('school-stat-grades').click();
   await page.getByTestId('school-grade-subject-card').filter({ hasText: 'Matematyka' }).click();
   await page.getByTestId('school-subject-grades').getByRole('button', { name: 'Pokaż wszystkie: Oceny i wyniki', exact: true }).click();
-  await expect(page.getByTestId('school-subject-grades').locator('[data-testid="school-grade-entry"]')).toHaveCount(7);
+  await expect(page.getByTestId('school-subject-grades').locator('[data-testid="school-grade-entry"]')).toHaveCount(12);
   await page.locator('.school-students').getByRole('button', { name: 'Paweł', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Okruszek: Paweł', exact: true })).toBeVisible();
   await page.locator('.school-students').getByRole('button', { name: 'Nikodem', exact: true }).click();
   await expect(page.getByTestId('school-grades-dashboard')).toBeVisible();
   await page.getByTestId('school-grade-subject-card').filter({ hasText: 'Matematyka' }).click();
-  await expect(page.getByTestId('school-subject-grades').locator('[data-testid="school-grade-entry"]')).toHaveCount(5);
+  await expect(page.getByTestId('school-subject-grades').locator('[data-testid="school-grade-entry"]')).toHaveCount(10);
   await page.locator('.school-filters').getByRole('button', { name: /^Zadania domowe/ }).click();
   await page.getByTestId('school-stat-grades').click();
   await expect(page.getByTestId('school-grades-dashboard')).toBeVisible();
@@ -199,10 +199,10 @@ test('Brak daty wystawienia nie staje się datą importu i nie wypycha prawidło
   await school(page); await page.getByTestId('school-stat-grades').click();
   await page.getByTestId('school-grade-subject-card').filter({ hasText: 'Matematyka' }).click();
   const list = page.getByTestId('school-subject-grades');
-  await expect(list.locator('[data-testid="school-grade-entry"]').first()).toHaveAttribute('data-grade-id', 'grade-ui-6');
+  await expect(list.locator('[data-testid="school-grade-entry"]').first()).toHaveAttribute('data-grade-id', 'grade-ui-11');
   await list.getByRole('button', { name: 'Pokaż wszystkie: Oceny i wyniki', exact: true }).click();
   const entries = list.locator('[data-testid="school-grade-entry"]');
-  await expect(entries.nth(7)).toHaveAttribute('data-grade-id', 'grade-ui-old-dated');
+  await expect(entries.nth(12)).toHaveAttribute('data-grade-id', 'grade-ui-old-dated');
   await expect(entries.last()).toHaveAttribute('data-grade-id', 'grade-ui-undated-import');
   await expect(entries.last()).toContainText('Bez daty wystawienia');
   await expect(entries.last()).not.toContainText('2099');
@@ -232,10 +232,10 @@ test('Wiadomości mają gwiazdki przed najnowszymi, ale dziecko nie otrzymuje pr
   await db.doc(`userPreferences/${accounts.parent.uid}`).set({ importantItems: ['school:message:Nikodem:grade-ui-parent-0'] }, { merge: true });
   await school(page); await page.getByTestId('school-stat-messages').click();
   const list = page.getByTestId('school-list-message');
-  await expect(list.locator('.school-entry-wrapper')).toHaveCount(5);
+  await expect(list.locator('.school-entry-wrapper')).toHaveCount(10);
   await expect(list.locator('.school-entry-wrapper').first()).toContainText('Poufna wiadomość rodzica 0');
   await list.getByRole('button', { name: 'Pokaż wszystkie: Wiadomości', exact: true }).click();
-  await expect(list.locator('.school-entry-wrapper')).toHaveCount(9);
+  await expect(list.locator('.school-entry-wrapper')).toHaveCount(12);
   await page.evaluate(async () => { const path = '/src/firebase.ts'; const sdkPath = '/node_modules/.vite/deps/firebase_auth.js'; const { auth } = await import(path); const sdk = await import(sdkPath); await sdk.signOut(auth); });
   await school(page, accounts.child);
   await expect(page.getByTestId('school-stat-messages')).toHaveCount(0);

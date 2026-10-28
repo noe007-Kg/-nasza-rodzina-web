@@ -124,7 +124,7 @@ export async function syncAction(context, body, { readData = readProviderData } 
     await updateConnectionSession(id, data.session, refresh, context);
     const saved = await upsertSchoolItems(id, { profileId, personKey, items: data.items,
       sessionVersion: connection.sessionVersion, leaseId: lease.leaseId, reconcileScopes: data.reconcileScopes || [],
-      notificationReadyTypes: data.notificationReadyTypes || [] }, context);
+      notificationReadyTypes: data.notificationReadyTypes || [], notificationGradeScopeId: data.notificationGradeScopeId }, context);
     // Confirm rolling inactivity retention only after the guarded import. Jar,
     // deadline and confirmation time commit atomically under the SAME lease and
     // sessionVersion. A disconnected/reconnected/expired session cannot revive.

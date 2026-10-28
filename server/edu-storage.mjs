@@ -679,6 +679,7 @@ export async function upsertSchoolItems(uid, input, services = getServerFirebase
     });
     persistSchoolNotificationChanges(transaction, services.db, { connectionId: uid, profileId: selected.profileId,
       personKey: selected.personKey, leaseId: input.leaseId, baseline, changes, notificationReadyTypes: input.notificationReadyTypes,
+      notificationGradeScopeId: input.notificationGradeScopeId,
       timetableRange: scopes.find((reconcile) => reconcile.type === 'lesson') });
   });
   return { added, updated, deleted, total: entries.length, messages: entries.filter((entry) => ['schoolParentMessages', 'schoolStudentMessages'].includes(entry.collection)).length };

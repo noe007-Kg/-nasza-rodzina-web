@@ -13,8 +13,9 @@ export const accounts = {
 export const password = 'FamilyTest!2026';
 
 function requireLocalEmulators() {
-  if (process.env.FIREBASE_AUTH_EMULATOR_HOST !== '127.0.0.1:9099'
-    || process.env.FIRESTORE_EMULATOR_HOST !== '127.0.0.1:8080') {
+  const host = process.env.FIREBASE_AUTH_EMULATOR_HOST;
+  if (!['127.0.0.1:9099', '127.0.0.2:9099'].includes(host || '')
+    || process.env.FIRESTORE_EMULATOR_HOST !== host?.replace(':9099', ':8080')) {
     throw new Error('Browser tests require LOCAL Firebase emulators: Auth 127.0.0.1:9099, Firestore 127.0.0.1:8080. Production access is forbidden.');
   }
 }
@@ -32,7 +33,7 @@ export function todayKey() {
 
 export async function seedEmulators() {
   const db = fixtureDatabase();
-  const response = await fetch(`http://127.0.0.1:8080/emulator/v1/projects/${projectId}/databases/(default)/documents`, { method: 'DELETE' });
+  const response = await fetch(`http://${process.env.FIRESTORE_EMULATOR_HOST}/emulator/v1/projects/${projectId}/databases/(default)/documents`, { method: 'DELETE' });
   if (!response.ok) throw new Error(`Unable to clear local Firestore: ${response.status}`);
 
   const app = getApps().find((candidate) => candidate.name === 'browser-tests')!;

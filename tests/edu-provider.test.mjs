@@ -435,3 +435,39 @@ test('an expired provider operation budget cannot turn an earlier Context respon
   });
   assert.equal(fixture.requests.slice(afterLogin).some(request => request.body.includes(PASSWORD) || request.fields.has('UserName')), false);
 });
+
+test('all started semesters of the current school year are imported independently', async () => {
+  const fetched = [];
+  const { data } = await connectAndRead({ override: url => {
+    if (url.pathname.endsWith('/OkresyKlasyfikacyjne')) return json([
+      { id: 'previous-year', dataOd: '2026-01-01', dataDo: '2026-08-31' },
+      { id: 'completed', dataOd: '2026-09-01', dataDo: '2026-09-15' },
+      { id: 'current-period', dataOd: '2026-09-16', dataDo: '2027-01-31' },
+      { id: 'future', dataOd: '2027-02-01', dataDo: '2027-08-31' },
+    ]);
+    if (url.pathname.endsWith('/Oceny')) { fetched.push(url.searchParams.get('idOkresKlasyfikacyjny')); return json(grades()); }
+  } });
+  assert.deepEqual(fetched, ['current-period', 'completed']); assert.equal(data.counts.grades, 6);
+  assert.deepEqual(data.reconcileScopes.filter(x => x.type === 'grade').map(x => x.scopeId), ['grades:current-period', 'grades:completed']);
+  assert.equal(new Set(data.items.filter(x => x.type === 'grade').map(x => x.externalId)).size, 6);
+});
+
+test('a failed older semester preserves its cache and cannot mark full grade notifications ready', async () => {
+  const { data } = await connectAndRead({ override: url => {
+    if (url.pathname.endsWith('/OkresyKlasyfikacyjne')) return json([
+      { id: 'completed', dataOd: '2026-09-01', dataDo: '2026-09-15' },
+      { id: 'current-period', dataOd: '2026-09-16', dataDo: '2027-01-31' },
+    ]);
+    if (url.pathname.endsWith('/Oceny') && url.searchParams.get('idOkresKlasyfikacyjny') === 'completed') return html('unavailable', { status: 500 });
+  } });
+  assert.equal(data.counts.grades, 3);
+  assert.deepEqual(data.reconcileScopes.filter(x => x.type === 'grade').map(x => x.scopeId), ['grades:current-period']);
+  assert(data.warnings.some(x => x.startsWith('Oceny:'))); assert(!data.notificationReadyTypes.includes('grade'));
+});
+
+test('more than thirty grades are kept independently of the message window', async () => {
+  const { data } = await connectAndRead({ override: url => {
+    if (url.pathname.endsWith('/Oceny')) return json({ ocenyPrzedmioty: [{ przedmiotNazwa: 'Test przedmiot', ocenyCzastkowe: Array.from({ length: 45 }, (_, i) => ({ idOcena: i + 1, wpis: '5', dataOceny: '2026-10-01' })) }] });
+  } });
+  assert.equal(data.counts.grades, 45); assert.equal(data.items.filter(x => x.type === 'grade').length, 45);
+});

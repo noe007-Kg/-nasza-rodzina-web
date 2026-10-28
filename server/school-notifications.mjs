@@ -19,9 +19,12 @@ function batches(db, connectionId) {
  * Read receipts and provider bookkeeping are ignored by the canonical semantic
  * helper. The first successful import establishes history without old alerts.
  */
-export function schoolNotificationChanges(changes, initializedTypes, previousTimetableRange) {
+export function schoolNotificationChanges(changes, initializedTypes, previousTimetableRange, currentGradeScopeId) {
   const types = initializedTypes === true ? NOTIFICATION_TYPES : Array.isArray(initializedTypes) ? initializedTypes : [];
   return changes.filter(change => types.includes((change.after || change.before)?.type))
+    // Backfilled grades from a completed semester are history, not new grades.
+    .filter(change => !currentGradeScopeId || change.before || change.after?.type !== 'grade'
+      || change.after.providerScopeId === currentGradeScopeId)
     .filter(change => {
       if (change.after?.type !== 'lesson' || change.before) return true;
       // The provider reads a dated rolling window. A routine newly visible
@@ -45,7 +48,7 @@ export function schoolNotificationChanges(changes, initializedTypes, previousTim
  * A later inbox failure cannot lose the diff on the next unchanged sync.
  */
 export function persistSchoolNotificationChanges(transaction, db, { connectionId, profileId, personKey, leaseId, baseline, changes,
-  notificationReadyTypes = NOTIFICATION_TYPES, timetableRange }) {
+  notificationReadyTypes = NOTIFICATION_TYPES, timetableRange, notificationGradeScopeId }) {
   if (!Array.isArray(notificationReadyTypes) || notificationReadyTypes.some(type => !NOTIFICATION_TYPES.includes(type))) throw new Error('Invalid notification section availability.');
   const previous = baseline.data();
   // A previous global baseline without section flags is intentionally upgraded
@@ -53,7 +56,7 @@ export function persistSchoolNotificationChanges(transaction, db, { connectionId
   // histories have also been read, including a genuinely empty valid section.
   const initializedTypes = baseline.exists && previous?.version === BASELINE_VERSION && Array.isArray(previous.initializedTypes)
     ? previous.initializedTypes.filter(type => NOTIFICATION_TYPES.includes(type)) : [];
-  const events = schoolNotificationChanges(changes, initializedTypes, previous?.timetableRange);
+  const events = schoolNotificationChanges(changes, initializedTypes, previous?.timetableRange, notificationGradeScopeId);
   const confirmedTimetableRange = timetableRange && notificationReadyTypes.includes('lesson')
     ? { dateFrom: timetableRange.dateFrom, dateTo: timetableRange.dateTo } : previous?.timetableRange;
   transaction.set(schoolNotificationBaselineRef(db, connectionId, profileId, personKey), {

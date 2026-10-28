@@ -78,11 +78,11 @@ function fixture() {
     personProfileIds: { Nikodem: 'nikodem', Paweł: 'pawel' },
   } };
   let syncNumber = 0;
-  async function sync(items, reconcileScopes = [], notificationReadyTypes) {
+  async function sync(items, reconcileScopes = [], notificationReadyTypes, notificationGradeScopeId) {
     const leaseId = `protected-lease-${++syncNumber}`;
     records.get('_eduConnections/family').lease.id = leaseId;
     return upsertSchoolItems('family', { personKey: 'Nikodem', profileId: 'nikodem-school', sessionVersion: 'same-protected-session',
-      leaseId, items, reconcileScopes, notificationReadyTypes }, context);
+      leaseId, items, reconcileScopes, notificationReadyTypes, notificationGradeScopeId }, context);
   }
   const inbox = uid => [...records].filter(([path]) => path.startsWith(`notificationInbox/${uid}/items/`)).map(([, value]) => value);
   const pending = () => [...records].filter(([path, value]) => path.startsWith('_notificationEvents/') && value.status === 'pending');
@@ -324,4 +324,14 @@ test('maximum bounded school import journals notifications within Firestore tran
   await flushSchoolNotifications(f.context);
   assert.equal(f.inbox('dominika').length, 400);
   assert.ok(Math.max(...f.writesPerTransaction) <= 402);
+});
+
+test('backfilling a completed semester stays quiet while current grades and historical corrections still notify', async () => {
+  const f = fixture(); await f.sync([], [], ['grade']);
+  const history = { ...grade, externalId: 'completed-semester', providerScopeId: 'grades:completed' };
+  const current = { ...grade, externalId: 'new-current', providerScopeId: 'grades:current' };
+  await f.sync([history, current], [], ['grade'], 'grades:current'); await flushSchoolNotifications(f.context);
+  assert.equal(f.inbox('dominika').length, 1); assert.equal(f.inbox('dominika')[0].eventId, 'school:grade:nikodem-school:new-current');
+  await f.sync([{ ...history, title: 'Matematyka: 4' }, current], [], ['grade'], 'grades:current'); await flushSchoolNotifications(f.context);
+  assert.equal(f.inbox('dominika').length, 2);
 });
