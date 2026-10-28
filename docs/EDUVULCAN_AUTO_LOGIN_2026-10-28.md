@@ -31,3 +31,11 @@ Nie przeprowadzono rzeczywistego automatycznego logowania na koncie rodziny: fun
 ## Wdrożenie
 
 Wyniki publikacji zostaną zapisane po potwierdzeniu Firebase i Vercel. Publikowane są wyłącznie dwa istniejące zadania eduVULCAN oraz aplikacja w istniejącym projekcie Vercel; nie są włączane zapamiętane dane żadnego konta bez zgody w formularzu.
+
+### Potwierdzenie wdrożenia — 28.10.2026
+
+- Kod `de19a241a7548ee8b90d6467f875b1df3ac783a8` opublikowano w istniejącym projekcie Vercel. Wdrożenie `dpl_2DK69n28GrxWWBNRYJ29VJpaK5FK`: READY, production, aliasError=null, główny adres `https://nasza-rodzina-web.vercel.app`.
+- Kontrola HTTP po publikacji potwierdziła 200 dla strony i plików, obecność trzech nowych elementów interfejsu oraz 401/no-store dla niezalogowanych żądań status/connect/disconnect.
+- Firebase CLI potwierdził udaną aktualizację wyłącznie eduVulcanSchoolHours i eduVulcanOffHours. Pierwsze lokalne sprawdzanie kodu przekroczyło limit 10 s przed aktualizacją; druga próba z FUNCTIONS_DISCOVERY_TIMEOUT=60 zakończyła się Deploy complete.
+- Ponowny odczyt Google Cloud potwierdził ACTIVE obu funkcji, aktualizację 28.10.2026, zachowanie dotychczasowego sekretu EDUVULCAN_ENCRYPTION_KEY_BASE64 oraz ENABLED harmonogramów Europe/Warsaw: */10 8-14 * * * i 0 0-7,15-23 * * *.
+- Nie wpisywano prawdziwego hasła rodziny ani nie włączano zapamiętywania bez zaznaczenia opcji w formularzu. Rzeczywiste ponowne logowanie zostanie zweryfikowane dopiero po takim jednorazowym połączeniu przez rodzica.
