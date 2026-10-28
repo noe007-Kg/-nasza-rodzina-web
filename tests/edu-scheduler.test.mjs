@@ -483,3 +483,23 @@ test('a later successful completion does not postpone the next ten-minute or hou
     assert.equal(result.summary.synced, 1); assert.equal(result.calls.length, 1);
   }
 });
+
+test('expired opted-in connections are reauthenticated by the scheduled job without importing in the same invocation', async () => {
+  const db = fakeDatabase({ connections: { family: storedConnection({ expiresAt: NOW - 1, reconnectRequired: true, autoLogin: { envelope: { ciphertext: 'synthetic' }, paused: false, nextAttemptAt: 0 } }) } });
+  let recoveries = 0, imports = 0;
+  const result = await runScheduledEduSync({ db }, { scheduleTime: new Date(NOW).toISOString(), window: 'day' }, {
+    now: () => NOW,
+    recoverFn: async context => { assert.equal(context.connection.id, 'family'); recoveries++; return true; },
+    syncFn: async () => { imports++; },
+  });
+  assert.equal(recoveries, 1); assert.equal(imports, 0); assert.equal(result.codes.EDU_AUTO_RECONNECTED, 1);
+});
+
+test('paused and backed-off saved credentials never cause scheduled login attempts', async () => {
+  for (const autoLogin of [{ envelope: {}, paused: true }, { envelope: {}, nextAttemptAt: NOW + 3600000 }]) {
+    const db = fakeDatabase({ connections: { family: storedConnection({ expiresAt: NOW - 1, reconnectRequired: true, autoLogin }) } });
+    await runScheduledEduSync({ db }, { scheduleTime: new Date(NOW).toISOString(), window: 'day' }, {
+      now: () => NOW, recoverFn: async () => { assert.fail('login must stay stopped'); },
+    });
+  }
+});

@@ -202,10 +202,11 @@ function publicStatus(data, scope) {
     warnings: Array.isArray(data.warnings) ? data.warnings : [], counts: data.counts || null,
     nextSyncAt: Number.isFinite(lastSync) ? new Date(lastSync + COOLDOWN_MS).toISOString() : null,
     syncing: timestampMillis(data.lease?.expiresAt) > Date.now(),
+    autoLogin: publicAutoLogin(data),
   };
 }
 
-export async function saveConnection(uid, { session, students, profiles, selectedStudent, expiresAt, connectLeaseId }, services = getServerFirebase()) {
+export async function saveConnection(uid, { session, students, profiles, selectedStudent, expiresAt, connectLeaseId, autoLogin, expectedSessionVersion }, services = getServerFirebase()) {
   const ref = connectionRef(uid, services);
   const scope = scopeContext(uid, services);
   const sanitized = scopedStudents(students || profiles || [], scope);
@@ -225,6 +226,9 @@ export async function saveConnection(uid, { session, students, profiles, selecte
       }
     }
     const previous = snapshot.exists ? snapshot.data() : {};
+    if (expectedSessionVersion !== undefined && (!snapshot.exists || previous.sessionVersion !== expectedSessionVersion || !previous.autoLogin?.envelope)) {
+      throw new EduServerError('EDU_CONNECTION_CHANGED', 409, 'Połączenie zostało zmienione.');
+    }
     if (snapshot.exists) assertStoredScope(previous, scope);
     const requestedSelection = selectedStudent === undefined ? previous.selectedStudent : selectedStudent;
     let selection = null;
@@ -235,6 +239,7 @@ export async function saveConnection(uid, { session, students, profiles, selecte
     if (selection && scope.scope === 'family') await assertCurrentSchoolTarget(transaction, services, scope, selection.personKey);
     const data = {
       envelope, students: sanitized, selectedStudent: selection,
+      ...(autoLogin ? { autoLogin } : {}),
       expiresAt: Timestamp.fromMillis(expiry), sessionVersion: randomUUID(),
       ...(expiresAt === undefined ? {} : { providerExpiresAt: Timestamp.fromMillis(providerExpiry) }),
       updatedAt: FieldValue.serverTimestamp(),
@@ -274,6 +279,7 @@ export async function getConnectionStatus(uid, services = getServerFirebase()) {
   if (!Number.isFinite(timestampMillis(data.expiresAt)) || timestampMillis(data.expiresAt) <= Date.now()) {
     await removeExpiredConnection(ref, data, services);
     return { connected: false, state: 'expired', expired: true, reconnectRequired: true,
+      autoLogin: publicAutoLogin(data),
       lastErrorCode: ['EDU_SESSION_EXPIRED', 'EDU_SESSION_INVALID'].includes(data.lastErrorCode) ? data.lastErrorCode : 'EDU_SESSION_EXPIRED',
       profiles: [], students: [], selectedStudent: null };
   }
@@ -307,6 +313,44 @@ export async function selectConnectionStudent(uid, selection, services = getServ
     }
   });
   return getConnectionStatus(uid, services);
+}
+
+function publicAutoLogin(data) {
+  return { enabled: Boolean(data.autoLogin?.envelope), paused: data.autoLogin?.paused === true };
+}
+
+/** Server-only access; the public status never returns ciphertext or credentials. */
+export async function readAutoLogin(uid, services) {
+  const ref = connectionRef(uid, services), scope = scopeContext(uid, services);
+  return services.db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return null;
+    const data = snap.data();
+    assertStoredScope(data, scope);
+    await assertStudentBinding(tx, services, scope);
+    return { sessionVersion: data.sessionVersion, autoLogin: data.autoLogin || null,
+      selectedStudent: data.selectedStudent || null, students: data.students || [],
+      expired: data.reconnectRequired === true || !Number.isFinite(timestampMillis(data.expiresAt)) || timestampMillis(data.expiresAt) <= Date.now() };
+  });
+}
+
+export async function recordAutoLoginFailure(uid, version, leaseId, paused, services) {
+  const ref = connectionRef(uid, services);
+  await services.db.runTransaction(async tx => {
+    const [snap, lock] = await Promise.all([tx.get(ref), tx.get(services.db.collection('_eduConnectLocks').doc(uid))]);
+    if (!snap.exists || snap.data().sessionVersion !== version || lock.data()?.id !== leaseId || !snap.data().autoLogin?.envelope) return;
+    tx.update(ref, { autoLogin: { ...snap.data().autoLogin, paused, nextAttemptAt: Date.now() + 3600000 } });
+  });
+}
+
+export async function forgetAutoLogin(uid, services) {
+  const ref = connectionRef(uid, services), scope = scopeContext(uid, services);
+  await services.db.runTransaction(async tx => {
+    const snap = await tx.get(ref), lockRef = services.db.collection('_eduConnectLocks').doc(uid), lock = await tx.get(lockRef);
+    await assertStudentBinding(tx, services, scope);
+    if (snap.exists) { assertStoredScope(snap.data(), scope); tx.update(ref, { autoLogin: FieldValue.delete() }); }
+    if (lock.exists) tx.update(lockRef, { id: randomUUID(), expiresAt: Timestamp.fromMillis(0) });
+  });
 }
 
 export async function disconnectConnection(uid, services = getServerFirebase()) {

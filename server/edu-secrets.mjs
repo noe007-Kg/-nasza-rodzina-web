@@ -36,9 +36,13 @@ export function encryptionConfigured() {
 
 /** Store only the adapter's session/cookies. Login credentials are deliberately rejected. */
 export function encryptSession(session, context) {
+  rejectPasswords(session);
+  return encryptPayload(session, context);
+}
+
+function encryptPayload(session, context) {
   const key = loadKey();
   validateContext(context);
-  rejectPasswords(session);
   let plaintext;
   try { plaintext = Buffer.from(JSON.stringify(session), 'utf8'); }
   catch { throw new EduServerError('EDU_INVALID_SESSION', 400, 'Sesja dziennika ma nieprawidłowy format.'); }
@@ -50,6 +54,22 @@ export function encryptSession(session, context) {
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   plaintext.fill(0);
   return { v: 1, keyId, nonce: nonce.toString('base64url'), tag: cipher.getAuthTag().toString('base64url'), ciphertext: ciphertext.toString('base64url') };
+}
+
+/** Explicit opt-in credentials, cryptographically separated from session cookies. */
+export function encryptLoginCredentials(login, password, uid) {
+  if (typeof login !== 'string' || !login.trim() || login.length > 320 || typeof password !== 'string' || !password || password.length > 1024) {
+    throw new EduServerError('EDU_INVALID_CREDENTIALS', 400, 'Podaj login i hasło do eduVULCAN.');
+  }
+  return encryptPayload({ login: login.trim(), password }, { uid, purpose: 'eduvulcan-auto-login' });
+}
+
+export function decryptLoginCredentials(envelope, uid) {
+  const value = decryptSession(envelope, { uid, purpose: 'eduvulcan-auto-login' });
+  if (typeof value?.login !== 'string' || !value.login || value.login.length > 320 || typeof value.password !== 'string' || !value.password || value.password.length > 1024) {
+    throw new EduServerError('EDU_SESSION_INVALID', 401, 'Zapisane dane wymagają ponownego połączenia.');
+  }
+  return value;
 }
 
 export function decryptSession(envelope, context) {

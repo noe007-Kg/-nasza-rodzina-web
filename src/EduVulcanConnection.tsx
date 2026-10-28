@@ -27,6 +27,7 @@ export function EduVulcanConnection({ user, member, onSelectedStudent, onConnect
   const [operation, setOperation] = useState<Operation>(parent ? 'loading' : null);
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberLogin, setRememberLogin] = useState(false);
   const [profileId, setProfileId] = useState('');
   const [personKey, setPersonKey] = useState('');
   const [error, setError] = useState('');
@@ -64,7 +65,7 @@ export function EduVulcanConnection({ user, member, onSelectedStudent, onConnect
   }, [status, expired, parent, user.uid]);
 
   useEffect(() => {
-    setStatus(null); setPassword(''); setLogin(''); setProfileId(''); setPersonKey(''); setError(''); setNotice('');
+    setStatus(null); setPassword(''); setLogin(''); setRememberLogin(false); setProfileId(''); setPersonKey(''); setError(''); setNotice('');
     setSyncResult(undefined); setConfirmDisconnect(false); setReconnect(false); setBackendMissing(false); setAccessDenied(false);
     if (!parent) { setOperation(null); return; }
     const request = new AbortController();
@@ -136,8 +137,9 @@ export function EduVulcanConnection({ user, member, onSelectedStudent, onConnect
       else if (reply.status.counts) setSyncResult({ counts: reply.status.counts, warnings: reply.status.warnings });
       else if (action === 'select') setSyncResult(undefined);
       if (action === 'connect') { setProfileId(''); setPersonKey(''); setReconnect(false); setSyncResult(undefined); setNotice('Wybierz właściwy dziennik i przypisz go do dziecka.'); }
-      if (action === 'sync') setNotice('Odświeżanie danych zostało zakończone. Sprawdź zakres i ewentualne ostrzeżenia poniżej.');
-      if (action === 'disconnect') { setProfileId(''); setPersonKey(''); setLogin(''); setSyncResult(undefined); setConfirmDisconnect(false); setReconnect(false); setNotice('Dostęp do eduVULCAN został usunięty. Wpisy ręczne i pobrana historia pozostają w Naszej Rodzinie. Historia z dziennika jest tylko do odczytu.'); }
+      if (action === 'sync') setNotice(reply.recoveryOnly ? (reply.status.state === 'needs_profile' ? 'Połączono zapisanymi danymi. Potwierdź ponownie właściwy dziennik dziecka.' : 'Połączono zapisanymi danymi. Dane pobierze kolejna automatyczna synchronizacja; możesz też wybrać Synchronizuj teraz.') : 'Odświeżanie danych zostało zakończone. Sprawdź zakres i ewentualne ostrzeżenia poniżej.');
+      if (action === 'disconnect' && body?.forgetLogin === 'true') { setRememberLogin(false); setNotice('Zapamiętany login i hasło zostały usunięte. Bieżąca sesja i pobrane dane pozostają.'); }
+      else if (action === 'disconnect') { setProfileId(''); setPersonKey(''); setLogin(''); setSyncResult(undefined); setConfirmDisconnect(false); setReconnect(false); setNotice('Dostęp do eduVULCAN został usunięty. Wpisy ręczne i pobrana historia pozostają w Naszej Rodzinie. Historia z dziennika jest tylko do odczytu.'); }
       return reply;
     } catch (error) {
       if (request.signal.aborted || activeIdentity.current !== originalIdentity) return;
@@ -159,7 +161,7 @@ export function EduVulcanConnection({ user, member, onSelectedStudent, onConnect
   async function submitLogin(event: FormEvent) {
     event.preventDefault();
     if (!login.trim() || !password || busy) return;
-    await perform('connect', { login: login.trim(), password });
+    await perform('connect', { login: login.trim(), password, rememberLogin: rememberLogin ? 'true' : 'false' });
   }
   async function selectProfile(event: FormEvent) {
     event.preventDefault();
@@ -174,7 +176,8 @@ export function EduVulcanConnection({ user, member, onSelectedStudent, onConnect
   return <Card as="section" tone="blue" className="edu-vulcan-connection" aria-labelledby={headingId} aria-busy={busy}>
     <header className="edu-vulcan-heading"><div className="edu-vulcan-brand" aria-hidden="true"><Icon name="link" /></div><div><span className="edu-vulcan-eyebrow">Dziennik szkolny · wspólne konto rodziny</span><h2 id={headingId}>eduVULCAN</h2><p>Jedno aktywne konto rodzica w eduVULCAN udostępnia szkolne dane dziecka rodzinie. Oboje rodzice mogą zarządzać połączeniem w Naszej Rodzinie.</p></div><StatusPill tone={expired ? 'warning' : status?.state === 'connected' ? 'success' : 'neutral'} className={`edu-vulcan-state ${status?.state === 'connected' && !expired ? 'connected' : ''}`} role="status">{operation === 'loading' ? 'Sprawdzanie…' : operation === 'sync' ? 'Synchronizowanie…' : expired ? 'Sesja wygasła' : status?.state === 'connected' ? 'Połączono' : status?.state === 'needs_profile' ? 'Wybierz dziennik' : 'Niepołączono'}</StatusPill></header>
     <div className="edu-vulcan-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => setRefresh((value) => value + 1)}>Sprawdź stan połączenia</button></div>
-    {status?.state === 'connected' && !expired && <p className="edu-vulcan-secret-note">Po udanej automatycznej synchronizacji odnawiamy ważność sesji na kolejne 24 godziny, z uwzględnieniem limitu eduVULCAN. Nie musisz pozostawiać aplikacji otwartej. Jeśli dziennik unieważni sesję, poprosimy o ponowne połączenie; hasła nie przechowujemy.</p>}
+    {status?.state === 'connected' && !expired && <p className="edu-vulcan-secret-note">Po udanej automatycznej synchronizacji odnawiamy ważność sesji na kolejne 24 godziny, z uwzględnieniem limitu eduVULCAN. Nie musisz pozostawiać aplikacji otwartej. Po wygaśnięciu możemy zalogować się ponownie, jeśli wybierzesz zapamiętanie danych.</p>}
+    {status?.autoLogin?.enabled && <div className="edu-vulcan-secret-note" role="status"><p>{status.autoLogin.paused ? 'Automatyczne logowanie wstrzymane. Połącz konto ponownie, aby poprawić dane lub wykonać dodatkowe potwierdzenie.' : 'Zapamiętane dane są zaszyfrowane na serwerze. Automatyczne logowanie działa również przy zamkniętej aplikacji, zgodnie z harmonogramem synchronizacji.'}</p><button type="button" className="secondary-button" disabled={busy} onClick={() => void perform('disconnect', { forgetLogin: 'true' })}>Usuń zapamiętane dane</button>{expired && !status.autoLogin.paused && <button type="button" className="secondary-button" disabled={busy} onClick={() => void perform('sync')}>Połącz zapisanymi danymi</button>}</div>}
     {error && !backendMissing && <div id={errorId} className="edu-vulcan-error" role="alert">{error}</div>}
     {notice && <p className="edu-vulcan-notice" role="status">{notice}</p>}
     {(backendMissing || status?.configured === false) && <div className="edu-vulcan-configuration" role={backendMissing ? 'alert' : undefined}><strong>Integracja wymaga backendu Vercel</strong><p>{CONFIGURATION_TEXT}</p></div>}
@@ -183,7 +186,8 @@ export function EduVulcanConnection({ user, member, onSelectedStudent, onConnect
       <div className="edu-vulcan-login-intro"><h3>Połącz konto</h3><p>{expired || reconnect ? 'Połącz ponownie aktywne konto rodzica w eduVULCAN. ' : 'Podaj login i hasło aktywnego konta rodzica w eduVULCAN, np. konta Dominiki z dostępem do Nikodema. '}Są to dane dziennika, niezależne od konta, którym logujesz się do Naszej Rodziny. Po logowaniu wybierz właściwą szkołę dziecka. <a href="https://eduvulcan.pl/" target="_blank" rel="noopener noreferrer">Otwórz portal eduVULCAN ↗</a></p></div>
       <label className="edu-vulcan-field"><span>Login lub e-mail eduVULCAN</span><input name="eduvulcan-login" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={254} required value={login} onChange={(event) => setLogin(event.target.value)} aria-describedby={error ? errorId : undefined} /></label>
       <label className="edu-vulcan-field"><span>Hasło eduVULCAN</span><input name="eduvulcan-password" type="password" autoComplete="current-password" maxLength={1024} required value={password} onChange={(event) => setPassword(event.target.value)} aria-describedby={error ? errorId : undefined} /></label>
-      <p className="edu-vulcan-secret-note">Dane logowania trafiają przez HTTPS do zabezpieczonego backendu. Hasła nie zapisujemy w przeglądarce ani w Firestore; pole jest czyszczone po próbie połączenia. Sesja dziennika jest szyfrowana na serwerze.</p>
+      <label className="edu-vulcan-secret-note"><input type="checkbox" checked={rememberLogin} onChange={event => setRememberLogin(event.target.checked)}/> Zapamiętaj login i hasło i łącz automatycznie po wygaśnięciu sesji</label>
+      <p className="edu-vulcan-secret-note">Dane logowania trafiają przez HTTPS do zabezpieczonego backendu. Po zaznaczeniu opcji zapisujemy je w postaci zaszyfrowanej na serwerze, do czasu ich usunięcia lub rozłączenia konta. Oboje rodzice mogą wyłączyć wspólne połączenie. Bez zaznaczenia hasło nie jest zapisywane. Pole hasła jest czyszczone po próbie połączenia. Dodatkowe potwierdzenie w dzienniku może wymagać Twojej interwencji.</p>
       <div className="edu-vulcan-actions"><button className="primary-button" disabled={busy || !login.trim() || !password}>{operation === 'connect' ? 'Łączenie…' : 'Połącz'}</button>{reconnect && !expired && <button type="button" className="secondary-button" onClick={() => { setReconnect(false); setPassword(''); setError(''); }}>Anuluj</button>}</div>
     </fieldset></form>}
     {showProfiles && !backendMissing && <form className="edu-vulcan-select" onSubmit={(event) => void selectProfile(event)}><fieldset disabled={busy}>

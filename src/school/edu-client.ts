@@ -24,6 +24,7 @@ export type EduVulcanStatus = {
   lastErrorCode?: string;
   nextSyncAt?: string;
   syncing?: boolean;
+  autoLogin?: { enabled: boolean; paused: boolean };
   counts?: Record<string, number>;
   warnings?: string[];
 };
@@ -31,6 +32,7 @@ export type EduVulcanReply = {
   ok: true;
   status: EduVulcanStatus;
   sync?: { counts: Record<string, number>; warnings?: string[] };
+  recoveryOnly?: boolean;
 };
 export type ApiAction = 'status' | 'connect' | 'select' | 'sync' | 'disconnect';
 
@@ -160,6 +162,11 @@ function parseReply(value: unknown): EduVulcanReply {
     status.accountRole = source.accountRole;
   }
   status.connectedByUid = optionalText(source.connectedByUid);
+  if (source.autoLogin !== undefined) {
+    const autoLogin = object(source.autoLogin);
+    if (typeof autoLogin.enabled !== 'boolean' || typeof autoLogin.paused !== 'boolean') throw new EduVulcanError('INVALID_RESPONSE');
+    status.autoLogin = { enabled: autoLogin.enabled, paused: autoLogin.paused };
+  }
   if (source.syncing !== undefined) {
     if (typeof source.syncing !== 'boolean') throw new EduVulcanError('INVALID_RESPONSE');
     status.syncing = source.syncing;
@@ -169,7 +176,8 @@ function parseReply(value: unknown): EduVulcanReply {
     const data = object(reply.sync);
     sync = { counts: parseCounts(data.counts), warnings: parseWarnings(data.warnings) };
   }
-  return { ok: true, status, sync };
+  if (reply.recoveryOnly !== undefined && typeof reply.recoveryOnly !== 'boolean') throw new EduVulcanError('INVALID_RESPONSE');
+  return { ok: true, status, sync, ...(reply.recoveryOnly === true ? { recoveryOnly: true } : {}) };
 }
 
 async function requestApi(action: ApiAction, user: User, signal: AbortSignal, body?: Record<string, string>): Promise<EduVulcanReply> {
@@ -199,8 +207,8 @@ async function requestApi(action: ApiAction, user: User, signal: AbortSignal, bo
   if (!response.ok) throw new EduVulcanError(response.status === 401 ? 'AUTH_REQUIRED' : response.status === 403 ? 'FORBIDDEN' : 'PROVIDER_UNAVAILABLE');
   if (action === 'connect' && reply.status.state !== 'needs_profile') throw new EduVulcanError('INVALID_RESPONSE');
   if (action === 'select' && (reply.status.state !== 'connected' || reply.status.selectedStudent?.profileId !== body?.profileId || reply.status.selectedStudent?.personKey !== body?.personKey)) throw new EduVulcanError('INVALID_RESPONSE');
-  if (action === 'disconnect' && reply.status.state !== 'disconnected') throw new EduVulcanError('INVALID_RESPONSE');
-  if (action === 'sync' && reply.status.state !== 'connected') throw new EduVulcanError(reply.status.state === 'expired' ? 'SESSION_EXPIRED' : 'CONNECTION_CHANGED');
+  if (action === 'disconnect' && (body?.forgetLogin === 'true' ? reply.status.autoLogin?.enabled !== false : reply.status.state !== 'disconnected')) throw new EduVulcanError('INVALID_RESPONSE');
+  if (action === 'sync' && reply.status.state !== 'connected' && !(reply.recoveryOnly && reply.status.state === 'needs_profile')) throw new EduVulcanError(reply.status.state === 'expired' ? 'SESSION_EXPIRED' : 'CONNECTION_CHANGED');
   return reply;
 }
 

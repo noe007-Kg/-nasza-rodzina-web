@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { EduServerError } from './edu-auth.mjs';
 import { resolveConnectionAccess } from './edu-access.mjs';
-import { encryptionConfigured } from './edu-secrets.mjs';
+import { encryptionConfigured, encryptLoginCredentials, decryptLoginCredentials } from './edu-secrets.mjs';
+import { readAutoLogin, recordAutoLoginFailure, forgetAutoLogin } from './edu-storage.mjs';
 import { acquireSyncLease, disconnectConnection, getConnectionStatus, loadConnection, markConnectionNeedsReconnect, releaseSyncLease, retireLegacyParentConnections, saveConnection, selectConnectionStudent, updateConnectionSession, upsertSchoolItems, validateConnectionSessionRefresh } from './edu-storage.mjs';
 import { connectProvider, readProviderData } from './edu-provider.mjs';
 import { expectFields } from './edu-http.mjs';
@@ -47,17 +48,50 @@ export async function statusAction(context) {
   return { status, notifications };
 }
 
-export async function connectAction(context, body) {
+export async function connectAction(context, body, { connect = connectProvider } = {}) {
   context = await accessContext(context);
-  requireConfigured(); expectFields(body, ['login', 'password']);
+  requireConfigured(); expectFields(body, ['login', 'password', 'rememberLogin']);
+  if (body.rememberLogin !== undefined && !['true', 'false'].includes(body.rememberLogin)) throw new EduServerError('EDU_INVALID_REQUEST', 400, 'Nieprawidłowa zgoda na zapis danych.');
   if (typeof body.login !== 'string' || !body.login.trim() || body.login.length > 320 || typeof body.password !== 'string' || !body.password || body.password.length > 1024) throw new EduServerError('EDU_INVALID_CREDENTIALS', 400, 'Podaj login i hasło do eduVULCAN.');
   const release = await loginLease(context);
   try {
-    const connection = await connectProvider({ login: body.login.trim(), password: body.password });
-    const status = await saveConnection(context.connection.id, { ...connection, selectedStudent: null, connectLeaseId: release.leaseId }, context);
+    const connection = await connect({ login: body.login.trim(), password: body.password });
+    const autoLogin = body.rememberLogin === 'true' ? { envelope: encryptLoginCredentials(body.login, body.password, context.connection.id), paused: false, nextAttemptAt: 0 } : null;
+    const status = await saveConnection(context.connection.id, { ...connection, selectedStudent: null, connectLeaseId: release.leaseId, autoLogin }, context);
     if (context.connection.scope === 'family') await retireLegacyParentConnections(context);
     return { status: { configured: true, ...status } };
   } finally { delete body.login; delete body.password; await release(); }
+}
+
+/** One bounded, consented retry; never loops or bypasses interactive challenges. */
+export async function recoverConnection(context, { connect = connectProvider } = {}) {
+  context = await accessContext(context);
+  requireConfigured();
+  const id = context.connection.id, saved = await readAutoLogin(id, context);
+  if (!saved?.expired || !saved.autoLogin?.envelope || saved.autoLogin.paused || saved.autoLogin.nextAttemptAt > Date.now()) return false;
+  const release = await loginLease(context);
+  let credentials;
+  try {
+    // Re-read after claiming the shared login lock; forgetting/disconnecting wins.
+    const current = await readAutoLogin(id, context);
+    if (!current || current.sessionVersion !== saved.sessionVersion || !current.autoLogin?.envelope || current.autoLogin.paused || current.autoLogin.nextAttemptAt > Date.now()) return false;
+    credentials = decryptLoginCredentials(current.autoLogin.envelope, id);
+    const connection = await connect(credentials);
+    const previous = current.students.find(profile => profile.id === current.selectedStudent?.profileId);
+    const next = (connection.students || connection.profiles || []).find(profile => profile.id === current.selectedStudent?.profileId);
+    const key = value => typeof value === 'string' ? value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('pl') : '';
+    const sameProfile = previous && next && key(previous.studentName) && key(previous.schoolName)
+      && ['studentName', 'schoolName', 'schoolSymbol'].every(field => key(previous[field]) === key(next[field]));
+    await saveConnection(id, { ...connection, connectLeaseId: release.leaseId, expectedSessionVersion: saved.sessionVersion,
+      selectedStudent: sameProfile ? current.selectedStudent : null,
+      autoLogin: { ...current.autoLogin, paused: false, nextAttemptAt: 0 } }, context);
+    return true;
+  } catch (error) {
+    const code = error instanceof EduServerError ? error.code : 'EDU_CONNECT_FAILED';
+    await recordAutoLoginFailure(id, saved.sessionVersion, release.leaseId,
+      ['EDU_LOGIN_FAILED', 'EDU_INTERACTIVE_LOGIN_REQUIRED', 'EDU_SESSION_INVALID', 'EDU_INVALID_STUDENT', 'EDU_NO_PROFILES'].includes(code), context);
+    throw error;
+  } finally { if (credentials) { delete credentials.login; delete credentials.password; } await release(); }
 }
 
 export async function selectAction(context, body) {
@@ -72,6 +106,7 @@ export async function selectAction(context, body) {
 export async function syncAction(context, body, { readData = readProviderData } = {}) {
   context = await accessContext(context);
   requireConfigured(); expectFields(body, []);
+  if (await recoverConnection(context)) return { ...await statusAction(context), recoveryOnly: true };
   const id = context.connection.id;
   const lease = await acquireSyncLease(id, context);
   let success = false; let errorCode; let sessionVersion;
@@ -113,7 +148,12 @@ export async function syncAction(context, body, { readData = readProviderData } 
 
 export async function disconnectAction(context, body) {
   context = await accessContext(context);
-  expectFields(body, []);
+  expectFields(body, ['forgetLogin']);
+  if (body.forgetLogin !== undefined) {
+    if (body.forgetLogin !== 'true') throw new EduServerError('EDU_INVALID_REQUEST', 400, 'Nieprawidłowe żądanie.');
+    await forgetAutoLogin(context.connection.id, context);
+    return statusAction(context);
+  }
   await disconnectConnection(context.connection.id, context);
   if (context.connection.scope === 'family') await retireLegacyParentConnections(context);
   return { status: { configured: true, scope: context.connection.scope, accountRole: context.connection.accountRole, state: 'disconnected', profiles: [] } };

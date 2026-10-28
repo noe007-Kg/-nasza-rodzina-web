@@ -1,5 +1,5 @@
 import { resolveConnectionAccess, FAMILY_CONNECTION_ID } from './edu-access.mjs';
-import { syncAction } from './edu-service.mjs';
+import { syncAction, recoverConnection } from './edu-service.mjs';
 import { markConnectionNeedsReconnect } from './edu-storage.mjs';
 import { schoolSyncSlotStart, schoolSyncSlotConsumed } from './edu-school-slots.mjs';
 
@@ -111,6 +111,18 @@ export async function runScheduledEduSync(context, event = {}, dependencies = {}
     }
     const scheduledContext = { ...authorised, scheduledSyncIntervalMs: intervalMs,
       ...(schoolSlotStart !== null ? { scheduledSchoolSlotStartMs: schoolSlotStart } : {}) };
+    if (data.autoLogin?.envelope && !data.autoLogin.paused && (!data.autoLogin.nextAttemptAt || millis(data.autoLogin.nextAttemptAt) <= now)
+      && (data.reconnectRequired === true || data.state === 'needs_reconnect' || millis(data.expiresAt) <= now)) {
+      if (Number(clock()) - now > RUN_BUDGET_MS - NEXT_PROVIDER_BUDGET_MS) {
+        budgetExhausted = true; summary.skipped += 1; countCode(summary, 'EDU_SCHEDULE_BUDGET'); return;
+      }
+      try {
+        // Login and import have separate provider budgets. Import on the next tick.
+        const recovered = await (dependencies.recoverFn || recoverConnection)(scheduledContext);
+        summary.skipped += 1; countCode(summary, recovered ? 'EDU_AUTO_RECONNECTED' : 'EDU_RECONNECT_REQUIRED');
+      } catch (error) { summary.failed += 1; countCode(summary, safeCode(error)); }
+      return;
+    }
     if (data.reconnectRequired === true || data.state === 'needs_reconnect') {
       summary.skipped += 1; countCode(summary, 'EDU_RECONNECT_REQUIRED'); return;
     }
