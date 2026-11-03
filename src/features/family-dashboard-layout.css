@@ -22,7 +22,13 @@
 .home-layout-small .inpost-tile > header { gap:7px; }
 .home-layout-small .inpost-tile > header > span { width:32px; height:32px; font-size:20px; flex-shrink:0; }
 .home-layout-small .inpost-tile h2 { font-size:14px; }
-.home-layout-tile.is-dragging { box-shadow:0 20px 50px #17264a40; pointer-events:none; }
+.home-layout-tile { -webkit-touch-callout:none; user-select:none; }
+.home-layout-tile.is-dragging { opacity:.22; pointer-events:none; }
+.home-drag-preview { border-radius:18px; outline:3px solid var(--brand-primary,#2874cf); box-shadow:0 22px 65px #14264d55,0 0 0 7px #78aff633; pointer-events:none; background:var(--brand-card,#fff); }
+.home-drag-preview .home-layout-inner { width:100%; }
+.home-drag-preview .home-tile-content { overflow:hidden; }
+.home-layout-toolbar-floating { position:fixed; z-index:1500; left:max(12px,env(safe-area-inset-left)); right:max(12px,env(safe-area-inset-right)); bottom:max(12px,env(safe-area-inset-bottom)); max-width:920px; margin:0 auto; padding:12px; border:1px solid var(--brand-line,#ddd); border-radius:16px; background:var(--brand-card,#fff); color:var(--brand-ink,#171b4b); box-shadow:0 8px 35px #13284933; }
+.family-dashboard-customizer.is-editing { padding-bottom:190px; }
 .home-tile-controls { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:10px; margin-bottom:8px; border:1px dashed var(--brand-primary); background:var(--brand-soft); border-radius:12px; }
 .home-tile-controls button, .home-tile-controls select { padding:8px 10px; border:1px solid var(--brand-line); border-radius:9px; color:var(--brand-ink); background:var(--brand-card); font:inherit; font-size:12px; }
 .home-tile-controls label { display:flex; flex-wrap:wrap; align-items:center; gap:6px; min-width:0; font-size:11px; }
