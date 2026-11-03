@@ -464,7 +464,7 @@ export function memberEmoji(name: string) {
   return '🙂';
 }
 
-export const PAGES: Page[] = ['Start', 'Kalendarz', 'Zadania', 'Zakupy', 'Finanse', 'Czat', 'Zdrowie', 'Szkoła', 'Rodzina', 'Ustawienia'];
+export const PAGES: Page[] = ['Start', 'Kalendarz', 'Zadania', 'Zakupy', 'Finanse', 'Zdrowie', 'Szkoła', 'Rodzina', 'Ustawienia'];
 
 export function pageFromHash(): Page {
   try { const value = decodeURIComponent(location.hash.slice(1)) as Page; return PAGES.includes(value) ? value : 'Start'; } catch { return 'Start'; }

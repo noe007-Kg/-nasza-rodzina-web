@@ -115,6 +115,10 @@
     "api/family/*.mjs": {
       "maxDuration": 60,
       "includeFiles": "server/**"
+    },
+    "api/family-parcels-cron.mjs": {
+      "maxDuration": 60,
+      "includeFiles": "server/**"
     }
   }
 }

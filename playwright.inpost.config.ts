@@ -1,0 +1,2 @@
+import { defineConfig } from '@playwright/test';
+export default defineConfig({testDir:'./tests',testMatch:'inpost.spec.ts',workers:1,use:{baseURL:'http://127.0.0.1:5185',locale:'pl-PL',timezoneId:'Europe/Warsaw',browserName:'chromium'},reporter:'list',webServer:{command:'npm run dev -- --host 127.0.0.1 --port 5185 --strictPort',url:'http://127.0.0.1:5185',env:{VITE_USE_EMULATORS:'true',VITE_FIREBASE_PROJECT_ID:'demo-nasza-rodzina'}}});

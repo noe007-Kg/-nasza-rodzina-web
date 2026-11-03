@@ -23,6 +23,7 @@ function stableValue(value) {
 }
 export function semanticRecord(record) { return Object.fromEntries(semanticFields.filter(key => record?.[key] !== undefined).map(key => [key, stableValue(record[key])])); }
 export function deriveNotificationEvent(collectionName, id, before, after) {
+  if (collectionName === 'familyMessages') return null; // Retired module: preserve stored history without creating alerts.
   if (!after && !(collectionName === 'schoolItems' && before?.type === 'lesson')) return null;
   const value = after || before;
   if (before && after && hash(semanticRecord(before)) === hash(semanticRecord(after))) return null;

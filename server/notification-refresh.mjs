@@ -31,11 +31,6 @@ export function refreshSources(db, uid, profile) {
     { scope: 'private-calendar', collection: 'privateCalendarEvents', query: bounded(db.collection('privateCalendarEvents').where('ownerUid', '==', uid)) },
     { scope: 'tasks', collection: 'tasks', query: bounded(db.collection('tasks')) },
     { scope: 'shopping', collection: 'shoppingItems', query: bounded(db.collection('shoppingItems')) },
-    // Admin can read one recent window and authorize every candidate before
-    // enqueueing. This single-field query needs no new composite index and
-    // continues to work when the family has years of older chat history.
-    { scope: 'chat', collection: 'familyMessages', rolling: true,
-      query: db.collection('familyMessages').orderBy('createdAt', 'desc').limit(MAX_REFRESH_RECORDS) },
     { scope: 'health', collection: 'healthRecords', query: bounded(profile.role === 'parent'
       ? db.collection('healthRecords')
       : db.collection('healthRecords').where('privateToParents', '==', false).where('person', 'in', ['family', ownPerson])) },

@@ -230,12 +230,10 @@ service cloud.firestore {
       allow create, update: if member() && title(request.resource.data.get('title', id));
       allow delete: if member();
     }
+    // Retired chat: preserve authorized history; no new messages, reactions or receipts.
     match /familyMessages/{id} {
       allow read: if member() && (privateParticipant(resource.data) || resource.data.get('channel', '') == 'family');
-      allow create: if member() && validMessage(request.resource.data);
-      allow update: if false;
-      allow delete: if member() && (resource.data.uid == request.auth.uid
-        || (parent() && resource.data.channel == 'family'));
+      allow write: if false;
     }
     function chatMessageVisible(id) {
       let data = get(/databases/$(database)/documents/familyMessages/$(id)).data;
@@ -244,39 +242,14 @@ service cloud.firestore {
     }
     match /familyMessages/{messageId}/reactions/{uid} {
       allow read: if member() && chatMessageVisible(messageId);
-      allow create, update: if member() && uid == request.auth.uid && chatMessageVisible(messageId)
-        && request.resource.data.keys().hasOnly(['uid', 'emoji', 'updatedAt'])
-        && request.resource.data.uid == uid && request.resource.data.emoji in ['❤️', '👍', '😂', '🎉', '🙏']
-        && request.resource.data.updatedAt == request.time;
-      allow delete: if member() && uid == request.auth.uid && chatMessageVisible(messageId);
+      allow write: if false;
     }
-    function validChatReadState(data) {
-      return data.keys().hasOnly(['channel', 'participants', 'lastReadAt', 'updatedAt', 'lastMessageId'])
-        && data.channel is string && data.participants is list
-        && data.lastReadAt is timestamp && data.lastReadAt <= request.time
-        && data.updatedAt == request.time
-        && data.lastMessageId is string && data.lastMessageId.size() <= 200
-        && ((data.channel == 'family' && data.participants.size() == 0)
-          || (data.participants.size() == 2 && data.participants[0] != data.participants[1]
-            && privateParticipant(data)
-            && activeChatParticipant(data.participants[0]) && activeChatParticipant(data.participants[1])
-            && (data.channel == 'private:' + data.participants[0] + ':' + data.participants[1]
-              || data.channel == 'private:' + data.participants[1] + ':' + data.participants[0])));
-    }
-    match /chatReadStates/{uid}/channels/{channelId} {
+    match /chatReadStates/{uid}/{subcollection}/{id} {
       allow read: if member() && uid == request.auth.uid;
-      allow create, update: if member() && uid == request.auth.uid
-        && channelId == request.resource.data.channel && validChatReadState(request.resource.data);
-      allow delete: if member() && uid == request.auth.uid;
+      allow write: if false;
     }
-    match /chatReadStates/{uid}/messages/{id} {
-      allow read: if member() && uid == request.auth.uid;
-      allow create, update: if member() && uid == request.auth.uid
-        && chatMessageVisible(id)
-        && request.resource.data.keys().hasOnly(['read', 'updatedAt'])
-        && request.resource.data.read == true && request.resource.data.updatedAt == request.time;
-      allow delete: if false;
-    }
+    // Server owns the parcel document and revalidates family membership on every API call.
+    match /_inpostFamilies/{id} { allow read, write: if false; }
     // New medical documents have explicit server-issued UID ACLs. The parent role
     // grants no automatic access to an adult's document or to its authorization.
     function healthDocumentFamily(data) {

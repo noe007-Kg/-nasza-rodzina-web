@@ -12,7 +12,7 @@ import { CalendarCallbackCompletion } from './calendars/CalendarCallbackCompleti
 import type { CalendarNotice } from './calendars/model';
 import { schoolReadAccess, schoolReadAccessKey } from './school/read-access';
 import { CalendarPage } from "./features/CalendarPage";
-import { ChatPage } from "./features/ChatPage";
+
 import { FamilyPage } from "./features/FamilyPage";
 import { FinancePage } from "./features/FinancePage";
 import { HealthPage } from "./features/HealthPage";
@@ -156,7 +156,7 @@ function FamilyApp({ user }: { user: User }) {
       case 'Zadania': return <TasksPage user={user} member={displayedMember} />;
       case 'Zakupy': return <ShoppingPage user={user} member={displayedMember} />;
       case 'Finanse': return <FinancePage user={user} member={displayedMember} />;
-      case 'Czat': return <ChatPage user={user} member={displayedMember} />;
+
       case 'Zdrowie': return <HealthPage user={user} member={displayedMember} />;
       case 'Szkoła': return <SchoolModule key={schoolReadAccessKey(user.uid, schoolReadAccess(member))} user={user} member={displayedMember} familyMembers={displayedMembers} />;
       case 'Rodzina': return <FamilyPage user={user} member={displayedMember} goTo={goTo} selected={selectedFamilyPerson} onSelect={setSelectedFamilyPerson} />;
@@ -188,7 +188,7 @@ function FamilyApp({ user }: { user: User }) {
 function Sidebar({ page, goTo, member }: { page: Page; goTo: (page: Page) => void; member: Member | null }) {
   const groups: Array<{ label: string; items: Page[] }> = [
     { label: 'Na co dzień', items: ['Start', 'Kalendarz', 'Zadania', 'Zakupy', ...(member?.role === 'parent' ? ['Finanse' as Page] : [])] },
-    { label: 'Dom i bliscy', items: ['Czat', 'Zdrowie', 'Szkoła'] },
+    { label: 'Dom i bliscy', items: ['Zdrowie', 'Szkoła'] },
     { label: 'Twoja aplikacja', items: ['Ustawienia'] },
   ];
 
@@ -228,7 +228,7 @@ function MobileNavigation({ page, goTo, moreOpen, onMore }: { page: Page; goTo: 
 }
 
 function MobileMoreMenu({ page, goTo, member, onClose }: { page: Page; goTo: (page: Page) => void; member: Member | null; onClose: () => void }) {
-  const items: Array<[Page, string]> = [...(member?.role === 'parent' ? [['Finanse', 'Opłaty i terminy'] as [Page, string]] : []), ['Czat', 'Rodzinne rozmowy'], ['Zdrowie', 'Wizyty i dokumenty'], ['Szkoła', 'Lekcje i oceny'], ['Ustawienia', 'Dopasuj aplikację']];
+  const items: Array<[Page, string]> = [...(member?.role === 'parent' ? [['Finanse', 'Opłaty i terminy'] as [Page, string]] : []), ['Zdrowie', 'Wizyty i dokumenty'], ['Szkoła', 'Lekcje i oceny'], ['Ustawienia', 'Dopasuj aplikację']];
   const panel = useRef<HTMLElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;

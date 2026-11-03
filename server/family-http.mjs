@@ -1,6 +1,7 @@
 import { EduServerError, getServerFirebase, requireMember, eduRequestHeader } from './edu-auth.mjs';
 import { readJsonBody } from './edu-http.mjs';
 import { assertFamilyV2WriteAllowed, familyV2WritesAllowed } from './family-v2-policy.mjs';
+import { manageParcels } from './inpost-service.mjs';
 import { manageTasksAction } from './tasks-service.mjs';
 import { manageHealthAction } from './health-service.mjs';
 import { manageMusicSchoolAction, assertMusicWrites, musicWritesAllowed } from './music-school-service.mjs';
@@ -10,7 +11,7 @@ function routeDomain(request) {
   if (typeof request.url !== 'string' || /[\u0000-\u0020\u007f\\#]/.test(request.url)) return null;
   const separator = request.url.indexOf('?');
   const path = separator < 0 ? request.url : request.url.slice(0, separator);
-  const match = /^\/api\/family\/(tasks|health|finance|music-school)$/.exec(path);
+  const match = /^\/api\/family\/(tasks|health|finance|music-school|parcels)$/.exec(path);
   if (!match) return null;
   const domain = match[1];
   const query = new URLSearchParams(separator < 0 ? '' : request.url.slice(separator + 1)).getAll('action');
@@ -52,7 +53,7 @@ function authRequestAfterOriginValidation(request) {
 
 /** One Vercel function: same-origin, fresh Firebase identity, fail-closed writes. */
 export function createFamilyRouter({ services = getServerFirebase, memberGuard = requireMember,
-  tasksAction = manageTasksAction, healthAction = manageHealthAction, financeAction = manageFinanceAction, musicAction = manageMusicSchoolAction, env = process.env } = {}) {
+  tasksAction = manageTasksAction, healthAction = manageHealthAction, financeAction = manageFinanceAction, musicAction = manageMusicSchoolAction, parcelsAction = manageParcels, env = process.env } = {}) {
   return async function familyRouter(request, response) {
     response.setHeader('Cache-Control', 'no-store, private, max-age=0');
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -72,10 +73,11 @@ export function createFamilyRouter({ services = getServerFirebase, memberGuard =
       if (body.operation && body.action && body.operation !== body.action) throw new EduServerError('FAMILY_INVALID_REQUEST', 400, 'Nieprawidłowa operacja.');
       const operation = body.operation || body.action;
       if (!['state', 'status'].includes(operation)) {
-        if (domain === 'music-school') assertMusicWrites(env);
+        if (domain === 'parcels') { if (env.VERCEL_ENV === 'preview') throw new EduServerError('PARCEL_PREVIEW', 403, 'Wersja Preview nie zmienia paczek.'); }
+        else if (domain === 'music-school') assertMusicWrites(env);
         else assertFamilyV2WriteAllowed(context, env, domain);
       }
-      const result = domain === 'music-school' ? await musicAction(context, body, { env })
+      const result = domain === 'parcels' ? await parcelsAction(context, body, { env }) : domain === 'music-school' ? await musicAction(context, body, { env })
         : await ({ tasks: tasksAction, health: healthAction, finance: financeAction })[domain](context, body);
       response.statusCode = 200;
       response.end(JSON.stringify({ ok: true, ...result, writesEnabled: domain === 'music-school' ? musicWritesAllowed(env) : familyV2WritesAllowed(context, env, domain) }));

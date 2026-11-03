@@ -1,0 +1,10 @@
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import type { User } from 'firebase/auth';
+import { auth } from '../../src/firebase';
+import { InPostTile, InPostSettings } from '../../src/features/InPostParcels';
+import '../../src/style.css';
+import '../../src/brand-theme.css';
+const user={ uid:'offline-test', getIdToken:async()=> 'offline.test.token' } as User;
+Object.defineProperty(auth,'currentUser',{get:()=>user});
+createRoot(document.getElementById('root')!).render(<main style={{maxWidth:1000,margin:'auto',padding:16}}><h1>Start</h1><InPostTile user={user}/><p data-testid="next-section">Najbliżej w rodzinie</p><InPostSettings user={user} canManage/></main>);

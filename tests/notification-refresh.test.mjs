@@ -66,7 +66,7 @@ test('technical timestamps and author bookkeeping do not produce an event, a rea
 test('launch works without Firebase Functions, FCM, a VAPID key or existing notification preferences', async () => {
   const data = database({ 'tasks/old': task, 'familyMessages/old': message });
   const result = await refreshInAppNotifications(data.context, { reason: 'launch' }, { now: 10000 });
-  assert.equal(result.mode, 'in-app'); assert.equal(result.created, 0); assert.equal(result.baselines, 6); assert.equal(data.inbox().length, 0);
+  assert.equal(result.mode, 'in-app'); assert.equal(result.created, 0); assert.equal(result.baselines, 5); assert.equal(data.inbox().length, 0);
   assert.ok(![...data.values.keys()].some(path => /_notificationOutbox|_notificationDevices|_notificationTokenOwners/.test(path)));
 });
 test('a new task produces exactly one inbox entry for the authenticated UID; next unchanged refresh produces none', async () => {
@@ -78,15 +78,16 @@ test('a new task produces exactly one inbox entry for the authenticated UID; nex
   assert.equal(data.inbox().length, 1); assert.equal(data.inbox()[0].eventId, 'tasks:new');
   assert.ok(![...data.values.keys()].some(path => path.startsWith('notificationInbox/other/')));
 });
-test('family/private chat alerts only the permitted recipient and use generic text', async () => {
+test('retired family/private chat is never queried or delivered', async () => {
   const data = database({}, 'own', child);
   await refresh(data, 10000);
   data.values.set('familyMessages/family', { ...message, createdAt: 11000 });
   data.values.set('familyMessages/own-private', { ...message, createdAt: 11001, channel: 'private:own:other', participants: ['own', 'other'] });
   data.values.set('familyMessages/parents-private', { ...message, createdAt: 11002, channel: 'private:a:b', participants: ['a', 'b'] });
   data.values.set('familyMessages/self-sent', { ...message, createdAt: 11003, uid: 'own' });
-  assert.equal((await refresh(data, 12000)).created, 2);
-  assert.deepEqual(data.inbox().map(value => value.category).sort(), ['familyChat', 'privateChat']);
+  assert.equal((await refresh(data, 12000)).created, 0);
+  assert.deepEqual(data.inbox(), []);
+  assert.ok(!data.reads.some(value => value.path === 'familyMessages'));
   assert.ok(!JSON.stringify(data.inbox()).includes(message.text));
 });
 test('health and private calendar queries enforce existing child/owner visibility before notification generation', async () => {
@@ -142,13 +143,13 @@ test('rapid repeated activations hit a bounded server debounce before any source
   const result = await refresh(data, 10100);
   assert.equal(result.rateLimited, true); assert.equal(result.retryAfterMs, MIN_REFRESH_INTERVAL_MS - 100); assert.equal(data.reads.length, reads);
 });
-test('recent chat window still creates a new alert with over 500 historical messages, and never imports evicted old history', async () => {
+test('retired chat history is preserved and never imported as notifications', async () => {
   const seed = Object.fromEntries(Array.from({ length: MAX_REFRESH_RECORDS + 100 }, (_, index) => [`familyMessages/old-${index}`, { ...message, createdAt: index + 1 }]));
   const data = database(seed); assert.equal((await refresh(data, 10000)).created, 0);
   data.values.set('familyMessages/new', { ...message, createdAt: 11000 });
-  assert.equal((await refresh(data, 12000)).created, 1); assert.equal(data.inbox()[0].eventId, 'familyChat:new');
+  assert.equal((await refresh(data, 12000)).created, 0);
   data.values.delete('familyMessages/new'); data.values.delete(`familyMessages/old-${MAX_REFRESH_RECORDS + 99}`);
-  assert.equal((await refresh(data, 14000)).created, 0); assert.equal(data.inbox().length, 1);
+  assert.equal((await refresh(data, 14000)).created, 0); assert.equal(data.inbox().length, 0);
   assert.ok(data.reads.filter(value => value.path === 'familyMessages').every(value => value.count === MAX_REFRESH_RECORDS && value.ordering[0] === 'createdAt'));
 });
 test('an oversized non-chat collection is explicitly skipped, never used as an incomplete baseline', async () => {
@@ -159,7 +160,7 @@ test('an oversized non-chat collection is explicitly skipped, never used as an i
 });
 test('the refresh source contract does not read school-parent messages or eduVULCAN sessions', () => {
   const data = database(); const queries = refreshSources(data.db, 'own', parent);
-  assert.equal(queries.length, 6); assert.ok(queries.every(source => !source.collection.startsWith('school') && !source.collection.startsWith('_edu')));
+  assert.equal(queries.length, 5); assert.ok(queries.every(source => !source.collection.startsWith('school') && !source.collection.startsWith('_edu')));
 });
 test('repeated delivery failures retain the latest pending state per record instead of growing an unbounded baseline', () => {
   const member = { ...parent, id: 'own' };
@@ -209,7 +210,7 @@ test('a private chat participant removed after the query gets no alert from the 
 test('adult refresh retains own/private membership boundaries and creates general family notifications', async () => {
   const adult = { role: 'adult', name: 'Dorosły', personKey: 'member-0123456789abcdef01234567', active: true, canLogin: true };
   const data = database({}, 'own', adult);
-  assert.equal((await refresh(data, 10000)).baselines, 6);
+  assert.equal((await refresh(data, 10000)).baselines, 5);
   data.values.set('tasks/new', task);
   data.values.set('familyMessages/family', { ...message, createdAt: 11000 });
   data.values.set('familyMessages/own-private', { ...message, createdAt: 11001, channel: 'private:own:other', participants: ['own', 'other'] });
@@ -221,8 +222,8 @@ test('adult refresh retains own/private membership boundaries and creates genera
   data.values.set('privateCalendarEvents/other', { title: 'Cudzy wpis', ownerUid: 'other', createdBy: 'other', private: true });
   data.values.set('schoolParentMessages/school', { title: 'Skrzynka rodziców', person: adult.personKey });
   data.values.set('schoolStudentMessages/school', { title: 'Skrzynka ucznia', sourceOwnerUid: 'own', person: adult.personKey });
-  assert.equal((await refresh(data, 12000)).created, 5);
-  assert.deepEqual(data.inbox().map(value => value.category).sort(), ['calendar', 'familyChat', 'health', 'privateChat', 'tasks']);
+  assert.equal((await refresh(data, 12000)).created, 3);
+  assert.deepEqual(data.inbox().map(value => value.category).sort(), ['calendar', 'health', 'tasks']);
   assert.equal((await refresh(data, 14000)).created, 0);
   assert.ok(data.reads.filter(value => value.path === 'healthRecords').every(value => value.clauses.some(([field, , value]) => field === 'privateToParents' && value === false)));
   assert.ok(!data.reads.some(value => value.path.startsWith('school')));

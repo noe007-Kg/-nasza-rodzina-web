@@ -1,0 +1,20 @@
+    // Retired chat: preserve authorized history; no new messages, reactions or receipts.
+    match /familyMessages/{id} {
+      allow read: if member() && (privateParticipant(resource.data) || resource.data.get('channel', '') == 'family');
+      allow write: if false;
+    }
+    function chatMessageVisible(id) {
+      let data = get(/databases/$(database)/documents/familyMessages/$(id)).data;
+      return exists(/databases/$(database)/documents/familyMessages/$(id))
+        && (data.get('channel', '') == 'family' || privateParticipant(data));
+    }
+    match /familyMessages/{messageId}/reactions/{uid} {
+      allow read: if member() && chatMessageVisible(messageId);
+      allow write: if false;
+    }
+    match /chatReadStates/{uid}/{subcollection}/{id} {
+      allow read: if member() && uid == request.auth.uid;
+      allow write: if false;
+    }
+    // Server owns the parcel document and revalidates family membership on every API call.
+    match /_inpostFamilies/{id} { allow read, write: if false; }

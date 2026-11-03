@@ -62,60 +62,13 @@ function write(f, collection, id, before, after, overrides = {}) {
   return processNotificationWrite(f.context, { collection, id, before, after }, { ...dependencies, ...overrides });
 }
 
-test('a new familyMessages creation immediately produces inbox notifications with no refresh or scheduled tick', async () => {
-  const f = fixture({ 'familyMessages/new': message });
-  const result = await write(f, 'familyMessages', 'new', null, message);
-  assert.equal(result.created, 3); assert.equal(result.reason, 'event');
-  for (const uid of ['sebastian', 'nikodem', 'pawel']) assert.equal(f.inbox(uid)[0].eventId, 'familyChat:new');
-  assert.equal(f.inbox('dominika').length, 0);
-  assert.equal(JSON.stringify(f.inbox('sebastian')).includes(message.text), false);
-  assert.equal([...f.values.keys()].some(path => /_notificationOutbox|_notificationDevices|_notificationTokenOwners/.test(path)), false);
-});
-
-test('family message updates and technical bookkeeping create no further alerts', async () => {
-  const f = fixture({ 'familyMessages/new': message });
-  await write(f, 'familyMessages', 'new', null, message);
-  assert.equal((await write(f, 'familyMessages', 'new', message, { ...message, updatedAt: 500, read: true })).created, 0);
-  assert.equal((await write(f, 'familyMessages', 'new', message, { ...message, text: 'Zmieniona treść' })).created, 0);
-  assert.equal(f.inbox('sebastian').length, 1);
-});
-
-test('concurrent trigger retries and Vercel refresh share one stable inbox ID without resetting read or starred', async () => {
-  const f = fixture({ 'familyMessages/new': message });
-  await Promise.all([write(f, 'familyMessages', 'new', null, message), write(f, 'familyMessages', 'new', null, message)]);
-  const event = deriveNotificationEvent('familyMessages', 'new', null, message);
-  const path = `notificationInbox/sebastian/items/${eventDocumentId(event)}`;
-  f.values.set(path, { ...f.values.get(path), read: true, starred: true });
-  assert.equal((await enqueueInAppEvents(f.context, [event], { recipientUid: 'sebastian', revalidateSource: true })).created, 0);
-  assert.equal(f.inbox('sebastian').length, 1); assert.equal(f.inbox('sebastian')[0].read, true); assert.equal(f.inbox('sebastian')[0].starred, true);
-});
-
-test('private chat sends only to current participants and never exposes message content in inbox', async () => {
-  const privateMessage = { ...message, channel: 'private:dominika:sebastian', participants: ['dominika', 'sebastian'] };
-  const f = fixture({ 'familyMessages/private': privateMessage });
-  assert.equal((await write(f, 'familyMessages', 'private', null, privateMessage)).created, 1);
-  assert.equal(f.inbox('sebastian')[0].category, 'privateChat');
-  assert.equal(f.inbox('nikodem').length, 0); assert.equal(f.inbox('pawel').length, 0);
-});
-
-test('fresh source revalidation prevents delivery when chat membership changes before inbox commit', async () => {
-  const original = { ...message, channel: 'private:dominika:nikodem', participants: ['dominika', 'nikodem'] };
-  const f = fixture({ 'familyMessages/private': original });
-  await write(f, 'familyMessages', 'private', null, original, { enqueue: async (context, events, options) => {
-    assert.deepEqual(options, { revalidateSource: true });
-    f.values.set('familyMessages/private', { ...original, participants: ['dominika', 'sebastian'] });
-    return enqueueInAppEvents(context, events, options);
-  } });
-  assert.equal(f.inbox('nikodem').length, 0); assert.equal(f.inbox('sebastian').length, 0);
-});
-
-test('a deleted source and an opted-out or archived recipient cannot receive a stale trigger notification', async () => {
-  const f = fixture({ 'familyMessages/new': message, 'userPreferences/sebastian': { notifications: { enabled: false } },
-    'members/nikodem': { ...child('Nikodem'), active: false } });
-  assert.equal((await write(f, 'familyMessages', 'new', null, message)).created, 1);
-  assert.equal(f.inbox('sebastian').length, 0); assert.equal(f.inbox('nikodem').length, 0);
-  f.values.delete('familyMessages/new');
-  assert.equal((await write(f, 'familyMessages', 'new', null, message)).created, 0);
+test('retired chat trigger creates no inbox entries for family, private or retried messages', async () => {
+  for (const value of [message, { ...message, channel:'private:dominika:sebastian', participants:['dominika','sebastian'] }]) {
+    const f = fixture({ 'familyMessages/new':value });
+    for (let i=0;i<2;i++) assert.equal((await write(f,'familyMessages','new',null,value)).created,0);
+    for (const uid of ['sebastian','dominika','nikodem','pawel']) assert.equal(f.inbox(uid).length,0);
+    assert.deepEqual(f.values.get('familyMessages/new'),value);
+  }
 });
 
 test('managed school raw writes leave first-history and per-section baseline decisions to the canonical journal', async () => {

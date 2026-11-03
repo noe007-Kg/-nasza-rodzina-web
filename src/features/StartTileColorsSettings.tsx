@@ -47,7 +47,7 @@ export function StartTileColorsSettings({ uid }: { uid: string }) {
     <p className="start-color-note">Każdy kafelek może mieć własny kolor. Kolory zapisują się osobno dla Twojego konta na tym urządzeniu i nie synchronizują się między urządzeniami.</p>
     <span className="start-color-original-hint"><span aria-hidden="true">🌈</span> Pierwsze kółeczko: Oryginalny · Ostatnie: Multikolor</span>
     <div className="start-color-rows">
-      {START_CARD_IDS.map(cardId => <fieldset className="start-color-row" key={cardId} data-testid={`tile-color-row-${cardId}`}>
+      {START_CARD_IDS.filter(id => id !== 'chat').map(cardId => <fieldset className="start-color-row" key={cardId} data-testid={`tile-color-row-${cardId}`}>
         <legend><AppIcon page={TILE_NAMES[cardId].page} size={18}/><span>{TILE_NAMES[cardId].name}</span></legend>
         <div className="start-color-options">
           {choice(cardId, 'original', 'Oryginalny')}

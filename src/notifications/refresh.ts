@@ -56,8 +56,6 @@ export function useInAppNotificationRefresh(user: User, member: RefreshMember = 
       query(collection(db, 'privateCalendarEvents'), where('ownerUid', '==', user.uid)),
       query(collection(db, 'tasks')),
       query(collection(db, 'shoppingItems')),
-      query(collection(db, 'familyMessages'), where('channel', '==', 'family')),
-      query(collection(db, 'familyMessages'), where('participants', 'array-contains', user.uid)),
       member.role === 'parent' ? query(collection(db, 'healthRecords'))
         : query(collection(db, 'healthRecords'), where('privateToParents', '==', false), where('person', 'in', ['family', ownPerson])),
     ];

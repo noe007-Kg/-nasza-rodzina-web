@@ -50,9 +50,8 @@ test('private event never alerts a different parent or a child', () => {
   const event = deriveNotificationEvent('calendarEvents', 'c1', null, { title: 'Prywatne', private: true, ownerUid: parent.id, createdBy: 'someone', person: 'family' });
   assert.equal(canReceiveNotification(parent, event), true); assert.equal(canReceiveNotification({ ...parent, id: 'wife' }, event), false); assert.equal(canReceiveNotification(child, event), false);
 });
-test('private 1:1 messages only alert participant other than sender', () => {
-  const event = deriveNotificationEvent('familyMessages', 'm1', null, { text: 'Secret', uid: parent.id, channel: 'private:a:b', participants: [parent.id, child.id] });
-  assert.equal(canReceiveNotification(parent, event), false); assert.equal(canReceiveNotification(child, event), true); assert.equal(canReceiveNotification({ ...parent, id: 'third-person' }, event), false);
+test('retired private messages no longer produce an event', () => {
+  assert.equal(deriveNotificationEvent('familyMessages','m1',null,{ channel:'private:a:b', participants:[parent.id,child.id] }),null);
 });
 test('health recipient permissions match record privacy and own-person binding', () => {
   const privateHealth = deriveNotificationEvent('healthRecords', 'h1', null, { title: 'Secret PDF', person: 'Nikodem', privateToParents: true });
@@ -103,11 +102,6 @@ test('adult receives general and own private notifications without receiving par
     const event = deriveNotificationEvent(collection, 'general', null, { title: 'Wpis rodzinny', person: 'family', createdBy: 'other' });
     assert.equal(canReceiveNotification(adult, event), true);
   }
-  const family = deriveNotificationEvent('familyMessages', 'family', null, { channel: 'family', participants: [], uid: 'other', text: 'Cześć' });
-  assert.equal(canReceiveNotification(adult, family), true);
-  const personal = deriveNotificationEvent('familyMessages', 'private', null, { channel: 'private:adult-uid:other', participants: ['adult-uid', 'other'], uid: 'other', text: 'Prywatne' });
-  assert.equal(canReceiveNotification(adult, personal), true);
-  assert.equal(canReceiveNotification({ ...adult, id: 'another' }, personal), false);
   const health = deriveNotificationEvent('healthRecords', 'own', null, { title: 'Wpis', person: adult.personKey, privateToParents: false });
   assert.equal(canReceiveNotification(adult, health), true);
   assert.equal(canReceiveNotification(adult, { ...health, record: { ...health.record, privateToParents: true } }), false);
@@ -121,7 +115,7 @@ test('adult receives general and own private notifications without receiving par
 });
 
 test('archived notification recipients are rejected even if stale active and canLogin flags remain true', () => {
-  const event = deriveNotificationEvent('familyMessages', 'family', null, { channel: 'family', uid: 'other', participants: [], text: 'Cześć' });
+  const event = deriveNotificationEvent('tasks', 'family', null, { title: 'Zadanie', createdBy: 'other' });
   for (const role of ['parent', 'adult', 'child']) {
     assert.equal(canReceiveNotification({ ...parent, role, archived: true }, event), false);
     assert.equal(canReceiveNotification({ ...parent, role, archived: false }, event), true);

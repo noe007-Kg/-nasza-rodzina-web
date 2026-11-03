@@ -71,14 +71,8 @@ export const notifySchool = sourceTrigger('schoolItems');
 export const notifySchoolParents = sourceTrigger('schoolParentMessages');
 export const notifySchoolStudent = sourceTrigger('schoolStudentMessages');
 
-// New chat messages reach the existing inbox immediately, independently of
-// a foreground refresh or the school's scheduled synchronization.
-export const notifyChat = onDocumentCreated({ document: 'familyMessages/{id}', region, retry: true }, async trigger => {
-  await processNotificationWrite({ db }, {
-    collection: 'familyMessages', id: trigger.params.id,
-    before: null, after: trigger.data?.data() || null,
-  }, notificationDependencies);
-});
+// Keep the exported trigger during rollout so Firebase never deletes historical data.
+export const notifyChat = onDocumentCreated({ document: 'familyMessages/{id}', region }, async () => {});
 
 // Guarded school imports atomically create this journal after their per-section
 // baseline. Reuse its semantic diff instead of alerting for every raw school write.

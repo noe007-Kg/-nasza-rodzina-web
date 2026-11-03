@@ -12,7 +12,7 @@ export function StartTileSizesSettings({ uid }: { uid: string }) {
   return <details className="start-tile-sizes-settings" data-testid="start-tile-sizes-settings">
     <summary>Rozmiary kafelków</summary>
     <p className="settings-footnote">Automatyczny dopasowuje wysokość do zawartości. Rozmiary zapisują się tylko na tym urządzeniu, osobno dla Twojego konta.</p>
-    <div className="start-tile-size-rows">{START_CARD_IDS.map(cardId => <div className="start-tile-size-row" key={cardId}>
+    <div className="start-tile-size-rows">{START_CARD_IDS.filter(id => id !== 'chat').map(cardId => <div className="start-tile-size-row" key={cardId}>
       <label htmlFor={`${idPrefix}-${cardId}`}>{LABELS[cardId]}</label>
       <select id={`${idPrefix}-${cardId}`} value={selectedStartTileSize(sizes, cardId)} onChange={event => setSize(cardId, event.target.value as StartTileSize)}>
         {START_TILE_SIZE_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}

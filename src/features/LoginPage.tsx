@@ -28,7 +28,7 @@ export function Login() {
     catch { setError('Nie udało się zalogować. Sprawdź e-mail i hasło.'); }
     finally { setLoggingIn(false); }
   }
-  const features: Page[] = ['Kalendarz', 'Zadania', 'Zakupy', 'Czat', 'Zdrowie', 'Szkoła', 'Rodzina'];
+  const features: Page[] = ['Kalendarz', 'Zadania', 'Zakupy', 'Zdrowie', 'Szkoła', 'Rodzina'];
   return <div className="login-v11 family-ui account-login">
     <div className="login-v11-overlay" />
     <div className="login-v11-brand"><img className="login-v11-brand-logo" src="/nasza-rodzina-logo.svg" alt="" /><div><strong>Nasza Rodzina</strong><small>Razem zawsze lepiej ♡</small></div></div>

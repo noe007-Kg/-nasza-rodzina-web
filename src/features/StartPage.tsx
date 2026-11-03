@@ -1,10 +1,11 @@
+import { InPostTile } from './InPostParcels';
 import { FamilyHome } from './FamilyHome';
 import { familyAgendaRange, upcomingFamilyEvents } from './family-home-model';
 import { formatWarsawTime } from '../calendar-timeline';
 import { useMusicSchoolPlans, musicCalendarEvents } from '../school/music-school-client';
 import { useEffect, useMemo, useState } from 'react';
 import type { User } from 'firebase/auth';
-import { collection, query, where, Timestamp } from 'firebase/firestore';
+import { collection, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { onSnapshot } from '../feedback';
 import { isPersonKey, ownPerson, type CalendarEventData, type Member, type Page, type TaskItem, Modal, DetailRow } from '../app-shared';
@@ -13,7 +14,7 @@ import { useDashboardOrder } from './useDashboardOrder';
 import { useCalendarSchoolSources } from '../useCalendarSchoolSources';
 import { useFamilyDirectory, orderedFamilyProfiles } from '../family-directory';
 import { categorizeProduct, isShoppingCategory } from './ShoppingPage';
-import { buildFamilyTime, familyStatusRefreshDelay, latestConversations, warsawCalendarDay, type StartChatMessage, type StartShoppingItem } from './start-tile-projections';
+import { buildFamilyTime, familyStatusRefreshDelay, warsawCalendarDay, type StartShoppingItem } from './start-tile-projections';
 import { familyCalendarEvents, projectFamilyBirthdays } from '../calendar-v2';
 import { CalendarOwnerBadge } from '../CalendarOwnerBadge';
 import { projectOkruszekCalendar, projectSchoolCalendar } from '../calendar-source-projections';
@@ -46,7 +47,6 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const musicEvents = useMemo(() => musicCalendarEvents(musicSources.data?.plans || [], profiles), [musicSources.data, profiles]);
   const schoolRecords = schoolSources.rows;
   const [shopping, setShopping] = useState<StartShoppingItem[]>([]);
-  const [messages, setMessages] = useState<StartChatMessage[]>([]);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [now, setNow] = useState(() => new Date());
   const { order, saveOrder, loaded } = useDashboardOrder(user.uid);
@@ -66,16 +66,6 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
     const x = d.data(); const title = String(x.title || ''); return { id: d.id, title, done: x.done === true, category: isShoppingCategory(x.category) ? x.category : categorizeProduct(title), quantity: typeof x.quantity === 'string' ? x.quantity : '', unit: typeof x.unit === 'string' ? x.unit : '', createdAt: timestampDate(x.createdAt) };
   }))), [user.uid]);
   useEffect(() => { let active = true; const uid = user.uid; const stop = subscribeCalendar(uid, rows => { if (active) setCalendarData({ uid, rows }); }); return () => { active = false; stop(); }; }, [user.uid]);
-  useEffect(() => {
-    const groups: Record<string, StartChatMessage[]> = { family: [], private: [] };
-    const load = (group: string, snap: import('firebase/firestore').QuerySnapshot) => {
-      groups[group] = snap.docs.map(d => { const x = d.data(); return { id: d.id, text: String(x.text || ''), name: String(x.name || 'Rodzina'), uid: String(x.uid || ''), channel: String(x.channel || 'family'), participants: Array.isArray(x.participants) ? x.participants.filter((value: unknown) => typeof value === 'string') : [], createdAt: timestampDate(x.createdAt) }; });
-      setMessages([...groups.family, ...groups.private].sort((a, b) => (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0)));
-    };
-    const family = onSnapshot(query(collection(db, 'familyMessages'), where('channel', '==', 'family')), snap => load('family', snap));
-    const privateMessages = onSnapshot(query(collection(db, 'familyMessages'), where('participants', 'array-contains', user.uid)), snap => load('private', snap));
-    return () => { family(); privateMessages(); };
-  }, [user.uid]);
   useEffect(() => {
     const controller = new AbortController();
     async function loadWeather() {
@@ -119,11 +109,10 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const familyTime = buildFamilyTime(profiles, statusOccurrences, [], now, statusViewer);
   const openTasks = tasks.filter(item => !item.done).sort((a, b) => ({ high: 0, normal: 1, low: 2 }[a.priority] - { high: 0, normal: 1, low: 2 }[b.priority] || (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99')));
   const openShopping = shopping.filter(item => !item.done);
-  const conversations = latestConversations(messages, profiles, user.uid);
   return <>
     {musicSources.error && <p className="calendar-source-notice" role="status">Nie udało się odczytać planu szkoły muzycznej. Terminy i status rodziny mogą nie uwzględniać tych zajęć.<button type="button" onClick={musicSources.reload}>Ponów odczyt planu</button></p>}
-    <FamilyHome name={name} now={now} weather={weather} familyTime={familyTime} profiles={profiles} upcoming={upcoming}
-      tasks={openTasks} school={schoolPreview} schoolError={schoolSources.error} shoppingCount={openShopping.length} chatCount={conversations.length} order={order} loaded={loaded}
+    <FamilyHome parcelsTile={<InPostTile user={user}/>} name={name} now={now} weather={weather} familyTime={familyTime} profiles={profiles} upcoming={upcoming}
+      tasks={openTasks} school={schoolPreview} schoolError={schoolSources.error} shoppingCount={openShopping.length} order={order} loaded={loaded}
       saveOrder={saveOrder} goTo={goTo} onOpenEvent={key => setCalendarDetail({ uid: user.uid, key })}/>
     {openedCalendarOccurrence && <Modal title={openedCalendarOccurrence.source.title} subtitle="Wydarzenie rodzinne" onClose={() => setCalendarDetail(null)}><div className="details-grid"><CalendarOwnerBadge event={openedCalendarOccurrence.source}/><DetailRow label="Termin" value={openedCalendarOccurrence.date.toLocaleDateString('pl-PL', { timeZone: 'Europe/Warsaw' })}/><DetailRow label="Godzina" value={openedCalendarOccurrence.source.allDay ? 'Cały dzień' : `${formatWarsawTime(openedCalendarOccurrence.date)}–${formatWarsawTime(openedCalendarOccurrence.endDate)}`}/>{openedCalendarOccurrence.source.cancelled && <DetailRow label="Status" value="ODWOŁANE"/>}{openedCalendarOccurrence.source.description && <DetailRow label="Opis" value={openedCalendarOccurrence.source.description}/>}</div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setCalendarDetail(null); goTo('Kalendarz'); }}>Otwórz Kalendarz</button></div></Modal>}
   </>;
