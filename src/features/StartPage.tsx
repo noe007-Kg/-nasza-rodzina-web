@@ -49,7 +49,7 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const [shopping, setShopping] = useState<StartShoppingItem[]>([]);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [now, setNow] = useState(() => new Date());
-  const { order, saveOrder, loaded } = useDashboardOrder(user.uid);
+  const { order } = useDashboardOrder(user.uid);
 
   useEffect(() => onSnapshot(collection(db, 'tasks'), snap => {
     setTasks(snap.docs.filter(d => d.data().archived !== true).map(d => {
@@ -111,9 +111,9 @@ export function StartPage({ user, member, goTo }: { user: User; member: Member |
   const openShopping = shopping.filter(item => !item.done);
   return <>
     {musicSources.error && <p className="calendar-source-notice" role="status">Nie udało się odczytać planu szkoły muzycznej. Terminy i status rodziny mogą nie uwzględniać tych zajęć.<button type="button" onClick={musicSources.reload}>Ponów odczyt planu</button></p>}
-    <FamilyHome parcelsTile={<InPostTile user={user} canManage={member?.role === 'parent' || member?.role === 'adult'}/>} name={name} now={now} weather={weather} familyTime={familyTime} profiles={profiles} upcoming={upcoming}
-      tasks={openTasks} school={schoolPreview} schoolError={schoolSources.error} shoppingCount={openShopping.length} order={order} loaded={loaded}
-      saveOrder={saveOrder} goTo={goTo} onOpenEvent={key => setCalendarDetail({ uid: user.uid, key })}/>
+    <FamilyHome uid={user.uid} parcelsTile={<InPostTile user={user} canManage={member?.role === 'parent' || member?.role === 'adult'}/>} name={name} now={now} weather={weather} familyTime={familyTime} profiles={profiles} upcoming={upcoming}
+      tasks={openTasks} school={schoolPreview} schoolError={schoolSources.error} shoppingCount={openShopping.length} order={order}
+      goTo={goTo} onOpenEvent={key => setCalendarDetail({ uid: user.uid, key })}/>
     {openedCalendarOccurrence && <Modal title={openedCalendarOccurrence.source.title} subtitle="Wydarzenie rodzinne" onClose={() => setCalendarDetail(null)}><div className="details-grid"><CalendarOwnerBadge event={openedCalendarOccurrence.source}/><DetailRow label="Termin" value={openedCalendarOccurrence.date.toLocaleDateString('pl-PL', { timeZone: 'Europe/Warsaw' })}/><DetailRow label="Godzina" value={openedCalendarOccurrence.source.allDay ? 'Cały dzień' : `${formatWarsawTime(openedCalendarOccurrence.date)}–${formatWarsawTime(openedCalendarOccurrence.endDate)}`}/>{openedCalendarOccurrence.source.cancelled && <DetailRow label="Status" value="ODWOŁANE"/>}{openedCalendarOccurrence.source.description && <DetailRow label="Opis" value={openedCalendarOccurrence.source.description}/>}</div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setCalendarDetail(null); goTo('Kalendarz'); }}>Otwórz Kalendarz</button></div></Modal>}
   </>;
 }

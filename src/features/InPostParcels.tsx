@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Modal } from '../app-shared';
 import type { User } from 'firebase/auth';
 import { familyAction } from '../family-v2-client';
 import { emptyPickup, PickupEditor, PickupViewer, type Pickup } from './InPostPickup';
@@ -26,10 +28,10 @@ function useParcels(uid: string) {
   }, [uid]);
   return state.uid === uid ? state : { uid, data:null, error:'' };
 }
-export function ParcelRows({ parcels, canManage=false }: { parcels:readonly Parcel[]; canManage?:boolean }) {
+export function ParcelRows({ parcels, canManage=false, modalTitle, onClose }: { parcels:readonly Parcel[]; canManage?:boolean; modalTitle?:string; onClose?:()=>void }) {
   const [viewing,setViewing]=useState(''),[editing,setEditing]=useState('');
   const view=parcels.find(p=>p.number===viewing),edit=parcels.find(p=>p.number===editing);
-  return <><ul className="inpost-list">{parcels.map(parcel => {
+  const list=<ul className="inpost-list">{parcels.map(parcel => {
     const pickup=parcel.pickup || emptyPickup;
     const hasPickup=!!(pickup.code||pickup.phone||pickup.note||pickup.qr);
     return <li key={parcel.number}><div><strong>•••• {parcel.number.slice(-6)}</strong><span className="inpost-status">{parcel.status}</span></div>{parcel.locker && <small>Punkt odbioru: {parcel.locker}</small>}<small>{parcel.updatedAt ? <>Status z <time dateTime={parcel.updatedAt}>{date(parcel.updatedAt)}</time></> : 'Status niepotwierdzony przez InPost'}</small><a href={parcel.detailsUrl} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" aria-label={`Szczegóły paczki kończącej się na ${parcel.number.slice(-6)}`}>Szczegóły w InPost ↗</a>
@@ -38,11 +40,14 @@ export function ParcelRows({ parcels, canManage=false }: { parcels:readonly Parc
       {pickup.qr && <button className="inpost-qr-thumb" type="button" onClick={()=>setViewing(parcel.number)} aria-label={`Powiększ kod QR paczki ${parcel.number.slice(-6)}`}><img src={pickup.qr} alt="Kod QR odbioru"/><span>Dotknij, aby powiększyć</span></button>}
       <div className="inpost-pickup-actions">{hasPickup && <button type="button" className="secondary-button" onClick={()=>setViewing(parcel.number)}>Kod odbioru i QR</button>}{canManage && <button type="button" className="secondary-button" onClick={()=>setEditing(parcel.number)}>{hasPickup?'Edytuj dane odbioru':'Dodaj kod / QR / notatkę'}</button>}</div>
     </li>;
-  })}</ul>{view && <PickupViewer number={view.number} pickup={view.pickup || emptyPickup} onClose={()=>setViewing('')}/>}{edit && <PickupEditor key={edit.number} number={edit.number} pickup={edit.pickup || emptyPickup} onClose={()=>setEditing('')}/>}</>;
+  })}</ul>;
+  return <>{modalTitle ? (!view && !edit && createPortal(<Modal title={modalTitle} onClose={()=>onClose?.()}>{list}</Modal>,document.body)) : list}{view && <PickupViewer number={view.number} pickup={view.pickup || emptyPickup} onClose={()=>setViewing('')}/>}{edit && <PickupEditor key={edit.number} number={edit.number} pickup={edit.pickup || emptyPickup} onClose={()=>setEditing('')}/>}</>;
 }
-export function InPostTile({ user, canManage=false }: { user:User; canManage?:boolean }) {
+export function InPostTile({ user, canManage=false, compact=false }: { user:User; canManage?:boolean; compact?:boolean }) {
   const { data, error } = useParcels(user.uid);
+  const [opened,setOpened]=useState(false);
   if (!data?.parcels.length) return null;
+  if(compact)return <section className="inpost-tile inpost-tile-compact" data-testid="inpost-tile"><header><span aria-hidden="true">📦</span><div><h2>Paczki InPost</h2><p>Aktywne: {data.parcels.length}</p></div></header><p className="inpost-compact-status" title={error || (data.issue ? issueText(data.issue) : undefined)}>{data.parcels[0].status}{(data.issue||error) && ' · Status może być nieaktualny'}</p><button type="button" className="inpost-compact-open" onClick={()=>setOpened(true)}>Otwórz paczki</button>{opened&&<ParcelRows parcels={data.parcels} canManage={canManage} modalTitle="Paczki InPost" onClose={()=>setOpened(false)}/>}</section>;
   return <section className="inpost-tile" aria-labelledby="inpost-heading" data-testid="inpost-tile"><header><span aria-hidden="true">📦</span><div><h2 id="inpost-heading">Paczki InPost</h2><p>Aktywne przesyłki w rodzinie: {data.parcels.length}</p></div></header><ParcelRows parcels={data.parcels} canManage={canManage}/>{(!data.configured || data.issue || error) && <p role="status" className="inpost-notice">{error || (!data.configured ? 'Automatyczne statusy czekają na połączenie API InPost. Szczegóły sprawdzisz pod linkiem.' : issueText(data.issue))}</p>}{data.checkedAt && <small>Ostatnia próba odczytu: {date(data.checkedAt)}</small>}</section>;
 }
 export function InPostSettings({ user, canManage }: { user:User; canManage:boolean }) {

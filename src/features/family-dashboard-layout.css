@@ -1,0 +1,40 @@
+.home-layout-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:16px 0; }
+.home-layout-toolbar button, .home-tile-controls button, .home-tile-controls select { min-height:44px; }
+.home-layout-toolbar p { flex-basis:100%; margin:0; font-size:13px; color:var(--brand-muted); line-height:1.5; }
+.home-layout-toolbar > small { flex-basis:100%; color:var(--brand-muted); font-size:11px; }
+.family-home .family-dashboard-grid { --home-columns:4; display:grid; grid-template-columns:repeat(var(--home-columns),minmax(0,1fr)); grid-auto-rows:1px; grid-auto-flow:row dense; column-gap:18px; row-gap:0; align-items:start; }
+.home-layout-tile { min-width:0; position:relative; grid-column:span 2; align-self:start; }
+.home-layout-tile.home-layout-small { grid-column:span 1; }
+.home-layout-tile.home-layout-large { grid-column:span var(--home-columns); }
+.home-tile-content { min-width:0; }
+.home-tile-content > * { width:100%; min-width:0; box-sizing:border-box; margin:0; }
+.home-layout-small .home-tile-content { aspect-ratio:1; overflow:auto; scrollbar-width:thin; border-radius:18px; background:var(--brand-card); border:1px solid var(--brand-line); }
+.home-layout-small .home-tile-content > * { min-height:100%; border:0; border-radius:0; box-shadow:none; padding:12px; }
+.home-layout-large .home-tile-content { min-height:240px; }
+.home-layout-large .home-tile-content > * { min-height:240px; }
+.home-layout-small h2 { font-size:14px; }
+.home-layout-small .home-people { display:flex; overflow-x:auto; }
+.home-layout-small .home-person { flex:0 0 90px; }
+.home-layout-small .home-shortcuts { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.home-layout-small .home-event { grid-template-columns:minmax(0,1fr); }
+.home-layout-small .home-event > svg { display:none; }
+.home-layout-small .home-family-heading > span { display:none; }
+.home-layout-small .inpost-tile > header { gap:7px; }
+.home-layout-small .inpost-tile > header > span { width:32px; height:32px; font-size:20px; flex-shrink:0; }
+.home-layout-small .inpost-tile h2 { font-size:14px; }
+.home-layout-tile.is-dragging { box-shadow:0 20px 50px #17264a40; pointer-events:none; }
+.home-tile-controls { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:10px; margin-bottom:8px; border:1px dashed var(--brand-primary); background:var(--brand-soft); border-radius:12px; }
+.home-tile-controls button, .home-tile-controls select { padding:8px 10px; border:1px solid var(--brand-line); border-radius:9px; color:var(--brand-ink); background:var(--brand-card); font:inherit; font-size:12px; }
+.home-tile-controls label { display:flex; flex-wrap:wrap; align-items:center; gap:6px; min-width:0; font-size:11px; }
+.home-tile-controls select { max-width:100%; min-width:0; }
+.home-tile-handle { touch-action:none; cursor:grab; user-select:none; }
+.home-tile-handle:active { cursor:grabbing; }
+.is-editing .home-tile-content { pointer-events:none; }
+.home-layout-tile:focus-within { outline:2px solid var(--brand-primary); outline-offset:3px; border-radius:18px; }
+.home-parcels-edit-note, .home-layout-error { font-size:12px; line-height:1.5; color:var(--brand-muted); }
+.family-dashboard-customizer:not(.is-editing) [data-home-tile="parcels"]:not(:has(.inpost-tile)) { display:none; }
+@container (max-width:650px) { .family-home .family-dashboard-grid { --home-columns:2; column-gap:12px; } .home-layout-small .home-tile-controls { flex-direction:column; align-items:stretch; } .home-layout-small .home-tile-controls label { flex-direction:column; align-items:stretch; } }
+.inpost-compact-status { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; margin:10px 0; font-size:12px; line-height:1.4; }
+.inpost-compact-open { min-height:44px; width:100%; padding:8px; margin-top:4px; border:1px solid var(--brand-line); border-radius:10px; background:var(--brand-soft); color:var(--brand-primary-ink); font:inherit; font-size:12px; font-weight:700; }
+
+.family-dashboard-customizer .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
