@@ -1,6 +1,7 @@
 import { EduServerError, getServerFirebase, requireMember, eduRequestHeader } from './edu-auth.mjs';
 import { readJsonBody } from './edu-http.mjs';
 import { assertFamilyV2WriteAllowed, familyV2WritesAllowed } from './family-v2-policy.mjs';
+import { createParcelCron } from './inpost-scheduler.mjs';
 import { manageParcels } from './inpost-service.mjs';
 import { manageTasksAction } from './tasks-service.mjs';
 import { manageHealthAction } from './health-service.mjs';
@@ -11,7 +12,7 @@ function routeDomain(request) {
   if (typeof request.url !== 'string' || /[\u0000-\u0020\u007f\\#]/.test(request.url)) return null;
   const separator = request.url.indexOf('?');
   const path = separator < 0 ? request.url : request.url.slice(0, separator);
-  const match = /^\/api\/family\/(tasks|health|finance|music-school|parcels)$/.exec(path);
+  const match = /^\/api\/family\/(tasks|health|finance|music-school|parcels|parcels-cron)$/.exec(path);
   if (!match) return null;
   const domain = match[1];
   const query = new URLSearchParams(separator < 0 ? '' : request.url.slice(separator + 1)).getAll('action');
@@ -54,6 +55,7 @@ function authRequestAfterOriginValidation(request) {
 /** One Vercel function: same-origin, fresh Firebase identity, fail-closed writes. */
 export function createFamilyRouter({ services = getServerFirebase, memberGuard = requireMember,
   tasksAction = manageTasksAction, healthAction = manageHealthAction, financeAction = manageFinanceAction, musicAction = manageMusicSchoolAction, parcelsAction = manageParcels, env = process.env } = {}) {
+  const parcelCron = createParcelCron({ services, env });
   return async function familyRouter(request, response) {
     response.setHeader('Cache-Control', 'no-store, private, max-age=0');
     response.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -62,6 +64,7 @@ export function createFamilyRouter({ services = getServerFirebase, memberGuard =
     try {
       const domain = routeDomain(request);
       if (!domain) throw new EduServerError('FAMILY_NOT_FOUND', 404, 'Nie znaleziono tej operacji.');
+      if (domain === 'parcels-cron') return await parcelCron(request, response);
       if (request.method !== 'POST') {
         response.setHeader('Allow', 'POST');
         throw new EduServerError('FAMILY_METHOD_NOT_ALLOWED', 405, 'Nieobsługiwana metoda żądania.');

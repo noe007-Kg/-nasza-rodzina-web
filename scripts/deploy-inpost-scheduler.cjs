@@ -6,7 +6,7 @@ const {Client}=require('firebase-tools/lib/apiv2');
 (async()=>{
   const secret=fs.readFileSync(process.argv[2],'utf8').trim();
   if(!/^[a-f0-9]{64}$/.test(secret))throw Error('Invalid scheduler secret');
-  const url='https://nasza-rodzina-web.vercel.app/api/family-parcels-cron';
+  const url='https://nasza-rodzina-web.vercel.app/api/family/parcels-cron';
   const response=await fetch(url,{method:'POST',headers:{Authorization:`Bearer ${secret}`}});
   if(!response.ok)throw Error(`Production scheduler endpoint returned ${response.status}`);
   setActiveAccount({},getGlobalDefaultAccount());
