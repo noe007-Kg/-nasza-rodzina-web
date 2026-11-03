@@ -2,7 +2,7 @@
 
 ## Zachowanie aplikacji
 
-W Ustawieniach dorosły członek rodziny dodaje 24-cyfrowy numer przesyłki InPost Polska. Numer jest zapisywany na serwerze dla jego rodziny. Start pokazuje kafelek tylko wtedy, gdy istnieje aktywna przesyłka. Numer w kafelku jest skrócony do sześciu ostatnich cyfr. Widoczne są status, czas zdarzenia dostawcy, opcjonalny punkt odbioru i link do InPost. Zakończenie śledzenia lub końcowy status przewoźnika ukrywa przesyłkę. Nie przechowujemy kodów odbioru ani hasła InPost.
+W Ustawieniach dorosły członek rodziny dodaje 24-cyfrowy numer przesyłki InPost Polska. Numer jest zapisywany na serwerze dla jego rodziny. Start pokazuje kafelek tylko wtedy, gdy istnieje aktywna przesyłka. Numer w kafelku jest skrócony do sześciu ostatnich cyfr. Widoczne są status, czas zdarzenia dostawcy, opcjonalny punkt odbioru i link do InPost. Zakończenie śledzenia lub końcowy status przewoźnika ukrywa przesyłkę. Hasła InPost nie są przechowywane. Dorosły członek rodziny może ręcznie dopisać kod odbioru, opcjonalny telefon, notatkę i zdjęcie QR — opis poniżej.
 
 Brak danych w API nie blokuje zapisu numeru: status jest jawnie niepotwierdzony, a użytkownik może otworzyć stronę przewoźnika. Nie ma automatycznego wykrywania paczek po telefonie lub koncie. Zapisana przesyłka nie jest dowodem, że dostawca już rozpoznaje jej numer.
 
@@ -40,3 +40,15 @@ Reguły wdrożenia w `deploy/inpost/firestore.rules` powstały jako minimalna zm
 ## Weryfikacja
 
 Testy logiki obejmują walidację numerów, brak tokenu, OAuth i partie po 10, kolejność zdarzeń, stany końcowe, 429, zachowanie starych danych po awarii, zapis/archiwizację, rodzinę i role, Preview oraz odstępy 15min/24h. Test na prawdziwym emulatorze Firestore sprawdza izolację rodzin i pojedyncze odpytanie przy pięciu równoległych odczytach. Test reguł sprawdza zakaz bezpośredniego dostępu do paczek oraz zachowanie historii i zakaz zapisu czatu. Test przeglądarkowy z kontrolowaną odpowiedzią API sprawdza dodawanie, ponowny odczyt po przeładowaniu, ukrywanie kafelka i widoki 390/1024px. Rzeczywiste statusy ShipX wymagają aktualnego numeru przesyłki rozpoznawanego przez InPost. Sprawdzenie przykładowego numeru z dokumentacji potwierdziło odpowiedź JSON 404 bez autoryzacji; nie potwierdza to statusu prywatnej przesyłki użytkownika. Po wdrożeniu zapis z poprzedniej wersji harmonogramu zostaje przeliczony przy następnym odczycie (providerVersion=2), z zachowaniem minimalnego odstępu 15 minut.
+
+## Ręczne dane odbioru (kod, telefon, notatka, QR)
+
+Na Start i w Ustawieniach dorosły wybiera przy aktywnej paczce „Dodaj kod / QR / notatkę”. Kod ma 6 cyfr (zachowujemy zero na początku), opcjonalny telefon 9 cyfr, notatka maksymalnie 600 znaków. Zdjęcie PNG/JPEG/WebP do 10 MB jest lokalnie przetwarzane do PNG/JPEG o maksymalnym boku 1200 px i długości data URI 160 000 znaków. Nie generujemy kodu odbioru ani QR z numeru przesyłki i nie otwieramy zdalnie skrytki. Odbiorca korzysta z oryginalnych danych InPost: QR na czytniku lub telefon i kod na ekranie Paczkomatu. Nie weryfikujemy poprawności ani zawartości przesłanego QR.
+
+Miniatura QR otwiera duży podgląd w oknie z obsługą Escape, pułapką fokusu i przywróceniem fokusu. W tym samym podglądzie są kod, telefon i notatka. Edycja pozwala usunąć zdjęcie lub wyczyścić wszystkie dane. Błąd zapisu pozostawia formularz i zdjęcie do ponowienia.
+
+Serwer zapisuje dane osobno w `_inpostPickup/{sha256([familyId,number])}`, aby zdjęcia nie przekroczyły limitu wspólnego dokumentu rodziny. Kolekcję obejmuje istniejąca reguła domyślnej odmowy bezpośredniego odczytu i zapisu. Dostęp odbywa się wyłącznie przez uwierzytelnione API tej samej rodziny; dzieci mogą odczytywać, dorośli edytować. Preview nie zapisuje danych. Serwer waliduje pola, rozmiar, dozwolony MIME i sygnaturę obrazu, odrzuca SVG i zewnętrzne URL. Wyłącznie po uwierzytelnieniu endpoint paczek przyjmuje do 180 KiB JSON; pozostałe domeny zachowują 16 KiB. Maksymalnie 20 aktywnych zdjęć mieści się w odpowiedzi poniżej limitu Vercel.
+
+Kod, telefon, notatka i zdjęcie nie są wysyłane do InPost ani publikowane w publicznym magazynie plików. Zakończenie śledzenia i końcowy status przewoźnika usuwają prywatny dokument odbioru w tej samej transakcji. Dispatcher nie pobiera tych dokumentów podczas zwykłego sprawdzania statusów.
+
+Weryfikacja: walidacja i zachowanie zera na początku, zapis i odczyt po przeładowaniu, izolacja rodzin, aktualna rola dorosłego, blokada Preview, usunięcie po archiwizacji i odbiorze; emulator Firestore oraz test domyślnej odmowy dla nowej kolekcji; przeglądarka 390/1024 px, wysłanie obrazu, powiększenie QR, Escape i powrót fokusu, zachowanie formularza po błędzie oraz wyczyszczenie danych.

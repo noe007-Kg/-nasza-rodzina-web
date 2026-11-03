@@ -30,5 +30,8 @@ test('parcel records are inaccessible directly even to a parent; only the author
     await assertFails(getDoc(doc(db,'_inpostFamilies','family')));
     await assertFails(setDoc(doc(db,'_inpostFamilies','spoof'),{parcels:[]}));
     await assertFails(deleteDoc(doc(db,'_inpostFamilies','family')));
+    await assertFails(getDoc(doc(db,'_inpostPickup','family-parcel')));
+    await assertFails(setDoc(doc(db,'_inpostPickup','family-parcel'),{code:'123456',qr:'private'}));
+    await assertFails(deleteDoc(doc(db,'_inpostPickup','family-parcel')));
   }
 });

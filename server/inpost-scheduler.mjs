@@ -16,7 +16,7 @@ export async function runParcelSchedule(services, { env=process.env, clock=Date.
     const members = await services.db.collection('members').where('familyId','==',state.familyId).limit(100).get();
     const member = members.docs.find(d => { const p=d.data(); return p.active === true && p.canLogin === true && !p.archived && ['parent','adult'].includes(p.role); });
     if (!member) return;
-    await manageParcels({ ...services, uid:member.id, profile:member.data() }, { operation:'state' }, { env, clock });
+    await manageParcels({ ...services, uid:member.id, profile:member.data() }, { operation:'state' }, { env, clock, includePickup:false });
   }));
   return { processed:results.filter(r=>r.status==='fulfilled').length, failed:results.filter(r=>r.status==='rejected').length };
 }

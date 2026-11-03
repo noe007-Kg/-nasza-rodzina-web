@@ -16,9 +16,13 @@ test('real Firestore serializes concurrent refreshes and isolates families',asyn
     const options={env:{INPOST_CLIENT_ID:'test',INPOST_CLIENT_SECRET:'test'},clock:()=>now,provider:async()=>{calls++;await new Promise(resolve=>setTimeout(resolve,50));return {updates:{[number]:{status:'W drodze',active:true,updatedAt:'2026-11-03T10:00:00Z'}}};}};
     await Promise.all(Array.from({length:5},()=>manageParcels(context,{operation:'state'},options)));
     assert.equal(calls,1);
+    const pickup={code:'012345',phone:'123456789',note:'Rodzinna paczka',qr:''};
+    await manageParcels(context,{operation:'pickup',number,pickup},options);
+    assert.deepEqual((await manageParcels(context,{operation:'state'},options)).parcels[0].pickup,pickup);
     const other={...profile,familyId:'another-test-family'};await db.collection('members').doc('parcel-test-other').set(other);
     const state=await manageParcels({db,uid:'parcel-test-other',profile:other},{operation:'state'},{env:{},clock:()=>now});
     assert.equal(state.parcels.length,0);
+    await assert.rejects(manageParcels({db,uid:'parcel-test-other',profile:other},{operation:'pickup',number,pickup},options),/nie jest już aktywna/);
     await assert.rejects(manageParcels(context,{operation:'state',familyId:'another-test-family'},{env:{}}),/Nieprawidłowa/);
   } finally { await deleteApp(app); }
 });

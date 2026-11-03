@@ -9,7 +9,7 @@ const number = '600000658493991742009752';
 const profile = { familyId:'family-a', role:'parent', active:true, canLogin:true };
 function database() {
   const docs = new Map([['members/parent',profile]]);
-  const db = { collection:name=>({ doc:id=>({ path:`${name}/${id}`, get:async()=>({ data:()=>docs.get(`${name}/${id}`) }) }) }), runTransaction:async fn=>fn({ get:async ref=>({ data:()=>docs.get(ref.path) }), set:(ref,data)=>docs.set(ref.path,structuredClone(data)) }) };
+  const db = { collection:name=>({ doc:id=>({ path:`${name}/${id}`, get:async()=>({ data:()=>docs.get(`${name}/${id}`) }) }) }), runTransaction:async fn=>fn({ get:async ref=>({ data:()=>docs.get(ref.path) }), set:(ref,data)=>docs.set(ref.path,structuredClone(data)), delete:ref=>docs.delete(ref.path) }) };
   return { docs, context:{ uid:'parent',profile,db } };
 }
 const env = { INPOST_CLIENT_ID:'test-id', INPOST_CLIENT_SECRET:'test-secret' };

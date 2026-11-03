@@ -71,7 +71,7 @@ export function createFamilyRouter({ services = getServerFirebase, memberGuard =
       }
       assertFamilyOrigin(request, env);
       const context = await memberGuard(authRequestAfterOriginValidation(request), services());
-      const body = await readJsonBody(request);
+      const body = await readJsonBody(request, domain === 'parcels' ? { limit:180 * 1024 } : undefined);
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new EduServerError('FAMILY_INVALID_REQUEST', 400, 'Nieprawidłowe dane żądania.');
       if (body.operation && body.action && body.operation !== body.action) throw new EduServerError('FAMILY_INVALID_REQUEST', 400, 'Nieprawidłowa operacja.');
       const operation = body.operation || body.action;

@@ -3,7 +3,7 @@ import { requireEduConnection } from './edu-access.mjs';
 
 const LIMIT = 16 * 1024;
 
-export async function readJsonBody(request) {
+export async function readJsonBody(request, { limit = LIMIT } = {}) {
   const contentType = request.headers?.['content-type'] || '';
   if (!/^application\/json(?:\s*;|$)/i.test(contentType)) throw new EduServerError('EDU_INVALID_REQUEST', 415, 'Żądanie musi zawierać dane JSON.');
   let raw = request.body;
@@ -11,17 +11,17 @@ export async function readJsonBody(request) {
     const chunks = []; let length = 0;
     for await (const chunk of request) {
       length += Buffer.byteLength(chunk);
-      if (length > LIMIT) throw new EduServerError('EDU_INVALID_REQUEST', 413, 'Żądanie jest zbyt duże.');
+      if (length > limit) throw new EduServerError('EDU_INVALID_REQUEST', 413, 'Żądanie jest zbyt duże.');
       chunks.push(Buffer.from(chunk));
     }
     raw = Buffer.concat(chunks).toString('utf8');
   }
   if (Buffer.isBuffer(raw)) raw = raw.toString('utf8');
   if (typeof raw === 'string') {
-    if (Buffer.byteLength(raw) > LIMIT) throw new EduServerError('EDU_INVALID_REQUEST', 413, 'Żądanie jest zbyt duże.');
+    if (Buffer.byteLength(raw) > limit) throw new EduServerError('EDU_INVALID_REQUEST', 413, 'Żądanie jest zbyt duże.');
     try { raw = JSON.parse(raw); } catch { throw new EduServerError('EDU_INVALID_REQUEST', 400, 'Nieprawidłowe dane żądania.'); }
   }
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Buffer.byteLength(JSON.stringify(raw)) > LIMIT) throw new EduServerError('EDU_INVALID_REQUEST', 400, 'Nieprawidłowe dane żądania.');
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Buffer.byteLength(JSON.stringify(raw)) > limit) throw new EduServerError('EDU_INVALID_REQUEST', 400, 'Nieprawidłowe dane żądania.');
   return raw;
 }
 
