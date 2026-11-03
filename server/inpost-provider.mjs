@@ -1,6 +1,6 @@
 import { EduServerError } from './edu-auth.mjs';
 
-export const POLL_MS = 3 * 60 * 60_000;
+export const POLL_MS = 15 * 60_000;
 export function trackingNumber(value) {
   if (typeof value !== 'string' || !/^[0-9]{24}$/.test(value.trim())) throw new EduServerError('PARCEL_NUMBER', 400, 'Podaj 24-cyfrowy numer przesyłki InPost Polska.');
   return value.trim();
@@ -15,10 +15,67 @@ export function projectParcel(parcel) {
     active: !code.startsWith('EOL.') && code !== 'RTS.1002', updatedAt: new Date(event.eventTimestamp).toISOString(),
     locker: ['LOCKER_POINT','PUDO_POINT'].includes(destination?.type) && typeof destination.name === 'string' ? destination.name.slice(0,100) : '' };
 }
-export function providerConfigured(env) { return !!(env.INPOST_CLIENT_ID && env.INPOST_CLIENT_SECRET); }
-/** One token and one bounded tracking request per family refresh; no client secrets or raw recipient data leave this module. */
+// ShipX tracking is public; OAuth credentials are only needed for Global API.
+export function providerConfigured() { return true; }
+const shipxLabels = {
+  created: 'Przygotowana przez nadawcę', confirmed: 'Przygotowana przez nadawcę',
+  dispatched_by_sender: 'Nadana', collected_from_sender: 'Odebrana od nadawcy',
+  taken_by_courier: 'Odebrana przez kuriera', adopted_at_source_branch: 'W oddziale nadawczym',
+  sent_from_source_branch: 'W drodze', adopted_at_sorting_center: 'W sortowni',
+  sent_from_sorting_center: 'W drodze', adopted_at_target_branch: 'W oddziale docelowym',
+  out_for_delivery: 'W doręczeniu', ready_to_pickup: 'Czeka w paczkomacie lub punkcie odbioru',
+  pickup_reminder_sent: 'Przypomnienie o odbiorze', pickup_time_expired: 'Upłynął termin odbioru',
+  avizo: 'Oczekuje na odbiór', delivered: 'Odebrana', returned_to_sender: 'Zwrócona do nadawcy',
+  canceled: 'Anulowana', claimed: 'Reklamacja przesyłki', other: 'Nowy status przesyłki — sprawdź szczegóły',
+};
+export function projectShipxParcel(parcel) {
+  if (!parcel || typeof parcel.status !== 'string' || !parcel.status) return null;
+  const events = (Array.isArray(parcel.tracking_details) ? parcel.tracking_details : [])
+    .filter(e => e && typeof e.status === 'string' && Number.isFinite(Date.parse(e.datetime)))
+    .sort((a,b) => Date.parse(b.datetime) - Date.parse(a.datetime));
+  const timestamp = events.find(e => e.status === parcel.status)?.datetime || parcel.updated_at;
+  if (!Number.isFinite(Date.parse(timestamp))) return null;
+  const point = parcel.custom_attributes?.target_machine_detail;
+  return { statusCode:parcel.status, status:shipxLabels[parcel.status] || 'Nowy status przesyłki — sprawdź szczegóły',
+    active:!['delivered','returned_to_sender','canceled'].includes(parcel.status),
+    updatedAt:new Date(timestamp).toISOString(),
+    locker:typeof point?.name === 'string' ? point.name.slice(0,100) : typeof parcel.custom_attributes?.target_machine_id === 'string' ? parcel.custom_attributes.target_machine_id.slice(0,100) : '' };
+}
+function retryDelay(response) {
+  const value = response.headers.get('retry-after');
+  const ms = /^\d+$/.test(value || '') ? Number(value)*1000 : Date.parse(value)-Date.now();
+  return Math.min(24*60*60_000, Math.max(POLL_MS, Number.isFinite(ms) ? ms : POLL_MS));
+}
+async function fetchShipxTracking(numbers, fetcher) {
+  const updates = {}; let unavailable = '', retryMs = 0;
+  const issueRank = { '':0, 'not-found':1, provider:2, 'rate-limit':3 };
+  const recordIssue = issue => { if (issueRank[issue] > issueRank[unavailable]) unavailable = issue; };
+  // At most 20 requests, five at a time, keeping a family refresh below 40s.
+  for (let start=0; start<numbers.length; start+=5) {
+    await Promise.all(numbers.slice(start,start+5).map(async number => {
+      try {
+        const response = await fetcher(`https://api-shipx-pl.easypack24.net/v1/tracking/${number}`, {
+          redirect:'error', signal:AbortSignal.timeout(8_000), headers:{ Accept:'application/json' },
+        });
+        if (!response.ok) {
+          const issue = response.status === 404 ? 'not-found' : response.status === 429 ? 'rate-limit' : 'provider';
+          recordIssue(issue);
+          retryMs = Math.max(retryMs,retryDelay(response)); return;
+        }
+        const data = await response.json();
+        const update = data?.tracking_number === number ? projectShipxParcel(data) : null;
+        if (update) updates[number] = update; else recordIssue('provider');
+      } catch { recordIssue('provider'); }
+    }));
+    if (unavailable === 'rate-limit') break;
+  }
+  return { updates, ...(unavailable ? { unavailable, retryMs } : {}) };
+}
+/** Bounded server-side tracking; no credentials or raw recipient data leave this module. */
 export async function fetchTracking(numbers, { env = process.env, fetcher = fetch } = {}) {
-  if (!providerConfigured(env)) return { unavailable: 'not-configured' };
+  numbers = [...new Set(numbers.map(trackingNumber))];
+  if (numbers.length > 20) throw new EduServerError('PARCEL_LIMIT',400,'Możesz śledzić maksymalnie 20 aktywnych paczek.');
+  if (!env.INPOST_CLIENT_ID || !env.INPOST_CLIENT_SECRET) return fetchShipxTracking(numbers,fetcher);
   const host = env.INPOST_ENVIRONMENT === 'stage' ? 'https://stage-api.inpost-group.com' : 'https://api.inpost-group.com';
   const options = { redirect: 'error', signal: AbortSignal.timeout(12_000) };
   const auth = await fetcher(`${host}/oauth2/token`, { ...options, method:'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

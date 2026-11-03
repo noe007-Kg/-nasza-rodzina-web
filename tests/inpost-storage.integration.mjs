@@ -11,7 +11,7 @@ test('real Firestore serializes concurrent refreshes and isolates families',asyn
     const profile={familyId:'parcel-test-family',role:'parent',active:true,canLogin:true};
     await db.collection('members').doc('parcel-test-parent').set(profile);
     const context={db,uid:'parcel-test-parent',profile};const number='600000658493991742009752';
-    let now=Date.now();await manageParcels(context,{operation:'add',number},{env:{},clock:()=>now});
+    let now=Date.now();await manageParcels(context,{operation:'add',number},{env:{},clock:()=>now,provider:async()=>({unavailable:'provider'})});
     now+=POLL_MS;let calls=0;
     const options={env:{INPOST_CLIENT_ID:'test',INPOST_CLIENT_SECRET:'test'},clock:()=>now,provider:async()=>{calls++;await new Promise(resolve=>setTimeout(resolve,50));return {updates:{[number]:{status:'W drodze',active:true,updatedAt:'2026-11-03T10:00:00Z'}}};}};
     await Promise.all(Array.from({length:5},()=>manageParcels(context,{operation:'state'},options)));

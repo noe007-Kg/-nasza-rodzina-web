@@ -4,9 +4,13 @@
 
 W Ustawieniach dorosły członek rodziny dodaje 24-cyfrowy numer przesyłki InPost Polska. Numer jest zapisywany na serwerze dla jego rodziny. Start pokazuje kafelek tylko wtedy, gdy istnieje aktywna przesyłka. Numer w kafelku jest skrócony do sześciu ostatnich cyfr. Widoczne są status, czas zdarzenia dostawcy, opcjonalny punkt odbioru i link do InPost. Zakończenie śledzenia lub końcowy status przewoźnika ukrywa przesyłkę. Nie przechowujemy kodów odbioru ani hasła InPost.
 
-Brak dostępu API nie blokuje zapisu numeru: status jest jawnie niepotwierdzony, a użytkownik może otworzyć stronę przewoźnika. Nie ma automatycznego wykrywania paczek po telefonie lub koncie. Zapisana przesyłka nie jest dowodem, że dostawca już rozpoznaje jej numer.
+Brak danych w API nie blokuje zapisu numeru: status jest jawnie niepotwierdzony, a użytkownik może otworzyć stronę przewoźnika. Nie ma automatycznego wykrywania paczek po telefonie lub koncie. Zapisana przesyłka nie jest dowodem, że dostawca już rozpoznaje jej numer.
 
 ## Oficjalny dostęp InPost
+
+Domyślnie, bez poświadczeń Global API, backend korzysta z [publicznego ShipX Tracking](https://dokumentacja-inpost.atlassian.net/wiki/spaces/PL/pages/11731050): `GET https://api-shipx-pl.easypack24.net/v1/tracking/{numer}`. Zasób nie wymaga tokenu. Dane są dostępne przez 45 dni od utworzenia przesyłki. Zwracamy wyłącznie status, czas zdarzenia i punkt odbioru; nie pobieramy kodów odbioru ani listy paczek po telefonie. Brak danych (404) ma osobny komunikat i nie usuwa ostatniego statusu. Backend ogranicza odczyt do 20 numerów i pięciu równoległych żądań, każde z limitem 8 sekund. 429 wstrzymuje kolejne partie i respektuje Retry-After.
+
+Opcjonalny istniejący dostęp Global API pozostaje obsługiwany po skonfigurowaniu obu poświadczeń:
 
 Sprawdzono 3 listopada 2026:
 
@@ -19,11 +23,11 @@ Sprawdzono 3 listopada 2026:
 
 ## Konfiguracja serwera
 
-Wyłącznie produkcyjne zmienne serwera Vercel: `INPOST_CLIENT_ID`, `INPOST_CLIENT_SECRET`, `INPOST_ENVIRONMENT=production`, `INPOST_CRON_SECRET`. Nigdy nie używać prefiksu `VITE_` dla tych wartości. Istniejące uwierzytelnienie Firebase Admin i domena rodzinnego API są współdzielone z pozostałymi modułami.
+Publiczny ShipX nie wymaga nowych zmiennych. Harmonogram używa istniejącego `INPOST_CRON_SECRET`. Opcjonalne zmienne Global API na serwerze Vercel: `INPOST_CLIENT_ID`, `INPOST_CLIENT_SECRET`, `INPOST_ENVIRONMENT=production`. Nigdy nie używać prefiksu `VITE_` dla tych wartości. Istniejące uwierzytelnienie Firebase Admin i domena rodzinnego API są współdzielone z pozostałymi modułami.
 
-Aktywne przesyłki są sprawdzane nie częściej niż co 3 godziny. Pusta lista ma następne sprawdzenie po 24 godzinach, bez bezcelowego zapytania do InPost. Dodanie pierwszej przesyłki uruchamia pierwszy odczyt; ponowne otwarcie strony nie omija serwerowego limitu. Błędy dostawcy zachowują ostatni status. Długie Retry-After może odsunąć sprawdzenie. Aktualizacja zakończonej przesyłki przełącza harmonogram na dobowy.
+Aktywne przesyłki są sprawdzane nie częściej niż co 15 minut. Pusta lista ma następne sprawdzenie po 24 godzinach, bez bezcelowego zapytania do InPost. Dodanie pierwszej przesyłki uruchamia pierwszy odczyt; ponowne otwarcie strony nie omija serwerowego limitu. Błędy dostawcy zachowują ostatni status. Długie Retry-After może odsunąć sprawdzenie. Aktualizacja zakończonej przesyłki przełącza harmonogram na dobowy.
 
-Dispatcher Cloud Scheduler uruchamia zabezpieczony endpoint co 15 minut, aby odebrać tylko zaplanowane zadania. To nie oznacza odpytywania InPost co 15 minut. Statusy są odczytywane po upływie 3h, z możliwym opóźnieniem do 15 minut. Przy otwartej aplikacji frontend odczytuje zapisany stan co 5 minut. Przy braku zapisanych numerów nie można odkryć nowych przesyłek, nawet przy sprawdzeniu dobowym.
+Dispatcher Cloud Scheduler uruchamia zabezpieczony endpoint co 15 minut, aby odebrać tylko zaplanowane zadania. Statusy są odczytywane po upływie 15 minut, z możliwym opóźnieniem do 15 minut. Przy otwartej aplikacji frontend odczytuje zapisany stan co 5 minut. Przy braku zapisanych numerów nie można odkryć nowych przesyłek, nawet przy sprawdzeniu dobowym.
 
 ## Bezpieczeństwo i dane
 
@@ -35,4 +39,4 @@ Reguły wdrożenia w `deploy/inpost/firestore.rules` powstały jako minimalna zm
 
 ## Weryfikacja
 
-Testy logiki obejmują walidację numerów, brak tokenu, OAuth i partie po 10, kolejność zdarzeń, stany końcowe, 429, zachowanie starych danych po awarii, zapis/archiwizację, rodzinę i role, Preview oraz odstępy 3h/24h. Test na prawdziwym emulatorze Firestore sprawdza izolację rodzin i pojedyncze odpytanie przy pięciu równoległych odczytach. Test reguł sprawdza zakaz bezpośredniego dostępu do paczek oraz zachowanie historii i zakaz zapisu czatu. Test przeglądarkowy z kontrolowaną odpowiedzią API sprawdza dodawanie, ponowny odczyt po przeładowaniu, ukrywanie kafelka i widoki 390/1024px. Rzeczywiste statusy InPost wymagają poświadczeń i przesyłki dostępnej dla przyznanego konta API.
+Testy logiki obejmują walidację numerów, brak tokenu, OAuth i partie po 10, kolejność zdarzeń, stany końcowe, 429, zachowanie starych danych po awarii, zapis/archiwizację, rodzinę i role, Preview oraz odstępy 15min/24h. Test na prawdziwym emulatorze Firestore sprawdza izolację rodzin i pojedyncze odpytanie przy pięciu równoległych odczytach. Test reguł sprawdza zakaz bezpośredniego dostępu do paczek oraz zachowanie historii i zakaz zapisu czatu. Test przeglądarkowy z kontrolowaną odpowiedzią API sprawdza dodawanie, ponowny odczyt po przeładowaniu, ukrywanie kafelka i widoki 390/1024px. Rzeczywiste statusy ShipX wymagają aktualnego numeru przesyłki rozpoznawanego przez InPost. Sprawdzenie przykładowego numeru z dokumentacji potwierdziło odpowiedź JSON 404 bez autoryzacji; nie potwierdza to statusu prywatnej przesyłki użytkownika. Po wdrożeniu zapis z poprzedniej wersji harmonogramu zostaje przeliczony przy następnym odczycie (providerVersion=2), z zachowaniem minimalnego odstępu 15 minut.

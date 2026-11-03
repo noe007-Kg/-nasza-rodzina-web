@@ -33,17 +33,16 @@ test('OAuth stays on server and tracking batches never exceed ten',async()=>{
   assert.equal(calls[0].options.body.get('scope'),'api:tracking:read');
   for(const call of calls.slice(1)){assert.equal(new URL(call.url).searchParams.getAll('trackingNumbers').length,10);assert.equal(call.options.headers.Authorization,'Bearer secret-access-token');assert.equal(call.options.redirect,'error');}
 });
-test('429 Retry-After and missing credentials do not create a tight retry loop',async()=>{
+test('429 Retry-After does not create a tight retry loop',async()=>{
   let count=0;
-  assert.deepEqual(await fetchTracking([number],{env:{},fetcher:()=>{throw Error('network');}}),{unavailable:'not-configured'});
   const result=await fetchTracking([number],{env,fetcher:async()=>++count===1?new Response('{"access_token":"x"}'):new Response('',{status:429,headers:{'retry-after':'3600'}})});
-  assert.equal(result.retryMs,POLL_MS);assert.equal(result.unavailable,'rate-limit');
+  assert.equal(result.retryMs,3600000);assert.equal(result.unavailable,'rate-limit');
 });
 test('save is idempotent, persists without API, and archive hides the last parcel',async()=>{
-  const {context}=database();const options={env:{},clock:()=>100000};
+  const {context}=database();const options={env:{},clock:()=>100000,provider:async()=>({unavailable:'provider'})};
   assert.equal((await manageParcels(context,{operation:'state'},options)).parcels.length,0);
   for(let i=0;i<2;i++) assert.equal((await manageParcels(context,{operation:'add',number},options)).parcels.length,1);
-  const state=await manageParcels(context,{operation:'state'},options);assert.equal(state.configured,false);assert.equal(state.parcels[0].updatedAt,null);
+  const state=await manageParcels(context,{operation:'state'},options);assert.equal(state.configured,true);assert.equal(state.parcels[0].updatedAt,null);
   assert.equal((await manageParcels(context,{operation:'archive',number},options)).parcels.length,0);
 });
 test('shared persisted throttle and failed API preserve last known state',async()=>{
@@ -66,7 +65,7 @@ test('fresh membership, role and family changes are enforced',async()=>{
   docs.set('members/parent',{...profile,active:false});await assert.rejects(manageParcels(context,{operation:'state'},{env:{}}),/aktywnej/);
 });
 test('preview reads do not refresh API and writes are blocked',async()=>{
-  const {context}=database();await manageParcels(context,{operation:'add',number},{env:{},clock:()=>100000});
+  const {context}=database();await manageParcels(context,{operation:'add',number},{env:{},clock:()=>100000,provider:async()=>({unavailable:'provider'})});
   let calls=0;const options={env:{...env,VERCEL_ENV:'preview'},provider:async()=>{calls++;}};
   await manageParcels(context,{operation:'state'},options);assert.equal(calls,0);
   await assert.rejects(manageParcels(context,{operation:'archive',number},options),/Preview/);
@@ -78,14 +77,14 @@ test('API protects route, origin, method and authentication',async()=>{
   }assert.equal(called,0);
 });
 test('chat no longer produces notifications',()=>assert.equal(deriveNotificationEvent('familyMessages','id',null,{text:'secret',channel:'family'}),null));
-test('empty list is checked daily; active list every three hours, including absent provider credentials',async()=>{
+test('empty list is checked daily; active list every fifteen minutes, using public tracking',async()=>{
   const {context,docs}=database();let now=100000;
-  const options={env:{},clock:()=>now};
+  const options={env:{},clock:()=>now,provider:async()=>({unavailable:'provider'})};
   await manageParcels(context,{operation:'state'},options);
   const state=()=>[...docs.entries()].find(([path])=>path.startsWith('_inpostFamilies/'))[1];
   assert.equal(state().nextCheckAt,now+86400000);
   now+=10000;await manageParcels(context,{operation:'add',number},options);
-  assert.equal(POLL_MS,10800000);assert.equal(state().nextCheckAt,now+POLL_MS);
+  assert.equal(POLL_MS,900000);assert.equal(state().nextCheckAt,now+POLL_MS);
   now+=10000;await manageParcels(context,{operation:'archive',number},options);
   assert.equal(state().nextCheckAt,now+86400000);
 });
@@ -93,4 +92,17 @@ test('scheduler requires a strong exact server secret and cannot run in Preview'
   const secret='x'.repeat(64), request={headers:{authorization:`Bearer ${secret}`}};
   assert.equal(cronAuthorized(request,{INPOST_CRON_SECRET:secret}),true);
   for(const env of [{},{INPOST_CRON_SECRET:'short'},{INPOST_CRON_SECRET:secret,VERCEL_ENV:'preview'},{INPOST_CRON_SECRET:'y'.repeat(64)}])assert.equal(cronAuthorized(request,env),false);
+});
+test('existing unconfigured parcels refresh without waiting for the old three-hour schedule',async()=>{
+  const {context,docs}=database();let now=100000,calls=0;
+  const options={env:{},clock:()=>now,provider:async()=>{calls++;return {updates:{[number]:{status:'W drodze',active:true,updatedAt:'2026-11-03T10:00:00Z'}}};}};
+  await manageParcels(context,{operation:'add',number},options);
+  const [path,state]=[...docs.entries()].find(([path])=>path.startsWith('_inpostFamilies/'));
+  delete state.providerVersion;delete state.lastProviderAttemptAt;
+  state.nextCheckAt=now+3*60*60_000;docs.set(path,state);calls=0;
+  now+=10000;
+  const result=await manageParcels(context,{operation:'state'},options);
+  assert.equal(calls,1);assert.equal(result.configured,true);assert.equal(result.parcels[0].status,'W drodze');
+  await manageParcels(context,{operation:'state'},options);assert.equal(calls,1);
+  assert.equal(docs.get(path).providerVersion,2);assert.equal(docs.get(path).nextCheckAt,now+POLL_MS);
 });

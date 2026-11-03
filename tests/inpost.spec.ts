@@ -27,3 +27,12 @@ test('add, persistence, active tile, no invented ETA, archive and complete disap
   await expect(page.getByTestId('inpost-tile')).toHaveCount(0);
   await expect(page.getByTestId('next-section')).toBeVisible();
 });
+test('missing tracking data explains the problem and retains the last confirmed status',async({page})=>{
+  await page.route('**/api/family/parcels',route=>route.fulfill({json:{ok:true,configured:true,issue:'not-found',checkedAt:'2026-11-03T10:00:00Z',parcels:[{number:'600000658493991742009752',status:'W drodze',updatedAt:'2026-11-03T08:00:00Z',locker:'KOL01A',detailsUrl:'https://inpost.pl/sledzenie-przesylek?number=600000658493991742009752'}]}}));
+  await page.goto('/tests/fixtures/inpost.html');
+  const tile=page.getByTestId('inpost-tile');
+  await expect(tile).toContainText('W drodze');
+  await expect(tile).toContainText('Sprawdź numer');
+  await expect(tile).not.toContainText('czekają na połączenie API');
+  await expect(tile).toContainText('Ostatnia próba odczytu');
+});

@@ -14,11 +14,11 @@ const {Client}=require('firebase-tools/lib/apiv2');
   const parent='projects/nasza-rodzina/locations/europe-west1';
   const name=parent+'/jobs/family-inpost-status';
   let exists=false;try{await api.get('/'+name);exists=true;}catch(e){if(e.status!==404)throw e;}
-  const job={name,description:'Family parcels: dispatch due checks (3h active / 24h empty); no phone discovery.',
+  const job={name,description:'Family parcels: dispatch due checks (15min active / 24h empty); no phone discovery.',
     schedule:'*/15 * * * *',timeZone:'Europe/Warsaw',attemptDeadline:'60s',retryConfig:{retryCount:0},
     httpTarget:{uri:url,httpMethod:'POST',headers:{Authorization:`Bearer ${secret}`}}};
   if(exists)await api.patch('/'+name,job,{queryParams:{updateMask:'description,schedule,timeZone,attemptDeadline,retryConfig,httpTarget'}});
   else await api.post('/'+parent+'/jobs',job);
   const result=(await api.get('/'+name)).body;
-  console.log(JSON.stringify({scheduler:result.name,state:result.state,dispatch:result.schedule,activeIntervalHours:3,emptyIntervalHours:24,productionEndpointVerified:true}));
+  console.log(JSON.stringify({scheduler:result.name,state:result.state,dispatch:result.schedule,activeIntervalMinutes:15,emptyIntervalHours:24,productionEndpointVerified:true}));
 })().catch(e=>{console.error('Scheduler configuration failed:',e.status||'',e.message);process.exitCode=1;});

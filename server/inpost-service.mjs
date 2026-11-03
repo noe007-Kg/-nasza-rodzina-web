@@ -33,10 +33,10 @@ export async function manageParcels(context, body, { env = process.env, provider
     // Bound stored history; archive removes tracking only, never deletes user accounts or messages.
     parcels = [...parcels.filter(p=>p.active), ...parcels.filter(p=>!p.active).slice(-20)];
     const changedToActive = operation === 'add' && !(state.parcels || []).some(p=>p.active);
-    const attemptDue = env.VERCEL_ENV !== 'preview' && parcels.some(p=>p.active) && (!state.lastProviderAttemptAt || now >= state.lastProviderAttemptAt + POLL_MS) && (changedToActive || now >= (state.nextCheckAt || 0));
+    const attemptDue = env.VERCEL_ENV !== 'preview' && parcels.some(p=>p.active) && (!state.lastProviderAttemptAt || now >= state.lastProviderAttemptAt + POLL_MS) && (changedToActive || state.providerVersion !== 2 || now >= (state.nextCheckAt || 0));
     const due = attemptDue && providerConfigured(env);
     const emptyDue = !parcels.some(p=>p.active) && now >= (state.nextCheckAt || 0);
-    const next = { ...state, familyId, ownerUid:context.uid, parcels, ...(emptyDue || operation === 'archive' && !parcels.some(p=>p.active) ? { nextCheckAt:now+24*60*60_000 } : {}), ...(operation === 'add' ? { lastAddAt:now } : {}), ...(attemptDue ? { nextCheckAt:now+POLL_MS } : {}), ...(due ? { lease, lastProviderAttemptAt:now } : {}) };
+    const next = { ...state, familyId, ownerUid:context.uid, parcels, ...(emptyDue || operation === 'archive' && !parcels.some(p=>p.active) ? { nextCheckAt:now+24*60*60_000 } : {}), ...(operation === 'add' ? { lastAddAt:now } : {}), ...(attemptDue ? { nextCheckAt:now+POLL_MS } : {}), ...(due ? { lease, lastProviderAttemptAt:now, providerVersion:2 } : {}) };
     if (env.VERCEL_ENV !== 'preview' && (operation !== 'state' || attemptDue || emptyDue)) tx.set(ref,next);
     return { state:next, due };
   });
